@@ -8,29 +8,39 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import type { Member } from "./employees-client";
+import type { Member, Team } from "./employees-client";
 
 interface AddEmployeeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  teams: Team[];
   onAdded: (member: Member) => void;
 }
 
 export function AddEmployeeDialog({
   open,
   onOpenChange,
+  teams,
   onAdded,
 }: AddEmployeeDialogProps) {
   const { memberLabel } = useMemberLabel();
   const [email, setEmail] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [teamId, setTeamId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -38,6 +48,7 @@ export function AddEmployeeDialog({
     setEmail("");
     setFirstName("");
     setLastName("");
+    setTeamId(null);
     setError(null);
   }
 
@@ -50,6 +61,7 @@ export function AddEmployeeDialog({
       email,
       firstName,
       lastName,
+      teamId,
     });
 
     if (!result.success) {
@@ -114,6 +126,27 @@ export function AddEmployeeDialog({
               required
             />
           </div>
+          {teams.length > 0 && (
+            <div className="space-y-2">
+              <Label>Team</Label>
+              <Select
+                value={teamId ?? "__none__"}
+                onValueChange={(v) => setTeamId(v === "__none__" ? null : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">No team</SelectItem>
+                  {teams.map((team) => (
+                    <SelectItem key={team.id} value={team.id}>
+                      {team.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <DialogFooter>
             <Button
               type="button"

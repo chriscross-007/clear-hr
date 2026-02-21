@@ -14,7 +14,7 @@ export default async function EmployeesPage() {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("role, permissions")
+    .select("organisation_id, role, permissions, organisations(max_employees)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -25,7 +25,23 @@ export default async function EmployeesPage() {
       (membership?.permissions as Record<string, boolean>)
         ?.can_manage_members === true);
 
+  const org = membership?.organisations as unknown as { max_employees: number } | null;
+  const maxEmployees = org?.max_employees ?? 999;
+
+  // Fetch teams for the org
+  const { data: teams } = await supabase
+    .from("teams")
+    .select("id, name")
+    .eq("organisation_id", membership!.organisation_id)
+    .order("name");
+
   return (
-    <EmployeesClient initialMembers={members ?? []} canManage={canManage} />
+    <EmployeesClient
+      initialMembers={members ?? []}
+      canManage={canManage}
+      maxEmployees={maxEmployees}
+      isOwner={membership?.role === "owner"}
+      teams={teams ?? []}
+    />
   );
 }

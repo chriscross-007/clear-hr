@@ -56,6 +56,7 @@ export type MemberResult = {
   role: string;
   invited_at: string | null;
   accepted_at: string | null;
+  team_id: string | null;
 };
 
 // Add employee — creates org_member record only, no auth user
@@ -63,10 +64,30 @@ export async function addEmployee(formData: {
   email: string;
   firstName: string;
   lastName: string;
+  teamId?: string | null;
 }): Promise<{ success: boolean; error?: string; member?: MemberResult }> {
   try {
     const membership = await getCallerMembership();
     const admin = createAdminClient();
+
+    // Check max_employees limit
+    const { data: org } = await admin
+      .from("organisations")
+      .select("max_employees")
+      .eq("id", membership.organisation_id)
+      .single();
+
+    const { count } = await admin
+      .from("members")
+      .select("id", { count: "exact", head: true })
+      .eq("organisation_id", membership.organisation_id);
+
+    if (org && count !== null && count >= org.max_employees) {
+      return {
+        success: false,
+        error: `Your organisation has reached its limit of ${org.max_employees} members. Ask the owner to increase the limit in Billing.`,
+      };
+    }
 
     const { data: newMember, error: memberError } = await admin
       .from("members")
@@ -76,6 +97,7 @@ export async function addEmployee(formData: {
         first_name: formData.firstName,
         last_name: formData.lastName,
         role: "employee",
+        team_id: formData.teamId || null,
         permissions: {
           can_request_holidays: true,
           can_approve_holidays: false,
@@ -98,6 +120,7 @@ export async function addEmployee(formData: {
       return { success: false, error: memberError.message };
     }
 
+
     return {
       success: true,
       member: {
@@ -109,6 +132,7 @@ export async function addEmployee(formData: {
         role: "employee",
         invited_at: null,
         accepted_at: null,
+        team_id: formData.teamId || null,
       },
     };
   } catch (e) {
@@ -146,7 +170,7 @@ export async function sendInvite(
     const org = member.organisations as unknown as { name: string };
     const headersList = await headers();
     const host = headersList.get("host") ?? "localhost:3000";
-    const protocol = host.startsWith("localhost") ? "http" : "https";
+    const protocol = host.includes("localhost") ? "http" : "https";
     const origin = `${protocol}://${host}`;
     const inviteUrl = `${origin}/accept-invite?token=${member.invite_token}`;
 
@@ -191,18 +215,42 @@ export async function updateEmployee(formData: {
   memberId: string;
   firstName: string;
   lastName: string;
+  role?: string;
 }): Promise<{ success: boolean; error?: string }> {
   try {
     const membership = await getCallerMembership();
     const admin = createAdminClient();
 
-    // Update the member record
+    const updateData: Record<string, string> = {
+      first_name: formData.firstName,
+      last_name: formData.lastName,
+    };
+
+    // Role change validation
+    if (formData.role) {
+      const validRoles = ["admin", "employee"];
+      if (!validRoles.includes(formData.role)) {
+        return { success: false, error: "Invalid role" };
+      }
+
+      // Fetch the target member to prevent changing the owner's role
+      const { data: target } = await admin
+        .from("members")
+        .select("role")
+        .eq("id", formData.memberId)
+        .eq("organisation_id", membership.organisation_id)
+        .single();
+
+      if (target?.role === "owner") {
+        return { success: false, error: "Cannot change the owner's role" };
+      }
+
+      updateData.role = formData.role;
+    }
+
     const { error } = await admin
       .from("members")
-      .update({
-        first_name: formData.firstName,
-        last_name: formData.lastName,
-      })
+      .update(updateData)
       .eq("id", formData.memberId)
       .eq("organisation_id", membership.organisation_id);
 
@@ -264,6 +312,7 @@ export async function deleteEmployee(
       }
     }
 
+
     return { success: true };
   } catch (e) {
     return {
@@ -310,6 +359,59 @@ export async function getInviteDetails(token: string): Promise<{
         orgName: org.name,
       },
     };
+  } catch (e) {
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : "An error occurred",
+    };
+  }
+}
+
+// Accept invite — creates auth user with confirmed email (no verification needed)
+export async function acceptInvite(
+  token: string,
+  password: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const admin = createAdminClient();
+
+    const { data: member, error: fetchError } = await admin
+      .from("members")
+      .select("email, first_name, last_name, accepted_at")
+      .eq("invite_token", token)
+      .single();
+
+    if (fetchError || !member) {
+      return { success: false, error: "Invalid or expired invite link" };
+    }
+
+    if (member.accepted_at) {
+      return { success: false, error: "This invite has already been accepted" };
+    }
+
+    // Create auth user with email auto-confirmed
+    const { error: createError } = await admin.auth.admin.createUser({
+      email: member.email,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        first_name: member.first_name,
+        last_name: member.last_name,
+      },
+    });
+
+    if (createError) {
+      if (createError.message?.includes("already been registered")) {
+        return {
+          success: false,
+          error: "An account with this email already exists. Please sign in instead.",
+        };
+      }
+      return { success: false, error: createError.message };
+    }
+
+    // The DB trigger link_user_to_org_member will automatically link the user
+    return { success: true };
   } catch (e) {
     return {
       success: false,

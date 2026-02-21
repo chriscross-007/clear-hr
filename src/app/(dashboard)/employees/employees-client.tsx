@@ -5,18 +5,16 @@ import {
   useReactTable,
   getCoreRowModel,
   getSortedRowModel,
-  getFilteredRowModel,
   flexRender,
   type ColumnDef,
   type SortingState,
-  type ColumnFiltersState,
 } from "@tanstack/react-table";
+import Link from "next/link";
 import { Pencil, Plus, ArrowUpDown, Trash2 } from "lucide-react";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { deleteEmployee } from "./actions";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -35,8 +33,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { EditEmployeeDialog } from "./edit-employee-dialog";
 import { AddEmployeeDialog } from "./add-employee-dialog";
+
+export type Team = {
+  id: string;
+  name: string;
+};
 
 export type Member = {
   member_id: string;
@@ -47,7 +58,30 @@ export type Member = {
   role: string;
   invited_at: string | null;
   accepted_at: string | null;
+  team_id: string | null;
 };
+
+function RoleBadge({ role, memberLabel }: { role: string; memberLabel: string }) {
+  if (role === "owner") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-700 dark:text-blue-400">
+        Owner
+      </span>
+    );
+  }
+  if (role === "admin") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-red-500/10 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400">
+        Admin
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-full bg-green-500/10 px-2 py-1 text-xs font-medium text-green-700 dark:text-green-400">
+      {capitalize(memberLabel)}
+    </span>
+  );
+}
 
 function InviteStatus({ member }: { member: Member }) {
   if (member.accepted_at) {
@@ -74,20 +108,28 @@ function InviteStatus({ member }: { member: Member }) {
 interface EmployeesClientProps {
   initialMembers: Member[];
   canManage: boolean;
+  maxEmployees: number;
+  isOwner: boolean;
+  teams: Team[];
 }
 
 export function EmployeesClient({
   initialMembers,
   canManage,
+  maxEmployees,
+  isOwner,
+  teams,
 }: EmployeesClientProps) {
   const { memberLabel } = useMemberLabel();
+  const teamMap = Object.fromEntries(teams.map((t) => [t.id, t.name]));
   const [members, setMembers] = useState(initialMembers);
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [deletingMember, setDeletingMember] = useState<Member | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [showCapacityDialog, setShowCapacityDialog] = useState(false);
+  const atCapacity = members.length >= maxEmployees;
 
   const columns: ColumnDef<Member>[] = [
     {
@@ -112,6 +154,36 @@ export function EmployeesClient({
           onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
         >
           Last Name
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+    },
+    {
+      id: "role",
+      accessorFn: (row) =>
+        row.role === "admin" ? "Admin" : row.role === "owner" ? "Owner" : capitalize(memberLabel),
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          className="-ml-4"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Role
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+      cell: ({ row }) => <RoleBadge role={row.original.role} memberLabel={memberLabel} />,
+    },
+    {
+      id: "team",
+      accessorFn: (row) => (row.team_id ? teamMap[row.team_id] ?? "—" : "—"),
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          className="-ml-4"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Team
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
       ),
@@ -166,51 +238,17 @@ export function EmployeesClient({
   const table = useReactTable({
     data: members,
     columns,
-    state: { sorting, columnFilters },
+    state: { sorting },
     onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
   });
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       <h1 className="text-2xl font-bold mb-6">
-        {capitalize(pluralize(memberLabel))}
+        {capitalize(pluralize(memberLabel))} Directory
       </h1>
-
-      {/* Column filters */}
-      <div className="flex gap-4 mb-4">
-        <Input
-          placeholder="Filter first name..."
-          value={
-            (table.getColumn("first_name")?.getFilterValue() as string) ?? ""
-          }
-          onChange={(e) =>
-            table.getColumn("first_name")?.setFilterValue(e.target.value)
-          }
-          className="max-w-xs"
-        />
-        <Input
-          placeholder="Filter last name..."
-          value={
-            (table.getColumn("last_name")?.getFilterValue() as string) ?? ""
-          }
-          onChange={(e) =>
-            table.getColumn("last_name")?.setFilterValue(e.target.value)
-          }
-          className="max-w-xs"
-        />
-        <Input
-          placeholder="Filter email..."
-          value={(table.getColumn("email")?.getFilterValue() as string) ?? ""}
-          onChange={(e) =>
-            table.getColumn("email")?.setFilterValue(e.target.value)
-          }
-          className="max-w-xs"
-        />
-      </div>
 
       {/* Table */}
       <div className="rounded-md border">
@@ -262,7 +300,10 @@ export function EmployeesClient({
       {/* Add button */}
       {canManage && (
         <div className="mt-4 flex justify-center">
-          <Button variant="outline" onClick={() => setShowAddDialog(true)}>
+          <Button
+            variant="outline"
+            onClick={() => atCapacity ? setShowCapacityDialog(true) : setShowAddDialog(true)}
+          >
             <Plus className="h-4 w-4 mr-2" />
             Add {capitalize(memberLabel)}
           </Button>
@@ -274,10 +315,13 @@ export function EmployeesClient({
         member={editingMember}
         open={!!editingMember}
         onOpenChange={(open) => !open && setEditingMember(null)}
+        teams={teams}
         onSaved={(updated) => {
           setMembers((prev) =>
             prev.map((m) =>
-              m.member_id === updated.member_id ? { ...m, ...updated } : m
+              m.member_id === updated.member_id
+                ? { ...m, first_name: updated.first_name, last_name: updated.last_name, role: updated.role, team_id: updated.team_id }
+                : m
             )
           );
           setEditingMember(null);
@@ -293,11 +337,35 @@ export function EmployeesClient({
       <AddEmployeeDialog
         open={showAddDialog}
         onOpenChange={setShowAddDialog}
+        teams={teams}
         onAdded={(newMember) => {
           setMembers((prev) => [...prev, newMember]);
           setShowAddDialog(false);
         }}
       />
+
+      {/* Capacity reached dialog */}
+      <Dialog open={showCapacityDialog} onOpenChange={setShowCapacityDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{capitalize(memberLabel)} limit reached</DialogTitle>
+            <DialogDescription>
+              Please increase your {memberLabel} limit in Billing before adding more {pluralize(memberLabel)} to the directory.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            {isOwner ? (
+              <Button asChild>
+                <Link href="/billing">Go to Billing</Link>
+              </Button>
+            ) : (
+              <Button variant="outline" onClick={() => setShowCapacityDialog(false)}>
+                OK
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete confirmation */}
       <AlertDialog
