@@ -51,6 +51,7 @@ export async function updateSession(request: NextRequest) {
     "/auth/callback",
     "/organisation-setup",
     "/accept-invite",
+    "/api/webhooks",
   ];
 
   const pathname = request.nextUrl.pathname;

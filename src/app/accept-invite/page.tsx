@@ -1,11 +1,10 @@
 "use client";
 
 import { Suspense, useState, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Eye, EyeOff } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
-import { getInviteDetails } from "@/app/(dashboard)/employees/actions";
+import { getInviteDetails, acceptInvite } from "@/app/(dashboard)/employees/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,7 +37,7 @@ export default function AcceptInvitePage() {
 function AcceptInviteForm() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
-  const supabase = createClient();
+  const router = useRouter();
 
   const [inviteData, setInviteData] = useState<{
     email: string;
@@ -92,23 +91,13 @@ function AcceptInviteForm() {
 
     setLoading(true);
 
-    const { error: signUpError } = await supabase.auth.signUp({
-      email: inviteData!.email,
-      password,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-        data: {
-          first_name: inviteData!.firstName,
-        },
-      },
-    });
+    const result = await acceptInvite(token!, password);
 
-    if (signUpError) {
-      setError(signUpError.message);
+    if (!result.success) {
+      setError(result.error ?? "Failed to create account");
       setLoading(false);
     } else {
-      setSuccess(true);
-      setLoading(false);
+      router.push(`/login?welcome=${encodeURIComponent(inviteData!.orgName)}&name=${encodeURIComponent(inviteData!.firstName)}`);
     }
   }
 
@@ -149,16 +138,16 @@ function AcceptInviteForm() {
       <div className="flex min-h-screen items-center justify-center px-4">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
-            <CardTitle className="text-2xl">Check your email</CardTitle>
+            <CardTitle className="text-2xl">Account created</CardTitle>
             <CardDescription>
-              We&apos;ve sent you a confirmation link. Please check your email to
-              verify your account and join {inviteData!.orgName}.
+              Your account has been set up. You can now sign in to join{" "}
+              {inviteData!.orgName}.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Link href="/login">
-              <Button variant="outline" className="w-full">
-                Back to login
+              <Button className="w-full">
+                Sign in
               </Button>
             </Link>
           </CardContent>
@@ -172,11 +161,10 @@ function AcceptInviteForm() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">
-            Welcome to ClearHR
+            Welcome to {inviteData!.orgName}
           </CardTitle>
           <CardDescription>
-            Hi {inviteData!.firstName}, set up your password to join{" "}
-            <strong>{inviteData!.orgName}</strong>.
+            Hi {inviteData!.firstName}, set up your password to join the ClearHR portal
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -244,12 +232,6 @@ function AcceptInviteForm() {
               {loading ? "Creating account..." : "Create account"}
             </Button>
           </form>
-          <p className="mt-4 text-center text-sm text-muted-foreground">
-            Already have an account?{" "}
-            <Link href="/login" className="text-primary hover:underline">
-              Sign in
-            </Link>
-          </p>
         </CardContent>
       </Card>
     </div>
