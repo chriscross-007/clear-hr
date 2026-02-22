@@ -5,9 +5,11 @@ import {
   useReactTable,
   getCoreRowModel,
   getSortedRowModel,
+  getFilteredRowModel,
   flexRender,
   type ColumnDef,
   type SortingState,
+  type ColumnFiltersState,
 } from "@tanstack/react-table";
 import Link from "next/link";
 import { Pencil, Plus, ArrowUpDown, Trash2 } from "lucide-react";
@@ -15,6 +17,7 @@ import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { deleteEmployee } from "./actions";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -59,6 +62,7 @@ export type Member = {
   invited_at: string | null;
   accepted_at: string | null;
   team_id: string | null;
+  last_log_in: string | null;
 };
 
 function RoleBadge({ role, memberLabel }: { role: string; memberLabel: string }) {
@@ -124,6 +128,7 @@ export function EmployeesClient({
   const teamMap = Object.fromEntries(teams.map((t) => [t.id, t.name]));
   const [members, setMembers] = useState(initialMembers);
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [deletingMember, setDeletingMember] = useState<Member | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -134,11 +139,13 @@ export function EmployeesClient({
   const columns: ColumnDef<Member>[] = [
     {
       accessorKey: "first_name",
+      sortingFn: (rowA, rowB) =>
+        rowA.original.first_name.localeCompare(rowB.original.first_name, undefined, { sensitivity: "base" }),
       header: ({ column }) => (
         <Button
           variant="ghost"
           className="-ml-4"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={(e) => column.toggleSorting(column.getIsSorted() === "asc", e.shiftKey)}
         >
           First Name
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -147,11 +154,13 @@ export function EmployeesClient({
     },
     {
       accessorKey: "last_name",
+      sortingFn: (rowA, rowB) =>
+        rowA.original.last_name.localeCompare(rowB.original.last_name, undefined, { sensitivity: "base" }),
       header: ({ column }) => (
         <Button
           variant="ghost"
           className="-ml-4"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={(e) => column.toggleSorting(column.getIsSorted() === "asc", e.shiftKey)}
         >
           Last Name
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -166,7 +175,7 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={(e) => column.toggleSorting(column.getIsSorted() === "asc", e.shiftKey)}
         >
           Role
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -177,11 +186,16 @@ export function EmployeesClient({
     {
       id: "team",
       accessorFn: (row) => (row.team_id ? teamMap[row.team_id] ?? "—" : "—"),
+      sortingFn: (rowA, rowB) => {
+        const a = rowA.getValue<string>("team");
+        const b = rowB.getValue<string>("team");
+        return a.localeCompare(b, undefined, { sensitivity: "base" });
+      },
       header: ({ column }) => (
         <Button
           variant="ghost"
           className="-ml-4"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={(e) => column.toggleSorting(column.getIsSorted() === "asc", e.shiftKey)}
         >
           Team
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -190,11 +204,13 @@ export function EmployeesClient({
     },
     {
       accessorKey: "email",
+      sortingFn: (rowA, rowB) =>
+        rowA.original.email.localeCompare(rowB.original.email, undefined, { sensitivity: "base" }),
       header: ({ column }) => (
         <Button
           variant="ghost"
           className="-ml-4"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={(e) => column.toggleSorting(column.getIsSorted() === "asc", e.shiftKey)}
         >
           Email Address
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -203,8 +219,50 @@ export function EmployeesClient({
     },
     {
       id: "status",
+      accessorFn: (row) =>
+        row.accepted_at ? "Active" : row.invited_at ? "Invited" : "Not invited",
       header: "Status",
       cell: ({ row }) => <InviteStatus member={row.original} />,
+    },
+    {
+      id: "last_log_in",
+      accessorFn: (row) =>
+        row.last_log_in
+          ? new Date(row.last_log_in).toLocaleString("en-GB", {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            })
+          : "—",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          className="-ml-4"
+          onClick={(e) => column.toggleSorting(column.getIsSorted() === "asc", e.shiftKey)}
+        >
+          Last Log-in
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+      sortingFn: (rowA, rowB) => {
+        const a = rowA.original.last_log_in;
+        const b = rowB.original.last_log_in;
+        if (!a && !b) return 0;
+        if (!a) return -1;
+        if (!b) return 1;
+        return new Date(a).getTime() - new Date(b).getTime();
+      },
+      filterFn: (row, _columnId, filterValue: { from?: string; to?: string }) => {
+        const logIn = row.original.last_log_in;
+        if (!logIn) return false;
+        const date = logIn.slice(0, 10);
+        if (filterValue.from && date < filterValue.from) return false;
+        if (filterValue.to && date > filterValue.to) return false;
+        return true;
+      },
     },
     ...(canManage
       ? [
@@ -238,10 +296,13 @@ export function EmployeesClient({
   const table = useReactTable({
     data: members,
     columns,
-    state: { sorting },
+    state: { sorting, columnFilters },
     onSortingChange: setSorting,
+    onColumnFiltersChange: setColumnFilters,
+    enableMultiSort: true,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
   });
 
   return (
@@ -268,6 +329,115 @@ export function EmployeesClient({
                 ))}
               </TableRow>
             ))}
+            <TableRow className="bg-muted/50 hover:bg-muted/50">
+              {table.getHeaderGroups()[0]?.headers.map((header) => {
+                const columnId = header.column.id;
+                if (columnId === "actions") {
+                  return <TableHead key={`filter-${header.id}`} />;
+                }
+                if (columnId === "role") {
+                  return (
+                    <TableHead key={`filter-${header.id}`} className="py-2">
+                      <select
+                        className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+                        value={(header.column.getFilterValue() as string) ?? ""}
+                        onChange={(e) =>
+                          header.column.setFilterValue(e.target.value || undefined)
+                        }
+                      >
+                        <option value="">All</option>
+                        <option value="Owner">Owner</option>
+                        <option value="Admin">Admin</option>
+                        <option value={capitalize(memberLabel)}>{capitalize(memberLabel)}</option>
+                      </select>
+                    </TableHead>
+                  );
+                }
+                if (columnId === "team") {
+                  return (
+                    <TableHead key={`filter-${header.id}`} className="py-2">
+                      <select
+                        className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+                        value={(header.column.getFilterValue() as string) ?? ""}
+                        onChange={(e) =>
+                          header.column.setFilterValue(e.target.value || undefined)
+                        }
+                      >
+                        <option value="">All</option>
+                        {teams.map((team) => (
+                          <option key={team.id} value={team.name}>
+                            {team.name}
+                          </option>
+                        ))}
+                      </select>
+                    </TableHead>
+                  );
+                }
+                if (columnId === "status") {
+                  return (
+                    <TableHead key={`filter-${header.id}`} className="py-2">
+                      <select
+                        className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+                        value={(header.column.getFilterValue() as string) ?? ""}
+                        onChange={(e) =>
+                          header.column.setFilterValue(e.target.value || undefined)
+                        }
+                      >
+                        <option value="">All</option>
+                        <option value="Active">Active</option>
+                        <option value="Invited">Invited</option>
+                        <option value="Not invited">Not invited</option>
+                      </select>
+                    </TableHead>
+                  );
+                }
+                if (columnId === "last_log_in") {
+                  const dateFilter = (header.column.getFilterValue() as { from?: string; to?: string }) ?? {};
+                  return (
+                    <TableHead key={`filter-${header.id}`} className="py-2">
+                      <div className="flex flex-col gap-1">
+                        <input
+                          type="date"
+                          className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs"
+                          placeholder="From"
+                          value={dateFilter.from ?? ""}
+                          onChange={(e) =>
+                            header.column.setFilterValue({
+                              ...dateFilter,
+                              from: e.target.value || undefined,
+                            })
+                          }
+                        />
+                        <input
+                          type="date"
+                          className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs"
+                          placeholder="To"
+                          value={dateFilter.to ?? ""}
+                          onChange={(e) =>
+                            header.column.setFilterValue({
+                              ...dateFilter,
+                              to: e.target.value || undefined,
+                            })
+                          }
+                        />
+                      </div>
+                    </TableHead>
+                  );
+                }
+                return (
+                  <TableHead key={`filter-${header.id}`} className="py-2">
+                    <Input
+                      placeholder="Filter..."
+                      className="h-8 text-sm"
+                      value={(header.column.getFilterValue() as string) ?? ""}
+                      onChange={(e) =>
+                        header.column.setFilterValue(e.target.value || undefined)
+                      }
+                    />
+                  </TableHead>
+                );
+              })}
+            </TableRow>
           </TableHeader>
           <TableBody>
             {table.getRowModel().rows.length ? (
