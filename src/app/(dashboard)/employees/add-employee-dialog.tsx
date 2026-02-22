@@ -40,6 +40,7 @@ export function AddEmployeeDialog({
   const [email, setEmail] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [payrollNumber, setPayrollNumber] = useState("");
   const [teamId, setTeamId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -48,6 +49,7 @@ export function AddEmployeeDialog({
     setEmail("");
     setFirstName("");
     setLastName("");
+    setPayrollNumber("");
     setTeamId(null);
     setError(null);
   }
@@ -62,6 +64,7 @@ export function AddEmployeeDialog({
       firstName,
       lastName,
       teamId,
+      payrollNumber: payrollNumber.trim() || null,
     });
 
     if (!result.success) {
@@ -124,6 +127,17 @@ export function AddEmployeeDialog({
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
               required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="add-payroll">Payroll Number</Label>
+            <Input
+              id="add-payroll"
+              type="text"
+              placeholder="Optional"
+              maxLength={50}
+              value={payrollNumber}
+              onChange={(e) => setPayrollNumber(e.target.value)}
             />
           </div>
           {teams.length > 0 && (

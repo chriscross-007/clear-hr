@@ -57,6 +57,8 @@ export type MemberResult = {
   invited_at: string | null;
   accepted_at: string | null;
   team_id: string | null;
+  payroll_number: string | null;
+  last_log_in: string | null;
 };
 
 // Add employee — creates org_member record only, no auth user
@@ -65,6 +67,7 @@ export async function addEmployee(formData: {
   firstName: string;
   lastName: string;
   teamId?: string | null;
+  payrollNumber?: string | null;
 }): Promise<{ success: boolean; error?: string; member?: MemberResult }> {
   try {
     const membership = await getCallerMembership();
@@ -89,6 +92,25 @@ export async function addEmployee(formData: {
       };
     }
 
+    // Check for duplicate payroll number
+    const trimmedPayroll = formData.payrollNumber?.trim() || null;
+    if (trimmedPayroll) {
+      const { data: existing } = await admin
+        .from("members")
+        .select("first_name, last_name")
+        .eq("organisation_id", membership.organisation_id)
+        .eq("payroll_number", trimmedPayroll)
+        .limit(1)
+        .single();
+
+      if (existing) {
+        return {
+          success: false,
+          error: `Payroll Number ${trimmedPayroll} has already been issued to ${existing.first_name} ${existing.last_name}. Please resolve the conflict.`,
+        };
+      }
+    }
+
     const { data: newMember, error: memberError } = await admin
       .from("members")
       .insert({
@@ -98,6 +120,7 @@ export async function addEmployee(formData: {
         last_name: formData.lastName,
         role: "employee",
         team_id: formData.teamId || null,
+        payroll_number: trimmedPayroll,
         permissions: {
           can_request_holidays: true,
           can_approve_holidays: false,
@@ -133,6 +156,8 @@ export async function addEmployee(formData: {
         invited_at: null,
         accepted_at: null,
         team_id: formData.teamId || null,
+        payroll_number: trimmedPayroll,
+        last_log_in: null,
       },
     };
   } catch (e) {
@@ -216,18 +241,41 @@ export async function updateEmployee(formData: {
   firstName: string;
   lastName: string;
   role?: string;
+  payrollNumber?: string | null;
 }): Promise<{ success: boolean; error?: string }> {
   try {
     const membership = await getCallerMembership();
     const admin = createAdminClient();
 
-    const updateData: Record<string, string> = {
+    const trimmedPayroll = formData.payrollNumber?.trim() || null;
+
+    // Check for duplicate payroll number (exclude current member)
+    if (trimmedPayroll) {
+      const { data: existing } = await admin
+        .from("members")
+        .select("first_name, last_name")
+        .eq("organisation_id", membership.organisation_id)
+        .eq("payroll_number", trimmedPayroll)
+        .neq("id", formData.memberId)
+        .limit(1)
+        .single();
+
+      if (existing) {
+        return {
+          success: false,
+          error: `Payroll Number ${trimmedPayroll} has already been issued to ${existing.first_name} ${existing.last_name}. Please resolve the conflict.`,
+        };
+      }
+    }
+
+    const updateData: Record<string, string | null> = {
       first_name: formData.firstName,
       last_name: formData.lastName,
+      payroll_number: trimmedPayroll,
     };
 
-    // Role change validation
-    if (formData.role) {
+    // Role change validation (skip if owner — owner role is immutable)
+    if (formData.role && formData.role !== "owner") {
       const validRoles = ["admin", "employee"];
       if (!validRoles.includes(formData.role)) {
         return { success: false, error: "Invalid role" };

@@ -12,7 +12,7 @@ import {
   type ColumnFiltersState,
 } from "@tanstack/react-table";
 import Link from "next/link";
-import { Pencil, Plus, ArrowUpDown, Trash2 } from "lucide-react";
+import { Pencil, Plus, ArrowUpDown, Trash2, FileDown } from "lucide-react";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { deleteEmployee } from "./actions";
@@ -63,6 +63,7 @@ export type Member = {
   accepted_at: string | null;
   team_id: string | null;
   last_log_in: string | null;
+  payroll_number: string | null;
 };
 
 function RoleBadge({ role, memberLabel }: { role: string; memberLabel: string }) {
@@ -114,6 +115,7 @@ interface EmployeesClientProps {
   canManage: boolean;
   maxEmployees: number;
   isOwner: boolean;
+  orgName: string;
   teams: Team[];
 }
 
@@ -122,6 +124,7 @@ export function EmployeesClient({
   canManage,
   maxEmployees,
   isOwner,
+  orgName,
   teams,
 }: EmployeesClientProps) {
   const { memberLabel } = useMemberLabel();
@@ -134,7 +137,90 @@ export function EmployeesClient({
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showCapacityDialog, setShowCapacityDialog] = useState(false);
+  const [showPdfDialog, setShowPdfDialog] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const atCapacity = members.length >= maxEmployees;
+
+  async function handleDownloadPdf(orientation: "portrait" | "landscape") {
+    setPdfLoading(true);
+    setShowPdfDialog(false);
+    try {
+      const [{ pdf }, { EmployeePDF }] = await Promise.all([
+        import("@react-pdf/renderer"),
+        import("./employee-pdf"),
+      ]);
+
+      // Build active filters list
+      const activeFilters: { label: string; value: string }[] = [];
+      const filterLabels: Record<string, string> = {
+        first_name: "First Name",
+        last_name: "Last Name",
+        payroll_number: "Payroll #",
+        email: "Email",
+        role: "Role",
+        team: "Team",
+        status: "Status",
+        last_log_in: "Last Log-in",
+      };
+      for (const cf of columnFilters) {
+        const label = filterLabels[cf.id] ?? cf.id;
+        if (cf.id === "last_log_in") {
+          const dv = cf.value as { from?: string; to?: string };
+          const parts: string[] = [];
+          if (dv.from) parts.push(`from ${dv.from}`);
+          if (dv.to) parts.push(`to ${dv.to}`);
+          if (parts.length > 0) activeFilters.push({ label, value: parts.join(" ") });
+        } else {
+          activeFilters.push({ label, value: String(cf.value) });
+        }
+      }
+
+      const rows = table.getRowModel().rows.map((row) => {
+        const m = row.original;
+        return {
+          first_name: m.first_name,
+          last_name: m.last_name,
+          payroll_number: m.payroll_number ?? "—",
+          role: m.role === "admin" ? "Admin" : m.role === "owner" ? "Owner" : capitalize(memberLabel),
+          team: m.team_id ? teamMap[m.team_id] ?? "—" : "—",
+          email: m.email,
+          status: m.accepted_at ? "Active" : m.invited_at ? "Invited" : "Not invited",
+          last_log_in: m.last_log_in
+            ? new Date(m.last_log_in).toLocaleString("en-GB", {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+              })
+            : "—",
+        };
+      });
+
+      const title = `${capitalize(pluralize(memberLabel))} Directory`;
+      const blob = await pdf(
+        <EmployeePDF
+          rows={rows}
+          orgName={orgName}
+          title={title}
+          orientation={orientation}
+          filters={activeFilters.length > 0 ? activeFilters : undefined}
+        />
+      ).toBlob();
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${title}.pdf`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("PDF generation failed:", err);
+    } finally {
+      setPdfLoading(false);
+    }
+  }
 
   const columns: ColumnDef<Member>[] = [
     {
@@ -145,7 +231,13 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
-          onClick={(e) => column.toggleSorting(column.getIsSorted() === "asc", e.shiftKey)}
+          onClick={(e) => {
+            if (e.shiftKey) {
+              column.toggleSorting(column.getIsSorted() === "asc", true);
+            } else {
+              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+            }
+          }}
         >
           First Name
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -160,12 +252,40 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
-          onClick={(e) => column.toggleSorting(column.getIsSorted() === "asc", e.shiftKey)}
+          onClick={(e) => {
+            if (e.shiftKey) {
+              column.toggleSorting(column.getIsSorted() === "asc", true);
+            } else {
+              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+            }
+          }}
         >
           Last Name
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
       ),
+    },
+    {
+      accessorKey: "payroll_number",
+      sortingFn: (rowA, rowB) =>
+        (rowA.original.payroll_number ?? "").localeCompare(rowB.original.payroll_number ?? "", undefined, { sensitivity: "base" }),
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          className="-ml-4"
+          onClick={(e) => {
+            if (e.shiftKey) {
+              column.toggleSorting(column.getIsSorted() === "asc", true);
+            } else {
+              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+            }
+          }}
+        >
+          Payroll #
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+      cell: ({ row }) => row.original.payroll_number ?? "—",
     },
     {
       id: "role",
@@ -175,7 +295,13 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
-          onClick={(e) => column.toggleSorting(column.getIsSorted() === "asc", e.shiftKey)}
+          onClick={(e) => {
+            if (e.shiftKey) {
+              column.toggleSorting(column.getIsSorted() === "asc", true);
+            } else {
+              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+            }
+          }}
         >
           Role
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -195,7 +321,13 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
-          onClick={(e) => column.toggleSorting(column.getIsSorted() === "asc", e.shiftKey)}
+          onClick={(e) => {
+            if (e.shiftKey) {
+              column.toggleSorting(column.getIsSorted() === "asc", true);
+            } else {
+              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+            }
+          }}
         >
           Team
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -210,7 +342,13 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
-          onClick={(e) => column.toggleSorting(column.getIsSorted() === "asc", e.shiftKey)}
+          onClick={(e) => {
+            if (e.shiftKey) {
+              column.toggleSorting(column.getIsSorted() === "asc", true);
+            } else {
+              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+            }
+          }}
         >
           Email Address
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -241,7 +379,13 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
-          onClick={(e) => column.toggleSorting(column.getIsSorted() === "asc", e.shiftKey)}
+          onClick={(e) => {
+            if (e.shiftKey) {
+              column.toggleSorting(column.getIsSorted() === "asc", true);
+            } else {
+              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+            }
+          }}
         >
           Last Log-in
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -334,6 +478,20 @@ export function EmployeesClient({
                 const columnId = header.column.id;
                 if (columnId === "actions") {
                   return <TableHead key={`filter-${header.id}`} />;
+                }
+                if (columnId === "payroll_number") {
+                  return (
+                    <TableHead key={`filter-${header.id}`} className="py-2">
+                      <Input
+                        placeholder="Filter..."
+                        className="h-8 text-sm"
+                        value={(header.column.getFilterValue() as string) ?? ""}
+                        onChange={(e) =>
+                          header.column.setFilterValue(e.target.value || undefined)
+                        }
+                      />
+                    </TableHead>
+                  );
                 }
                 if (columnId === "role") {
                   return (
@@ -467,9 +625,17 @@ export function EmployeesClient({
         </Table>
       </div>
 
-      {/* Add button */}
-      {canManage && (
-        <div className="mt-4 flex justify-center">
+      {/* Action buttons */}
+      <div className="mt-4 flex justify-center gap-2">
+        <Button
+          variant="outline"
+          onClick={() => setShowPdfDialog(true)}
+          disabled={pdfLoading}
+        >
+          <FileDown className="h-4 w-4 mr-2" />
+          {pdfLoading ? "Generating..." : "Download PDF"}
+        </Button>
+        {canManage && (
           <Button
             variant="outline"
             onClick={() => atCapacity ? setShowCapacityDialog(true) : setShowAddDialog(true)}
@@ -477,8 +643,8 @@ export function EmployeesClient({
             <Plus className="h-4 w-4 mr-2" />
             Add {capitalize(memberLabel)}
           </Button>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Dialogs */}
       <EditEmployeeDialog
@@ -490,7 +656,7 @@ export function EmployeesClient({
           setMembers((prev) =>
             prev.map((m) =>
               m.member_id === updated.member_id
-                ? { ...m, first_name: updated.first_name, last_name: updated.last_name, role: updated.role, team_id: updated.team_id }
+                ? { ...m, first_name: updated.first_name, last_name: updated.last_name, role: updated.role, team_id: updated.team_id, payroll_number: updated.payroll_number }
                 : m
             )
           );
@@ -534,6 +700,34 @@ export function EmployeesClient({
               </Button>
             )}
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* PDF orientation dialog */}
+      <Dialog open={showPdfDialog} onOpenChange={setShowPdfDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Download PDF</DialogTitle>
+            <DialogDescription>
+              Choose the page orientation for your report.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-3 justify-center py-4">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => handleDownloadPdf("portrait")}
+            >
+              Portrait
+            </Button>
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => handleDownloadPdf("landscape")}
+            >
+              Landscape
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 

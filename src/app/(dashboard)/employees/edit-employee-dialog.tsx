@@ -36,6 +36,7 @@ interface EditEmployeeDialogProps {
     last_name: string;
     role: string;
     team_id: string | null;
+    payroll_number: string | null;
   }) => void;
   onInviteStatusChanged: (memberId: string, invitedAt: string) => void;
 }
@@ -51,6 +52,7 @@ export function EditEmployeeDialog({
   const { memberLabel } = useMemberLabel();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [payrollNumber, setPayrollNumber] = useState("");
   const [role, setRole] = useState("");
   const [teamId, setTeamId] = useState<string | null>(null);
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
@@ -65,6 +67,7 @@ export function EditEmployeeDialog({
     if (member) {
       setFirstName(member.first_name);
       setLastName(member.last_name);
+      setPayrollNumber(member.payroll_number ?? "");
       setRole(member.role);
       setTeamId(member.team_id);
       setError(null);
@@ -97,6 +100,7 @@ export function EditEmployeeDialog({
       firstName,
       lastName,
       role,
+      payrollNumber: payrollNumber.trim() || null,
     });
 
     if (!result.success) {
@@ -129,6 +133,7 @@ export function EditEmployeeDialog({
       last_name: lastName,
       role,
       team_id: isMultiTeam ? (selectedTeamIds[0] ?? null) : teamId,
+      payroll_number: payrollNumber.trim() || null,
     });
   }
 
@@ -209,6 +214,17 @@ export function EditEmployeeDialog({
             />
           </div>
           <div className="space-y-2">
+            <Label htmlFor="edit-payroll">Payroll Number</Label>
+            <Input
+              id="edit-payroll"
+              type="text"
+              placeholder="Optional"
+              maxLength={50}
+              value={payrollNumber}
+              onChange={(e) => setPayrollNumber(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
             <Label>Role</Label>
             {member?.role === "owner" ? (
               <Input value="Owner" disabled className="bg-muted" />
@@ -272,14 +288,16 @@ export function EditEmployeeDialog({
             </div>
           )}
           <DialogFooter>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={handleInvite}
-              disabled={isAccepted || inviting}
-            >
-              {getInviteButtonLabel()}
-            </Button>
+            {!isAccepted && (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleInvite}
+                disabled={inviting}
+              >
+                {getInviteButtonLabel()}
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"
