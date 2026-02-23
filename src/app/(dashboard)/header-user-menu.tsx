@@ -24,6 +24,7 @@ interface HeaderUserMenuProps {
   orgName: string;
   memberLabel: string;
   plan: string;
+  requireMfa: boolean;
 }
 
 export function HeaderUserMenu({
@@ -35,6 +36,7 @@ export function HeaderUserMenu({
   orgName,
   memberLabel,
   plan,
+  requireMfa,
 }: HeaderUserMenuProps) {
   const [showOrgEdit, setShowOrgEdit] = useState(false);
   const { theme, setTheme } = useTheme();
@@ -99,6 +101,7 @@ export function HeaderUserMenu({
           orgName={orgName}
           memberLabel={memberLabel}
           plan={plan}
+          requireMfa={requireMfa}
         />
       )}
     </>

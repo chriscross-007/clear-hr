@@ -52,6 +52,8 @@ export async function updateSession(request: NextRequest) {
     "/organisation-setup",
     "/accept-invite",
     "/api/webhooks",
+    "/mfa-setup",
+    "/mfa-verify",
   ];
 
   const pathname = request.nextUrl.pathname;
@@ -61,7 +63,7 @@ export async function updateSession(request: NextRequest) {
   if (claims?.sub && !isSkipped) {
     const { data: membership } = await supabase
       .from("members")
-      .select("id")
+      .select("id, organisations(require_mfa)")
       .eq("user_id", claims.sub)
       .limit(1)
       .maybeSingle();
@@ -69,6 +71,19 @@ export async function updateSession(request: NextRequest) {
     if (!membership) {
       const url = request.nextUrl.clone();
       url.pathname = "/organisation-setup";
+      const redirectResponse = NextResponse.redirect(url);
+      supabaseResponse.cookies.getAll().forEach((cookie) => {
+        redirectResponse.cookies.set(cookie.name, cookie.value);
+      });
+      return redirectResponse;
+    }
+
+    // MFA enforcement: if org requires MFA and session is not aal2, redirect
+    const org = membership.organisations as unknown as { require_mfa: boolean } | null;
+    const aal = (claims as Record<string, unknown>).aal as string | undefined;
+    if (org?.require_mfa && aal !== "aal2") {
+      const url = request.nextUrl.clone();
+      url.pathname = "/mfa-verify";
       const redirectResponse = NextResponse.redirect(url);
       supabaseResponse.cookies.getAll().forEach((cookie) => {
         redirectResponse.cookies.set(cookie.name, cookie.value);

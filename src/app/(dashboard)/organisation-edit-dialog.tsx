@@ -9,6 +9,7 @@ import { getTeams, createTeam, deleteTeam } from "./employees/team-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -28,6 +29,7 @@ interface OrganisationEditDialogProps {
   orgName: string;
   memberLabel: string;
   plan: string;
+  requireMfa: boolean;
 }
 
 export function OrganisationEditDialog({
@@ -36,6 +38,7 @@ export function OrganisationEditDialog({
   orgName,
   memberLabel,
   plan,
+  requireMfa,
 }: OrganisationEditDialogProps) {
   const [name, setName] = useState(orgName);
   const [label, setLabel] = useState(memberLabel);
@@ -45,6 +48,7 @@ export function OrganisationEditDialog({
   const [newTeamName, setNewTeamName] = useState("");
   const [teamLoading, setTeamLoading] = useState(false);
   const [teamError, setTeamError] = useState<string | null>(null);
+  const [mfaRequired, setMfaRequired] = useState(requireMfa);
   const router = useRouter();
 
   useEffect(() => {
@@ -54,6 +58,7 @@ export function OrganisationEditDialog({
       setError(null);
       setTeamError(null);
       setNewTeamName("");
+      setMfaRequired(requireMfa);
       // Load teams
       getTeams().then((result) => {
         if (result.success && result.teams) {
@@ -61,7 +66,7 @@ export function OrganisationEditDialog({
         }
       });
     }
-  }, [open, orgName, memberLabel]);
+  }, [open, orgName, memberLabel, requireMfa]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -71,6 +76,7 @@ export function OrganisationEditDialog({
     const result = await updateOrganisation({
       name,
       memberLabel: label,
+      requireMfa: mfaRequired,
     });
 
     if (!result.success) {
@@ -127,6 +133,7 @@ export function OrganisationEditDialog({
             <Input
               id="org-name"
               type="text"
+              maxLength={50}
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
@@ -151,6 +158,7 @@ export function OrganisationEditDialog({
               id="org-member-label"
               type="text"
               placeholder="e.g. employee, colleague, member"
+              maxLength={50}
               value={label}
               onChange={(e) => setLabel(e.target.value)}
             />
@@ -187,6 +195,7 @@ export function OrganisationEditDialog({
                 <Input
                   type="text"
                   placeholder="New team name"
+                  maxLength={50}
                   value={newTeamName}
                   onChange={(e) => setNewTeamName(e.target.value)}
                   onKeyDown={(e) => {
@@ -207,6 +216,19 @@ export function OrganisationEditDialog({
                 </Button>
               </div>
             </div>
+          </div>
+          <div className="flex items-center justify-between rounded-md border px-3 py-3">
+            <div className="space-y-0.5">
+              <Label htmlFor="org-require-mfa">Require Two-Factor Authentication</Label>
+              <p className="text-xs text-muted-foreground">
+                All members must verify with an authenticator app when signing in
+              </p>
+            </div>
+            <Switch
+              id="org-require-mfa"
+              checked={mfaRequired}
+              onCheckedChange={setMfaRequired}
+            />
           </div>
           <div className="space-y-2">
             <Label>Plan</Label>

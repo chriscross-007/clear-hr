@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 export async function updateOrganisation(data: {
   name: string;
   memberLabel: string;
+  requireMfa?: boolean;
 }) {
   const supabase = await createClient();
   const {
@@ -25,12 +26,18 @@ export async function updateOrganisation(data: {
   if (membership.role !== "owner")
     return { success: false, error: "Only the owner can edit organisation settings" };
 
+  const updatePayload: Record<string, string | boolean> = {
+    name: data.name,
+    member_label: data.memberLabel || "member",
+  };
+
+  if (typeof data.requireMfa === "boolean") {
+    updatePayload.require_mfa = data.requireMfa;
+  }
+
   const { error } = await supabase
     .from("organisations")
-    .update({
-      name: data.name,
-      member_label: data.memberLabel || "member",
-    })
+    .update(updatePayload)
     .eq("id", membership.organisation_id);
 
   if (error) return { success: false, error: error.message };

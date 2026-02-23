@@ -198,6 +198,7 @@ export function EditEmployeeDialog({
             <Input
               id="edit-first-name"
               type="text"
+              maxLength={50}
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
               required
@@ -208,6 +209,7 @@ export function EditEmployeeDialog({
             <Input
               id="edit-last-name"
               type="text"
+              maxLength={50}
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
               required

@@ -97,6 +97,7 @@ export default function OrganisationSetupPage() {
                   id="name"
                   type="text"
                   placeholder="e.g. Acme Corp"
+                  maxLength={50}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
@@ -122,6 +123,7 @@ export default function OrganisationSetupPage() {
                   id="memberLabel"
                   type="text"
                   placeholder="e.g. employee, colleague, member"
+                  maxLength={50}
                   value={memberLabel}
                   onChange={(e) => setMemberLabel(e.target.value)}
                 />

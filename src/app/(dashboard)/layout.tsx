@@ -19,7 +19,7 @@ export default async function DashboardLayout({
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees)")
+    .select("organisation_id, role, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees, require_mfa)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -33,6 +33,7 @@ export default async function DashboardLayout({
     subscription_status: string | null;
     trial_ends_at: string | null;
     max_employees: number;
+    require_mfa: boolean;
   };
   const memberLabel = org?.member_label || "member";
 
@@ -111,6 +112,7 @@ export default async function DashboardLayout({
               orgName={org?.name}
               memberLabel={memberLabel}
               plan={org?.plan}
+              requireMfa={org?.require_mfa ?? false}
             />
           </div>
         </header>

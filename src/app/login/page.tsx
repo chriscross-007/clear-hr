@@ -44,7 +44,15 @@ function LoginForm() {
       setError(error.message);
       setLoading(false);
     } else {
-      router.push("/");
+      // Check if user has MFA factors enrolled — if so, go to verify page
+      const { data: aalData } =
+        await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+
+      if (aalData?.nextLevel === "aal2") {
+        router.push("/mfa-verify");
+      } else {
+        router.push("/");
+      }
       router.refresh();
     }
   }

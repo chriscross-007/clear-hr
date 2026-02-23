@@ -113,6 +113,7 @@ export function AddEmployeeDialog({
               id="add-first-name"
               type="text"
               placeholder="First name"
+              maxLength={50}
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
               required
@@ -124,6 +125,7 @@ export function AddEmployeeDialog({
               id="add-last-name"
               type="text"
               placeholder="Last name"
+              maxLength={50}
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
               required
