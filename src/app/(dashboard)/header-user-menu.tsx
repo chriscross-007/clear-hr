@@ -79,6 +79,11 @@ export function HeaderUserMenu({
                 <Link href="/billing">Billing</Link>
               </DropdownMenuItem>
             )}
+            {(role === "owner" || role === "admin") && (
+              <DropdownMenuItem asChild>
+                <Link href="/audit">Audit Trail</Link>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onSelect={() => setTheme(theme === "dark" ? "vibrant" : "dark")}

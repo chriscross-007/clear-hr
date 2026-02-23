@@ -95,12 +95,16 @@ export function EditEmployeeDialog({
     setLoading(true);
     setError(null);
 
+    const teamIds = isMultiTeam ? selectedTeamIds : (teamId ? [teamId] : []);
+
     const result = await updateEmployee({
       memberId: member.member_id,
       firstName,
       lastName,
       role,
       payrollNumber: payrollNumber.trim() || null,
+      teamIds,
+      isMultiTeam,
     });
 
     if (!result.success) {
@@ -109,16 +113,16 @@ export function EditEmployeeDialog({
       return;
     }
 
-    // Save team assignment
+    // Save team assignment (audit is handled by updateEmployee)
     if (isMultiTeam) {
-      const teamResult = await setMemberTeams(member.member_id, selectedTeamIds);
+      const teamResult = await setMemberTeams(member.member_id, selectedTeamIds, true);
       if (!teamResult.success) {
         setError(teamResult.error ?? "Failed to update teams");
         setLoading(false);
         return;
       }
     } else {
-      const teamResult = await updateMemberTeam(member.member_id, teamId);
+      const teamResult = await updateMemberTeam(member.member_id, teamId, true);
       if (!teamResult.success) {
         setError(teamResult.error ?? "Failed to update team");
         setLoading(false);

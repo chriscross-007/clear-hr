@@ -189,7 +189,7 @@ export function EmployeePDF({
           {rows.map((row, i) => (
             <View
               key={i}
-              style={[styles.tableRow, i % 2 === 1 && styles.tableRowAlt]}
+              style={[styles.tableRow, i % 2 === 1 ? styles.tableRowAlt : {}]}
               wrap={false}
             >
               {columns.map((col) => (

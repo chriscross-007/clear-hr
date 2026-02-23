@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { logAudit } from "@/lib/audit";
 
 function createAdminClient() {
   return createSupabaseClient(
@@ -27,7 +28,7 @@ async function getCallerMembership() {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("id, organisation_id, role, permissions")
+    .select("id, organisation_id, role, permissions, first_name, last_name")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -91,7 +92,94 @@ export async function createTeam(
       return { success: false, error: error.message };
     }
 
+    logAudit({
+      organisationId: membership.organisation_id,
+      actorId: membership.id,
+      actorName: `${membership.first_name} ${membership.last_name}`,
+      action: "team.created",
+      targetType: "team",
+      targetId: team.id,
+      targetLabel: team.name,
+      changes: { name: { old: null, new: team.name } },
+    });
+
     return { success: true, team };
+  } catch (e) {
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : "An error occurred",
+    };
+  }
+}
+
+export async function renameTeams(
+  renames: { id: string; newName: string }[]
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    if (renames.length === 0) return { success: true };
+
+    const membership = await getCallerMembership();
+
+    if (membership.role !== "owner") {
+      return { success: false, error: "Only the owner can rename teams" };
+    }
+
+    const admin = createAdminClient();
+
+    // Fetch current names for all teams being renamed
+    const ids = renames.map((r) => r.id);
+    const { data: currentTeams } = await admin
+      .from("teams")
+      .select("id, name")
+      .in("id", ids)
+      .eq("organisation_id", membership.organisation_id);
+
+    if (!currentTeams || currentTeams.length !== renames.length) {
+      return { success: false, error: "One or more teams not found" };
+    }
+
+    const currentNameMap: Record<string, string> = {};
+    for (const t of currentTeams) currentNameMap[t.id] = t.name;
+
+    // Filter to only actual changes
+    const actualRenames = renames.filter(
+      (r) => r.newName.trim() && r.newName.trim() !== currentNameMap[r.id]
+    );
+    if (actualRenames.length === 0) return { success: true };
+
+    // Apply each rename
+    for (const r of actualRenames) {
+      const { error } = await admin
+        .from("teams")
+        .update({ name: r.newName.trim() })
+        .eq("id", r.id)
+        .eq("organisation_id", membership.organisation_id);
+
+      if (error) {
+        if (error.code === "23505") {
+          return { success: false, error: `A team with the name "${r.newName.trim()}" already exists` };
+        }
+        return { success: false, error: error.message };
+      }
+    }
+
+    // Single audit entry for all renames
+    const changes: Record<string, { old: unknown; new: unknown }> = {};
+    for (const r of actualRenames) {
+      const oldName = currentNameMap[r.id];
+      changes[oldName] = { old: oldName, new: r.newName.trim() };
+    }
+
+    logAudit({
+      organisationId: membership.organisation_id,
+      actorId: membership.id,
+      actorName: `${membership.first_name} ${membership.last_name}`,
+      action: "team.updated",
+      targetType: "team",
+      changes,
+    });
+
+    return { success: true };
   } catch (e) {
     return {
       success: false,
@@ -111,6 +199,14 @@ export async function deleteTeam(
     }
 
     const admin = createAdminClient();
+
+    // Fetch team name for audit log
+    const { data: team } = await admin
+      .from("teams")
+      .select("name")
+      .eq("id", teamId)
+      .eq("organisation_id", membership.organisation_id)
+      .single();
 
     // Clear team_id on any members assigned to this team
     await admin
@@ -134,6 +230,17 @@ export async function deleteTeam(
 
     if (error) return { success: false, error: error.message };
 
+    logAudit({
+      organisationId: membership.organisation_id,
+      actorId: membership.id,
+      actorName: `${membership.first_name} ${membership.last_name}`,
+      action: "team.deleted",
+      targetType: "team",
+      targetId: teamId,
+      targetLabel: team?.name ?? "Unknown",
+      metadata: { name: team?.name },
+    });
+
     return { success: true };
   } catch (e) {
     return {
@@ -145,7 +252,8 @@ export async function deleteTeam(
 
 export async function updateMemberTeam(
   memberId: string,
-  teamId: string | null
+  teamId: string | null,
+  skipAudit?: boolean
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const membership = await getCallerMembership();
@@ -217,7 +325,8 @@ export async function getMemberTeams(
 
 export async function setMemberTeams(
   memberId: string,
-  teamIds: string[]
+  teamIds: string[],
+  skipAudit?: boolean
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const membership = await getCallerMembership();

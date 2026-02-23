@@ -3,9 +3,9 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Info, Plus, Trash2 } from "lucide-react";
+import { Info, Pencil, Plus, Trash2 } from "lucide-react";
 import { updateOrganisation } from "./organisation-actions";
-import { getTeams, createTeam, deleteTeam } from "./employees/team-actions";
+import { getTeams, createTeam, deleteTeam, renameTeams } from "./employees/team-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,9 +45,12 @@ export function OrganisationEditDialog({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
+  const [originalTeams, setOriginalTeams] = useState<{ id: string; name: string }[]>([]);
   const [newTeamName, setNewTeamName] = useState("");
   const [teamLoading, setTeamLoading] = useState(false);
   const [teamError, setTeamError] = useState<string | null>(null);
+  const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
+  const [editingTeamName, setEditingTeamName] = useState("");
   const [mfaRequired, setMfaRequired] = useState(requireMfa);
   const router = useRouter();
 
@@ -58,11 +61,14 @@ export function OrganisationEditDialog({
       setError(null);
       setTeamError(null);
       setNewTeamName("");
+      setEditingTeamId(null);
+      setEditingTeamName("");
       setMfaRequired(requireMfa);
       // Load teams
       getTeams().then((result) => {
         if (result.success && result.teams) {
           setTeams(result.teams);
+          setOriginalTeams(result.teams);
         }
       });
     }
@@ -72,6 +78,23 @@ export function OrganisationEditDialog({
     e.preventDefault();
     setLoading(true);
     setError(null);
+
+    // Save any pending team renames
+    const pendingRenames = teams
+      .filter((t) => {
+        const orig = originalTeams.find((o) => o.id === t.id);
+        return orig && orig.name !== t.name;
+      })
+      .map((t) => ({ id: t.id, newName: t.name }));
+
+    if (pendingRenames.length > 0) {
+      const renameResult = await renameTeams(pendingRenames);
+      if (!renameResult.success) {
+        setTeamError(renameResult.error ?? "Failed to rename teams");
+        setLoading(false);
+        return;
+      }
+    }
 
     const result = await updateOrganisation({
       name,
@@ -114,6 +137,27 @@ export function OrganisationEditDialog({
     } else {
       setTeams((prev) => prev.filter((t) => t.id !== teamId));
     }
+  }
+
+  function startEditingTeam(team: { id: string; name: string }) {
+    setEditingTeamId(team.id);
+    setEditingTeamName(team.name);
+    setTeamError(null);
+  }
+
+  function handleRenameTeam(teamId: string) {
+    const trimmed = editingTeamName.trim();
+    if (!trimmed) {
+      // Revert to current name if empty
+      setEditingTeamId(null);
+      return;
+    }
+    setTeams((prev) =>
+      prev
+        .map((t) => (t.id === teamId ? { ...t, name: trimmed } : t))
+        .sort((a, b) => a.name.localeCompare(b.name))
+    );
+    setEditingTeamId(null);
   }
 
   return (
@@ -179,16 +223,50 @@ export function OrganisationEditDialog({
                   key={team.id}
                   className="flex items-center justify-between rounded-md border px-3 py-1.5"
                 >
-                  <span className="text-sm">{team.name}</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={() => handleDeleteTeam(team.id)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                  </Button>
+                  {editingTeamId === team.id ? (
+                    <Input
+                      type="text"
+                      maxLength={50}
+                      value={editingTeamName}
+                      onChange={(e) => setEditingTeamName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleRenameTeam(team.id);
+                        }
+                        if (e.key === "Escape") {
+                          setEditingTeamId(null);
+                        }
+                      }}
+                      onBlur={() => handleRenameTeam(team.id)}
+                      autoFocus
+                      className="h-7 text-sm"
+                    />
+                  ) : (
+                    <span className="text-sm">{team.name}</span>
+                  )}
+                  <div className="flex items-center shrink-0 ml-2">
+                    {editingTeamId !== team.id && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => startEditingTeam(team)}
+                      >
+                        <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => handleDeleteTeam(team.id)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                    </Button>
+                  </div>
                 </div>
               ))}
               <div className="flex gap-2">

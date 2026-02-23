@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import { headers } from "next/headers";
+import { logAudit, diffChanges } from "@/lib/audit";
 
 function createAdminClient() {
   return createSupabaseClient(
@@ -29,7 +30,7 @@ async function getCallerMembership() {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role, permissions")
+    .select("id, organisation_id, role, permissions, first_name, last_name")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -143,6 +144,23 @@ export async function addEmployee(formData: {
       return { success: false, error: memberError.message };
     }
 
+    logAudit({
+      organisationId: membership.organisation_id,
+      actorId: membership.id,
+      actorName: `${membership.first_name} ${membership.last_name}`,
+      action: "member.created",
+      targetType: "member",
+      targetId: newMember.id,
+      targetLabel: `${formData.firstName} ${formData.lastName}`,
+      changes: {
+        email: { old: null, new: formData.email },
+        first_name: { old: null, new: formData.firstName },
+        last_name: { old: null, new: formData.lastName },
+        role: { old: null, new: "employee" },
+        team_id: { old: null, new: formData.teamId || null },
+        payroll_number: { old: null, new: trimmedPayroll },
+      },
+    });
 
     return {
       success: true,
@@ -226,6 +244,17 @@ export async function sendInvite(
       .update({ invited_at: now })
       .eq("id", memberId);
 
+    logAudit({
+      organisationId: membership.organisation_id,
+      actorId: membership.id,
+      actorName: `${membership.first_name} ${membership.last_name}`,
+      action: "member.invited",
+      targetType: "member",
+      targetId: memberId,
+      targetLabel: `${member.first_name} (${member.email})`,
+      changes: { invited_at: { old: null, new: now } },
+    });
+
     return { success: true, invited_at: now };
   } catch (e) {
     return {
@@ -242,12 +271,22 @@ export async function updateEmployee(formData: {
   lastName: string;
   role?: string;
   payrollNumber?: string | null;
+  teamIds?: string[];
+  isMultiTeam?: boolean;
 }): Promise<{ success: boolean; error?: string }> {
   try {
     const membership = await getCallerMembership();
     const admin = createAdminClient();
 
     const trimmedPayroll = formData.payrollNumber?.trim() || null;
+
+    // Fetch before-state for audit diff (include team_id)
+    const { data: beforeState } = await admin
+      .from("members")
+      .select("first_name, last_name, role, payroll_number, team_id")
+      .eq("id", formData.memberId)
+      .eq("organisation_id", membership.organisation_id)
+      .single();
 
     // Check for duplicate payroll number (exclude current member)
     if (trimmedPayroll) {
@@ -306,6 +345,88 @@ export async function updateEmployee(formData: {
       return { success: false, error: error.message };
     }
 
+    if (beforeState) {
+      const fieldChanges = diffChanges(
+        {
+          first_name: beforeState.first_name,
+          last_name: beforeState.last_name,
+          role: beforeState.role,
+          payroll_number: beforeState.payroll_number,
+        },
+        {
+          first_name: formData.firstName,
+          last_name: formData.lastName,
+          role: updateData.role ?? beforeState.role,
+          payroll_number: trimmedPayroll,
+        }
+      );
+
+      // Include team changes in the same audit entry if teamIds were provided
+      let teamChanges: Record<string, { old: unknown; new: unknown }> | undefined;
+      if (formData.teamIds !== undefined) {
+        if (formData.isMultiTeam) {
+          // Multi-team: compare old team list vs new
+          const { data: oldTeamRows } = await admin
+            .from("member_teams")
+            .select("team_id")
+            .eq("member_id", formData.memberId);
+          const oldTeamIds = (oldTeamRows ?? []).map((r) => r.team_id).sort();
+          const newTeamIds = [...formData.teamIds].sort();
+          if (JSON.stringify(oldTeamIds) !== JSON.stringify(newTeamIds)) {
+            const allIds = [...new Set([...oldTeamIds, ...newTeamIds])];
+            const teamNameMap: Record<string, string> = {};
+            if (allIds.length > 0) {
+              const { data: teams } = await admin
+                .from("teams")
+                .select("id, name")
+                .in("id", allIds);
+              for (const t of teams ?? []) teamNameMap[t.id] = t.name;
+            }
+            teamChanges = {
+              teams: {
+                old: oldTeamIds.map((id: string) => teamNameMap[id] ?? "Unknown"),
+                new: newTeamIds.map((id: string) => teamNameMap[id] ?? "Unknown"),
+              },
+            };
+          }
+        } else {
+          // Single-team: compare old team_id vs new
+          const newTeamId = formData.teamIds.length > 0 ? formData.teamIds[0] : null;
+          if ((beforeState.team_id ?? null) !== (newTeamId ?? null)) {
+            const idsToResolve = [beforeState.team_id, newTeamId].filter(Boolean) as string[];
+            const teamNameMap: Record<string, string> = {};
+            if (idsToResolve.length > 0) {
+              const { data: teams } = await admin
+                .from("teams")
+                .select("id, name")
+                .in("id", idsToResolve);
+              for (const t of teams ?? []) teamNameMap[t.id] = t.name;
+            }
+            teamChanges = {
+              team: {
+                old: beforeState.team_id ? (teamNameMap[beforeState.team_id] ?? "Unknown") : null,
+                new: newTeamId ? (teamNameMap[newTeamId] ?? "Unknown") : null,
+              },
+            };
+          }
+        }
+      }
+
+      const allChanges = { ...fieldChanges, ...teamChanges };
+      if (Object.keys(allChanges).length > 0) {
+        logAudit({
+          organisationId: membership.organisation_id,
+          actorId: membership.id,
+          actorName: `${membership.first_name} ${membership.last_name}`,
+          action: "member.updated",
+          targetType: "member",
+          targetId: formData.memberId,
+          targetLabel: `${formData.firstName} ${formData.lastName}`,
+          changes: allChanges,
+        });
+      }
+    }
+
     return { success: true };
   } catch (e) {
     return {
@@ -323,10 +444,10 @@ export async function deleteEmployee(
     const membership = await getCallerMembership();
     const admin = createAdminClient();
 
-    // Fetch the member to check ownership and get user_id
+    // Fetch the member to check ownership and get full record for audit
     const { data: member, error: fetchError } = await admin
       .from("members")
-      .select("id, user_id, role")
+      .select("id, user_id, role, email, first_name, last_name, payroll_number, team_id")
       .eq("id", memberId)
       .eq("organisation_id", membership.organisation_id)
       .single();
@@ -360,6 +481,23 @@ export async function deleteEmployee(
       }
     }
 
+    logAudit({
+      organisationId: membership.organisation_id,
+      actorId: membership.id,
+      actorName: `${membership.first_name} ${membership.last_name}`,
+      action: "member.deleted",
+      targetType: "member",
+      targetId: memberId,
+      targetLabel: `${member.first_name} ${member.last_name}`,
+      metadata: {
+        email: member.email,
+        first_name: member.first_name,
+        last_name: member.last_name,
+        role: member.role,
+        payroll_number: member.payroll_number,
+        team_id: member.team_id,
+      },
+    });
 
     return { success: true };
   } catch (e) {
