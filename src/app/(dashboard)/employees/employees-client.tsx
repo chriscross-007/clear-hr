@@ -692,6 +692,14 @@ export function EmployeesClient({
 
       {/* Action buttons */}
       <div className="mt-4 flex justify-center gap-2">
+        {columnFilters.length > 0 && (
+          <Button
+            variant="outline"
+            onClick={() => setColumnFilters([])}
+          >
+            Clear Filters
+          </Button>
+        )}
         <Button
           variant="outline"
           onClick={() => setShowPdfDialog(true)}

@@ -19,7 +19,7 @@ export default async function DashboardLayout({
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees, require_mfa)")
+    .select("organisation_id, role, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees, require_mfa), admin_profiles(name), employee_profiles(name)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -36,6 +36,13 @@ export default async function DashboardLayout({
     require_mfa: boolean;
   };
   const memberLabel = org?.member_label || "member";
+
+  const adminProfile = membership.admin_profiles as unknown as { name: string } | null;
+  const employeeProfile = membership.employee_profiles as unknown as { name: string } | null;
+  const profileName =
+    membership.role === "admin" || membership.role === "owner"
+      ? (adminProfile?.name ?? null)
+      : (employeeProfile?.name ?? null);
 
   // Member count for header display (bypasses RLS visibility so all users see the true total)
   const { data: countResult } = await supabase
@@ -114,6 +121,7 @@ export default async function DashboardLayout({
               memberLabel={memberLabel}
               plan={org?.plan}
               requireMfa={org?.require_mfa ?? false}
+              profileName={profileName}
             />
           </div>
         </header>
