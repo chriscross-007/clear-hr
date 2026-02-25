@@ -2,7 +2,12 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { EmployeesClient } from "./employees-client";
 
-export default async function EmployeesPage() {
+export default async function EmployeesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ memberId?: string }>;
+}) {
+  const { memberId } = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
@@ -36,6 +41,19 @@ export default async function EmployeesPage() {
     .eq("organisation_id", membership!.organisation_id)
     .order("name");
 
+  // Fetch rights profiles
+  const { data: adminProfiles } = await supabase
+    .from("admin_profiles")
+    .select("id, name, rights")
+    .eq("organisation_id", membership!.organisation_id)
+    .order("name");
+
+  const { data: employeeProfiles } = await supabase
+    .from("employee_profiles")
+    .select("id, name, rights")
+    .eq("organisation_id", membership!.organisation_id)
+    .order("name");
+
   return (
     <EmployeesClient
       initialMembers={members ?? []}
@@ -44,6 +62,9 @@ export default async function EmployeesPage() {
       isOwner={membership?.role === "owner"}
       orgName={orgName}
       teams={teams ?? []}
+      adminProfiles={(adminProfiles ?? []) as { id: string; name: string; rights: Record<string, unknown> }[]}
+      employeeProfiles={(employeeProfiles ?? []) as { id: string; name: string; rights: Record<string, unknown> }[]}
+      initialMemberId={memberId}
     />
   );
 }

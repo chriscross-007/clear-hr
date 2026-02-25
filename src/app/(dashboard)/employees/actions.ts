@@ -144,6 +144,17 @@ export async function addEmployee(formData: {
       return { success: false, error: memberError.message };
     }
 
+    // Resolve team ID to name for audit
+    let teamName: string | null = null;
+    if (formData.teamId) {
+      const { data: teamRow } = await admin
+        .from("teams")
+        .select("name")
+        .eq("id", formData.teamId)
+        .single();
+      teamName = teamRow?.name ?? null;
+    }
+
     logAudit({
       organisationId: membership.organisation_id,
       actorId: membership.id,
@@ -157,8 +168,12 @@ export async function addEmployee(formData: {
         first_name: { old: null, new: formData.firstName },
         last_name: { old: null, new: formData.lastName },
         role: { old: null, new: "employee" },
-        team_id: { old: null, new: formData.teamId || null },
+        team: { old: null, new: teamName },
         payroll_number: { old: null, new: trimmedPayroll },
+      },
+      metadata: {
+        member_count: (count ?? 0) + 1,
+        max_employees: org?.max_employees,
       },
     });
 
@@ -273,6 +288,8 @@ export async function updateEmployee(formData: {
   payrollNumber?: string | null;
   teamIds?: string[];
   isMultiTeam?: boolean;
+  // undefined = no change, "__none__" = clear profile, UUID = assign profile
+  profileId?: string;
 }): Promise<{ success: boolean; error?: string }> {
   try {
     const membership = await getCallerMembership();
@@ -280,10 +297,10 @@ export async function updateEmployee(formData: {
 
     const trimmedPayroll = formData.payrollNumber?.trim() || null;
 
-    // Fetch before-state for audit diff (include team_id)
+    // Fetch before-state for audit diff (include team_id and profile FKs)
     const { data: beforeState } = await admin
       .from("members")
-      .select("first_name, last_name, role, payroll_number, team_id")
+      .select("first_name, last_name, role, payroll_number, team_id, admin_profile_id, employee_profile_id")
       .eq("id", formData.memberId)
       .eq("organisation_id", membership.organisation_id)
       .single();
@@ -307,7 +324,7 @@ export async function updateEmployee(formData: {
       }
     }
 
-    const updateData: Record<string, string | null> = {
+    const updateData: Record<string, unknown> = {
       first_name: formData.firstName,
       last_name: formData.lastName,
       payroll_number: trimmedPayroll,
@@ -335,6 +352,51 @@ export async function updateEmployee(formData: {
       updateData.role = formData.role;
     }
 
+    // Resolve profile assignment — included in the same DB update
+    let profileChanges: Record<string, { old: unknown; new: unknown }> | undefined;
+    if (formData.profileId !== undefined && beforeState) {
+      const newRole = (updateData.role as string | undefined) ?? beforeState.role;
+      const isAdmin = newRole === "admin";
+      const profileFk = isAdmin ? "admin_profile_id" : "employee_profile_id";
+      const profileTable = isAdmin ? "admin_profiles" : "employee_profiles";
+      const oldProfileId = isAdmin ? beforeState.admin_profile_id : beforeState.employee_profile_id;
+
+      let oldProfileName: string | null = null;
+      if (oldProfileId) {
+        const { data: oldP } = await admin
+          .from(profileTable)
+          .select("name")
+          .eq("id", oldProfileId)
+          .single();
+        oldProfileName = oldP?.name ?? null;
+      }
+
+      let newProfileName: string | null = null;
+      if (formData.profileId !== "__none__") {
+        const { data: newP } = await admin
+          .from(profileTable)
+          .select("name, rights")
+          .eq("id", formData.profileId)
+          .eq("organisation_id", membership.organisation_id)
+          .single();
+        if (!newP) return { success: false, error: "Profile not found" };
+        updateData[profileFk] = formData.profileId;
+        updateData.permissions = newP.rights;
+        newProfileName = newP.name;
+      } else {
+        updateData[profileFk] = null;
+      }
+
+      if (oldProfileName !== newProfileName) {
+        profileChanges = {
+          [`${isAdmin ? "admin" : "employee"}_profile`]: {
+            old: oldProfileName,
+            new: newProfileName,
+          },
+        };
+      }
+    }
+
     const { error } = await admin
       .from("members")
       .update(updateData)
@@ -356,7 +418,7 @@ export async function updateEmployee(formData: {
         {
           first_name: formData.firstName,
           last_name: formData.lastName,
-          role: updateData.role ?? beforeState.role,
+          role: (updateData.role as string | undefined) ?? beforeState.role,
           payroll_number: trimmedPayroll,
         }
       );
@@ -412,7 +474,7 @@ export async function updateEmployee(formData: {
         }
       }
 
-      const allChanges = { ...fieldChanges, ...teamChanges };
+      const allChanges = { ...fieldChanges, ...teamChanges, ...profileChanges };
       if (Object.keys(allChanges).length > 0) {
         logAudit({
           organisationId: membership.organisation_id,
@@ -481,6 +543,17 @@ export async function deleteEmployee(
       }
     }
 
+    // Get current member count (after deletion) and max for audit
+    const { data: delOrg } = await admin
+      .from("organisations")
+      .select("max_employees")
+      .eq("id", membership.organisation_id)
+      .single();
+    const { count: delCount } = await admin
+      .from("members")
+      .select("id", { count: "exact", head: true })
+      .eq("organisation_id", membership.organisation_id);
+
     logAudit({
       organisationId: membership.organisation_id,
       actorId: membership.id,
@@ -496,6 +569,8 @@ export async function deleteEmployee(
         role: member.role,
         payroll_number: member.payroll_number,
         team_id: member.team_id,
+        member_count: delCount ?? 0,
+        max_employees: delOrg?.max_employees,
       },
     });
 

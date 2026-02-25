@@ -37,11 +37,10 @@ export default async function DashboardLayout({
   };
   const memberLabel = org?.member_label || "member";
 
-  // Member count for header display
-  const { count: memberCount } = await supabase
-    .from("members")
-    .select("id", { count: "exact", head: true })
-    .eq("organisation_id", membership.organisation_id);
+  // Member count for header display (bypasses RLS visibility so all users see the true total)
+  const { data: countResult } = await supabase
+    .rpc("get_org_member_count", { org_id: membership.organisation_id });
+  const memberCount = countResult ?? 0;
   const fullName = [membership.first_name, membership.last_name].filter(Boolean).join(" ");
   const initials = [membership.first_name, membership.last_name]
     .filter(Boolean)
@@ -90,17 +89,19 @@ export default async function DashboardLayout({
               <Link href="/employees" className="text-xl font-bold">
                 {org?.name}
               </Link>
-              <span className="text-sm text-muted-foreground">
-                ({org?.plan} plan
-                {(memberCount ?? 0) >= org?.max_employees ? (
-                  <span className="text-red-600 dark:text-red-400 font-medium"> — {memberCount ?? 0}/{org?.max_employees} {capitalize(pluralize(memberLabel))}</span>
-                ) : (
-                  <> — {memberCount ?? 0}/{org?.max_employees} {capitalize(pluralize(memberLabel))}</>
-                )}
-                {org?.subscription_status === "trialing" && trialEndsAt && (
-                  <span className="text-red-600 dark:text-red-400 font-medium"> — Trial ends {trialEndsAt.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</span>
-                )})
-              </span>
+              {(membership.role === "owner" || membership.role === "admin") && (
+                <span className="text-sm text-muted-foreground">
+                  ({org?.plan} plan
+                  {(memberCount ?? 0) >= org?.max_employees ? (
+                    <span className="text-red-600 dark:text-red-400 font-medium"> — {memberCount ?? 0}/{org?.max_employees} {capitalize(pluralize(memberLabel))}</span>
+                  ) : (
+                    <> — {memberCount ?? 0}/{org?.max_employees} {capitalize(pluralize(memberLabel))}</>
+                  )}
+                  {org?.subscription_status === "trialing" && trialEndsAt && (
+                    <span className="text-red-600 dark:text-red-400 font-medium"> — Trial ends {trialEndsAt.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</span>
+                  )})
+                </span>
+              )}
             </div>
 
             <HeaderUserMenu

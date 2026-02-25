@@ -14,6 +14,7 @@ import {
 import { Palette } from "lucide-react";
 import { OrganisationEditDialog } from "./organisation-edit-dialog";
 import { useTheme } from "@/contexts/theme-context";
+import { capitalize, pluralize } from "@/lib/label-utils";
 
 interface HeaderUserMenuProps {
   email: string;
@@ -46,7 +47,7 @@ export function HeaderUserMenu({
       <div className="flex items-center gap-3">
         <span className="hidden text-sm text-muted-foreground sm:block">
           {fullName}{" "}
-          <span className="text-xs">({role})</span>
+          <span className="text-xs">({role === "employee" ? capitalize(memberLabel) : role})</span>
         </span>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -68,6 +69,9 @@ export function HeaderUserMenu({
               disabled
             >
               {email}
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/employees">{capitalize(pluralize(memberLabel))} Directory</Link>
             </DropdownMenuItem>
             {role === "owner" && (
               <DropdownMenuItem onSelect={() => setShowOrgEdit(true)}>

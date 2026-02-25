@@ -5,6 +5,8 @@ import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize } from "@/lib/label-utils";
 import { updateEmployee, sendInvite } from "./actions";
 import { updateMemberTeam, getMemberTeams, setMemberTeams } from "./team-actions";
+import type { Profile } from "./profile-actions";
+import { getMemberProfile } from "./profile-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,6 +32,8 @@ interface EditEmployeeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   teams: Team[];
+  adminProfiles: Profile[];
+  employeeProfiles: Profile[];
   onSaved: (updated: {
     member_id: string;
     first_name: string;
@@ -46,6 +50,8 @@ export function EditEmployeeDialog({
   open,
   onOpenChange,
   teams,
+  adminProfiles,
+  employeeProfiles,
   onSaved,
   onInviteStatusChanged,
 }: EditEmployeeDialogProps) {
@@ -60,6 +66,7 @@ export function EditEmployeeDialog({
   const [loading, setLoading] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [inviteSuccess, setInviteSuccess] = useState(false);
+  const [profileId, setProfileId] = useState<string>("__none__");
 
   const isMultiTeam = member?.role === "admin" || member?.role === "owner";
 
@@ -72,6 +79,15 @@ export function EditEmployeeDialog({
       setTeamId(member.team_id);
       setError(null);
       setInviteSuccess(false);
+      setProfileId("__none__");
+      // Load the member's current profile assignment
+      getMemberProfile(member.member_id).then((result) => {
+        if (result.success) {
+          const isAdmin = member.role === "admin" || member.role === "owner";
+          const currentId = isAdmin ? result.adminProfileId : result.employeeProfileId;
+          setProfileId(currentId ?? "__none__");
+        }
+      });
 
       // Load multi-team assignments for admins/owners
       if (member.role === "admin" || member.role === "owner") {
@@ -105,6 +121,7 @@ export function EditEmployeeDialog({
       payrollNumber: payrollNumber.trim() || null,
       teamIds,
       isMultiTeam,
+      profileId,
     });
 
     if (!result.success) {
@@ -235,7 +252,7 @@ export function EditEmployeeDialog({
             {member?.role === "owner" ? (
               <Input value="Owner" disabled className="bg-muted" />
             ) : (
-              <Select value={role} onValueChange={setRole}>
+              <Select value={role} onValueChange={(v) => { setRole(v); setProfileId("__none__"); }}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -293,6 +310,31 @@ export function EditEmployeeDialog({
               )}
             </div>
           )}
+          {member?.role !== "owner" && (() => {
+            const applicableProfiles = role === "admin" ? adminProfiles : employeeProfiles;
+            if (applicableProfiles.length === 0) return null;
+            return (
+              <div className="space-y-2">
+                <Label>Rights Profile</Label>
+                <Select
+                  value={profileId}
+                  onValueChange={setProfileId}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">No profile</SelectItem>
+                    {applicableProfiles.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            );
+          })()}
           <DialogFooter>
             {!isAccepted && (
               <Button

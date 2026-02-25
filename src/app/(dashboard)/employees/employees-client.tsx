@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   useReactTable,
   getCoreRowModel,
@@ -12,7 +13,7 @@ import {
   type ColumnFiltersState,
 } from "@tanstack/react-table";
 import Link from "next/link";
-import { Pencil, Plus, ArrowUpDown, Trash2, FileDown } from "lucide-react";
+import { Plus, ArrowUpDown, Trash2, FileDown } from "lucide-react";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { deleteEmployee } from "./actions";
@@ -46,6 +47,7 @@ import {
 } from "@/components/ui/dialog";
 import { EditEmployeeDialog } from "./edit-employee-dialog";
 import { AddEmployeeDialog } from "./add-employee-dialog";
+import type { Profile } from "./profile-actions";
 
 export type Team = {
   id: string;
@@ -64,6 +66,7 @@ export type Member = {
   team_id: string | null;
   last_log_in: string | null;
   payroll_number: string | null;
+  profile_name: string | null;
 };
 
 function RoleBadge({ role, memberLabel }: { role: string; memberLabel: string }) {
@@ -117,6 +120,9 @@ interface EmployeesClientProps {
   isOwner: boolean;
   orgName: string;
   teams: Team[];
+  adminProfiles: Profile[];
+  employeeProfiles: Profile[];
+  initialMemberId?: string;
 }
 
 export function EmployeesClient({
@@ -126,8 +132,12 @@ export function EmployeesClient({
   isOwner,
   orgName,
   teams,
+  adminProfiles,
+  employeeProfiles,
+  initialMemberId,
 }: EmployeesClientProps) {
   const { memberLabel } = useMemberLabel();
+  const router = useRouter();
   const teamMap = Object.fromEntries(teams.map((t) => [t.id, t.name]));
   const [members, setMembers] = useState(initialMembers);
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -140,6 +150,13 @@ export function EmployeesClient({
   const [showPdfDialog, setShowPdfDialog] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const atCapacity = members.length >= maxEmployees;
+
+  useEffect(() => {
+    if (initialMemberId) {
+      const member = initialMembers.find((m) => m.member_id === initialMemberId);
+      if (member) setEditingMember(member);
+    }
+  }, [initialMemberId, initialMembers]);
 
   async function handleDownloadPdf(orientation: "portrait" | "landscape") {
     setPdfLoading(true);
@@ -158,6 +175,7 @@ export function EmployeesClient({
         payroll_number: "Payroll #",
         email: "Email",
         role: "Role",
+        profile: "Profile",
         team: "Team",
         status: "Status",
         last_log_in: "Last Log-in",
@@ -310,6 +328,32 @@ export function EmployeesClient({
       cell: ({ row }) => <RoleBadge role={row.original.role} memberLabel={memberLabel} />,
     },
     {
+      id: "profile",
+      accessorFn: (row) => row.profile_name ?? "—",
+      sortingFn: (rowA, rowB) => {
+        const a = rowA.original.profile_name ?? "";
+        const b = rowB.original.profile_name ?? "";
+        return a.localeCompare(b, undefined, { sensitivity: "base" });
+      },
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          className="-ml-4"
+          onClick={(e) => {
+            if (e.shiftKey) {
+              column.toggleSorting(column.getIsSorted() === "asc", true);
+            } else {
+              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+            }
+          }}
+        >
+          Profile
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+      cell: ({ row }) => row.original.profile_name ?? "—",
+    },
+    {
       id: "team",
       accessorFn: (row) => (row.team_id ? teamMap[row.team_id] ?? "—" : "—"),
       sortingFn: (rowA, rowB) => {
@@ -412,26 +456,21 @@ export function EmployeesClient({
       ? [
           {
             id: "actions",
-            cell: ({ row }: { row: { original: Member } }) => (
-              <div className="flex justify-end gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setEditingMember(row.original)}
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-                {row.original.role !== "owner" && (
+            cell: ({ row }: { row: { original: Member } }) =>
+              row.original.role !== "owner" ? (
+                <div className="flex justify-end">
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => setDeletingMember(row.original)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeletingMember(row.original);
+                    }}
                   >
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
-                )}
-              </div>
-            ),
+                </div>
+              ) : null,
           } satisfies ColumnDef<Member>,
         ]
       : []),
@@ -507,6 +546,28 @@ export function EmployeesClient({
                         <option value="Owner">Owner</option>
                         <option value="Admin">Admin</option>
                         <option value={capitalize(memberLabel)}>{capitalize(memberLabel)}</option>
+                      </select>
+                    </TableHead>
+                  );
+                }
+                if (columnId === "profile") {
+                  const allProfiles = [...adminProfiles, ...employeeProfiles]
+                    .map((p) => p.name)
+                    .filter((name, i, arr) => arr.indexOf(name) === i)
+                    .sort();
+                  return (
+                    <TableHead key={`filter-${header.id}`} className="py-2">
+                      <select
+                        className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+                        value={(header.column.getFilterValue() as string) ?? ""}
+                        onChange={(e) =>
+                          header.column.setFilterValue(e.target.value || undefined)
+                        }
+                      >
+                        <option value="">All</option>
+                        {allProfiles.map((name) => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
                       </select>
                     </TableHead>
                   );
@@ -600,7 +661,11 @@ export function EmployeesClient({
           <TableBody>
             {table.getRowModel().rows.length ? (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id}>
+                <TableRow
+                  key={row.id}
+                  className={canManage ? "cursor-pointer" : ""}
+                  onClick={() => canManage && setEditingMember(row.original)}
+                >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>
                       {flexRender(
@@ -652,6 +717,8 @@ export function EmployeesClient({
         open={!!editingMember}
         onOpenChange={(open) => !open && setEditingMember(null)}
         teams={teams}
+        adminProfiles={adminProfiles}
+        employeeProfiles={employeeProfiles}
         onSaved={(updated) => {
           setMembers((prev) =>
             prev.map((m) =>
@@ -674,9 +741,11 @@ export function EmployeesClient({
         open={showAddDialog}
         onOpenChange={setShowAddDialog}
         teams={teams}
+        employeeProfiles={employeeProfiles}
         onAdded={(newMember) => {
           setMembers((prev) => [...prev, newMember]);
           setShowAddDialog(false);
+          router.refresh();
         }}
       />
 
@@ -775,6 +844,7 @@ export function EmployeesClient({
                     )
                   );
                   setDeletingMember(null);
+                  router.refresh();
                 }
               }}
             >

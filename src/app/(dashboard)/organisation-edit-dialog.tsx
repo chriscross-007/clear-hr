@@ -3,9 +3,13 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Info, Pencil, Plus, Trash2 } from "lucide-react";
+import { Info, Plus, Trash2 } from "lucide-react";
 import { updateOrganisation } from "./organisation-actions";
 import { getTeams, createTeam, deleteTeam, renameTeams } from "./employees/team-actions";
+import { getProfiles } from "./employees/profile-actions";
+import type { Profile } from "./employees/profile-actions";
+import { ADMIN_RIGHTS, EMPLOYEE_RIGHTS } from "@/lib/rights-config";
+import { ProfileManager } from "./organisation-edit-dialog-profiles";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,6 +26,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface OrganisationEditDialogProps {
   open: boolean;
@@ -52,6 +57,8 @@ export function OrganisationEditDialog({
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
   const [editingTeamName, setEditingTeamName] = useState("");
   const [mfaRequired, setMfaRequired] = useState(requireMfa);
+  const [adminProfiles, setAdminProfiles] = useState<Profile[]>([]);
+  const [employeeProfiles, setEmployeeProfiles] = useState<Profile[]>([]);
   const router = useRouter();
 
   useEffect(() => {
@@ -70,6 +77,13 @@ export function OrganisationEditDialog({
           setTeams(result.teams);
           setOriginalTeams(result.teams);
         }
+      });
+      // Load profiles
+      getProfiles("admin").then((result) => {
+        if (result.success && result.profiles) setAdminProfiles(result.profiles);
+      });
+      getProfiles("employee").then((result) => {
+        if (result.success && result.profiles) setEmployeeProfiles(result.profiles);
       });
     }
   }, [open, orgName, memberLabel, requireMfa]);
@@ -162,66 +176,104 @@ export function OrganisationEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Organisation Settings</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-              {error}
-            </div>
-          )}
-          <div className="space-y-2">
-            <Label htmlFor="org-name">Organisation Name</Label>
-            <Input
-              id="org-name"
-              type="text"
-              maxLength={50}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
-          </div>
-          <div className="space-y-2">
-            <div className="flex items-center gap-1.5">
-              <Label htmlFor="org-member-label">Member Type</Label>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-4 w-4 text-muted-foreground cursor-help" />
-                </TooltipTrigger>
-                <TooltipContent side="right" className="max-w-xs">
-                  <p>
-                    How you refer to employees e.g. colleague, employee, member
-                    etc. This word will be used throughout the app.
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </div>
-            <Input
-              id="org-member-label"
-              type="text"
-              placeholder="e.g. employee, colleague, member"
-              maxLength={50}
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Teams</Label>
-            {teamError && (
-              <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-                {teamError}
+        <form onSubmit={handleSubmit}>
+          <Tabs defaultValue="general" className="w-full">
+            <TabsList className="w-full">
+              <TabsTrigger value="general" className="flex-1">General</TabsTrigger>
+              <TabsTrigger value="teams" className="flex-1">Teams</TabsTrigger>
+              <TabsTrigger value="admin-profiles" className="flex-1">Admin Profiles</TabsTrigger>
+              <TabsTrigger value="employee-profiles" className="flex-1">Employee Profiles</TabsTrigger>
+            </TabsList>
+
+            {/* General tab */}
+            <TabsContent value="general" className="space-y-4 mt-4">
+              {error && (
+                <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+                  {error}
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label htmlFor="org-name">Organisation Name</Label>
+                <Input
+                  id="org-name"
+                  type="text"
+                  maxLength={50}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                />
               </div>
-            )}
-            <div className="rounded-md border p-3 space-y-2">
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="org-member-label">Member Type</Label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="max-w-xs">
+                      <p>
+                        How you refer to employees e.g. colleague, employee, member
+                        etc. This word will be used throughout the app.
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <Input
+                  id="org-member-label"
+                  type="text"
+                  placeholder="e.g. employee, colleague, member"
+                  maxLength={50}
+                  value={label}
+                  onChange={(e) => setLabel(e.target.value)}
+                />
+              </div>
+              <div className="flex items-center justify-between rounded-md border px-3 py-3">
+                <div className="space-y-0.5">
+                  <Label htmlFor="org-require-mfa">Require Two-Factor Authentication</Label>
+                  <p className="text-xs text-muted-foreground">
+                    All members must verify with an authenticator app when signing in
+                  </p>
+                </div>
+                <Switch
+                  id="org-require-mfa"
+                  checked={mfaRequired}
+                  onCheckedChange={setMfaRequired}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Plan</Label>
+                <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                  <span className="text-sm">{plan} plan</span>
+                  <Link
+                    href="/billing"
+                    className="text-sm text-primary underline-offset-4 hover:underline"
+                    onClick={() => onOpenChange(false)}
+                  >
+                    Manage billing
+                  </Link>
+                </div>
+              </div>
+            </TabsContent>
+
+            {/* Teams tab */}
+            <TabsContent value="teams" className="space-y-3 mt-4">
+              {teamError && (
+                <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+                  {teamError}
+                </div>
+              )}
               {teams.length === 0 && (
                 <p className="text-sm text-muted-foreground">No teams yet</p>
               )}
               {teams.map((team) => (
                 <div
                   key={team.id}
-                  className="flex items-center justify-between rounded-md border px-3 py-1.5"
+                  className={`flex items-center justify-between rounded-md border px-3 py-1.5 ${editingTeamId !== team.id ? "cursor-pointer hover:bg-muted/50" : ""}`}
+                  onClick={() => editingTeamId !== team.id && startEditingTeam(team)}
                 >
                   {editingTeamId === team.id ? (
                     <Input
@@ -246,23 +298,15 @@ export function OrganisationEditDialog({
                     <span className="text-sm">{team.name}</span>
                   )}
                   <div className="flex items-center shrink-0 ml-2">
-                    {editingTeamId !== team.id && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() => startEditingTeam(team)}
-                      >
-                        <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
-                      </Button>
-                    )}
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7"
-                      onClick={() => handleDeleteTeam(team.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteTeam(team.id);
+                      }}
                     >
                       <Trash2 className="h-3.5 w-3.5 text-destructive" />
                     </Button>
@@ -293,35 +337,30 @@ export function OrganisationEditDialog({
                   <Plus className="h-4 w-4" />
                 </Button>
               </div>
-            </div>
-          </div>
-          <div className="flex items-center justify-between rounded-md border px-3 py-3">
-            <div className="space-y-0.5">
-              <Label htmlFor="org-require-mfa">Require Two-Factor Authentication</Label>
-              <p className="text-xs text-muted-foreground">
-                All members must verify with an authenticator app when signing in
-              </p>
-            </div>
-            <Switch
-              id="org-require-mfa"
-              checked={mfaRequired}
-              onCheckedChange={setMfaRequired}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Plan</Label>
-            <div className="flex items-center justify-between rounded-md border px-3 py-2">
-              <span className="text-sm">{plan} plan</span>
-              <Link
-                href="/billing"
-                className="text-sm text-primary underline-offset-4 hover:underline"
-                onClick={() => onOpenChange(false)}
-              >
-                Manage billing
-              </Link>
-            </div>
-          </div>
-          <DialogFooter>
+            </TabsContent>
+
+            {/* Admin Profiles tab */}
+            <TabsContent value="admin-profiles" className="mt-4">
+              <ProfileManager
+                type="admin"
+                rightDefs={ADMIN_RIGHTS}
+                profiles={adminProfiles}
+                onProfilesChange={setAdminProfiles}
+              />
+            </TabsContent>
+
+            {/* Employee Profiles tab */}
+            <TabsContent value="employee-profiles" className="mt-4">
+              <ProfileManager
+                type="employee"
+                rightDefs={EMPLOYEE_RIGHTS}
+                profiles={employeeProfiles}
+                onProfilesChange={setEmployeeProfiles}
+              />
+            </TabsContent>
+          </Tabs>
+
+          <DialogFooter className="mt-4">
             <Button
               type="button"
               variant="outline"

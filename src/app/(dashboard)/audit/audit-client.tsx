@@ -1,15 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { CalendarDays, ChevronDown, ChevronRight, Filter, Search, X } from "lucide-react";
+import { ADMIN_RIGHTS, EMPLOYEE_RIGHTS } from "@/lib/rights-config";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -26,6 +21,7 @@ interface AuditEntry {
   actor_name: string;
   action: string;
   target_type: string;
+  target_id: string | null;
   target_label: string | null;
   changes: Record<string, { old: unknown; new: unknown }> | null;
   metadata: Record<string, unknown> | null;
@@ -51,6 +47,12 @@ const ACTION_LABELS: Record<string, string> = {
   "team.created": "Created Team",
   "team.updated": "Edited Team",
   "team.deleted": "Deleted Team",
+  "admin_profile.created": "Created Admin Profile",
+  "admin_profile.updated": "Updated Admin Profile",
+  "admin_profile.deleted": "Deleted Admin Profile",
+  "employee_profile.created": "Created Employee Profile",
+  "employee_profile.updated": "Updated Employee Profile",
+  "employee_profile.deleted": "Deleted Employee Profile",
 };
 
 const FILTER_ACTIONS = [
@@ -62,7 +64,18 @@ const FILTER_ACTIONS = [
   "team.created",
   "team.updated",
   "team.deleted",
+  "admin_profile.created",
+  "admin_profile.updated",
+  "admin_profile.deleted",
+  "employee_profile.created",
+  "employee_profile.updated",
+  "employee_profile.deleted",
 ];
+
+// Lookup from right key → human-readable label
+const RIGHT_LABELS: Record<string, string> = Object.fromEntries(
+  [...ADMIN_RIGHTS, ...EMPLOYEE_RIGHTS].map((r) => [r.key, r.label])
+);
 
 const FIELD_LABELS: Record<string, string> = {
   first_name: "First Name",
@@ -77,13 +90,77 @@ const FIELD_LABELS: Record<string, string> = {
   name: "Name",
   member_label: "Member Type",
   require_mfa: "Require MFA",
+  member_count: "Members Used",
+  max_employees: "Members Subscribed",
+  admin_profile: "Admin Profile",
+  employee_profile: "Employee Profile",
+  rights: "Rights",
 };
+
+function formatRightValue(val: unknown): string {
+  if (val === true) return "Yes";
+  if (val === false) return "No";
+  if (val === null || val === undefined) return "—";
+  return String(val);
+}
+
+function isRightsObject(val: unknown): val is Record<string, unknown> {
+  return (
+    typeof val === "object" &&
+    val !== null &&
+    !Array.isArray(val) &&
+    Object.keys(val).length > 0
+  );
+}
+
+function formatRightsObject(rights: Record<string, unknown>): string {
+  const enabled = Object.entries(rights)
+    .filter(([, v]) => v === true)
+    .map(([k]) => RIGHT_LABELS[k] ?? k);
+  return enabled.length > 0 ? enabled.join(", ") : "None";
+}
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (Array.isArray(value)) return value.length === 0 ? "None" : value.join(", ");
+  if (isRightsObject(value)) return formatRightsObject(value);
   return String(value);
+}
+
+/** Shows only the rights that differ between old and new. */
+function RightsDiff({
+  oldRights,
+  newRights,
+}: {
+  oldRights: Record<string, unknown>;
+  newRights: Record<string, unknown>;
+}) {
+  const allKeys = Array.from(
+    new Set([...Object.keys(oldRights), ...Object.keys(newRights)])
+  );
+  const changed = allKeys.filter((k) => oldRights[k] !== newRights[k]);
+  if (changed.length === 0) {
+    return <span className="text-muted-foreground">No rights changed</span>;
+  }
+  return (
+    <div className="space-y-0.5 pl-2 border-l ml-1">
+      {changed.map((key) => (
+        <div key={key} className="flex gap-2 text-xs">
+          <span className="min-w-[140px] text-muted-foreground">
+            {RIGHT_LABELS[key] ?? key}:
+          </span>
+          <span className="text-red-600 dark:text-red-400">
+            {formatRightValue(oldRights[key])}
+          </span>
+          <span className="text-muted-foreground">&rarr;</span>
+          <span className="text-green-600 dark:text-green-400">
+            {formatRightValue(newRights[key])}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function formatDate(dateStr: string): string {
@@ -100,30 +177,57 @@ function formatDate(dateStr: string): string {
 function ChangeSummary({ changes }: { changes: Record<string, { old: unknown; new: unknown }> }) {
   return (
     <span className="text-muted-foreground">
-      {Object.entries(changes).map(([field, { old: oldVal, new: newVal }], i) => (
-        <span key={field}>
-          {i > 0 && ", "}
-          {FIELD_LABELS[field] ?? field}:{" "}
-          <span className="opacity-60">{formatValue(oldVal)}</span>
-          {" → "}
-          <span>{formatValue(newVal)}</span>
-        </span>
-      ))}
+      {Object.entries(changes).map(([field, { old: oldVal, new: newVal }], i) => {
+        const label = FIELD_LABELS[field] ?? field;
+        // For rights objects, just say "X rights changed" rather than dumping the blob
+        if (field === "rights" && isRightsObject(oldVal) && isRightsObject(newVal)) {
+          const changedCount = Array.from(
+            new Set([...Object.keys(oldVal), ...Object.keys(newVal)])
+          ).filter((k) => oldVal[k] !== newVal[k]).length;
+          return (
+            <span key={field}>
+              {i > 0 && ", "}
+              {label}: {changedCount} right{changedCount !== 1 ? "s" : ""} changed
+            </span>
+          );
+        }
+        return (
+          <span key={field}>
+            {i > 0 && ", "}
+            {label}:{" "}
+            <span className="opacity-60">{formatValue(oldVal)}</span>
+            {" → "}
+            <span>{formatValue(newVal)}</span>
+          </span>
+        );
+      })}
     </span>
   );
 }
 
 function ChangeDetail({ changes }: { changes: Record<string, { old: unknown; new: unknown }> }) {
   return (
-    <div className="mt-2 space-y-1 rounded-md border bg-muted/30 p-3 text-sm">
-      {Object.entries(changes).map(([field, { old: oldVal, new: newVal }]) => (
-        <div key={field} className="flex gap-2">
-          <span className="font-medium min-w-[120px]">{FIELD_LABELS[field] ?? field}:</span>
-          <span className="text-red-600 dark:text-red-400">{formatValue(oldVal)}</span>
-          <span className="text-muted-foreground">&rarr;</span>
-          <span className="text-green-600 dark:text-green-400">{formatValue(newVal)}</span>
-        </div>
-      ))}
+    <div className="mt-2 space-y-1.5 rounded-md border bg-muted/30 p-3 text-sm">
+      {Object.entries(changes).map(([field, { old: oldVal, new: newVal }]) => {
+        const label = FIELD_LABELS[field] ?? field;
+        // For rights objects, expand to a per-right diff
+        if (field === "rights" && isRightsObject(oldVal) && isRightsObject(newVal)) {
+          return (
+            <div key={field}>
+              <span className="font-medium">{label}:</span>
+              <RightsDiff oldRights={oldVal} newRights={newVal} />
+            </div>
+          );
+        }
+        return (
+          <div key={field} className="flex gap-2">
+            <span className="font-medium min-w-[120px]">{label}:</span>
+            <span className="text-red-600 dark:text-red-400">{formatValue(oldVal)}</span>
+            <span className="text-muted-foreground">&rarr;</span>
+            <span className="text-green-600 dark:text-green-400">{formatValue(newVal)}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -144,8 +248,9 @@ function MetadataDetail({ metadata }: { metadata: Record<string, unknown> }) {
 const STORAGE_KEY = "clearhr-audit-verbose";
 
 export function AuditClient({ initialEntries, editors }: AuditClientProps) {
+  const router = useRouter();
   const [entries] = useState<AuditEntry[]>(initialEntries);
-  const [filterAction, setFilterAction] = useState<string>("all");
+  const [selectedActions, setSelectedActions] = useState<Set<string>>(new Set());
   const [selectedEditorIds, setSelectedEditorIds] = useState<Set<string>>(new Set());
   const [subjectSearch, setSubjectSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -178,10 +283,22 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
     });
   }
 
+  function toggleAction(action: string) {
+    setSelectedActions((prev) => {
+      const next = new Set(prev);
+      if (next.has(action)) {
+        next.delete(action);
+      } else {
+        next.add(action);
+      }
+      return next;
+    });
+  }
+
   const subjectLower = subjectSearch.trim().toLowerCase();
 
   const filteredEntries = entries.filter((e) => {
-    if (filterAction !== "all" && e.action !== filterAction) return false;
+    if (selectedActions.size > 0 && !selectedActions.has(e.action)) return false;
     if (selectedEditorIds.size > 0 && !selectedEditorIds.has(e.actor_id)) return false;
     if (subjectLower && !(e.target_label ?? "").toLowerCase().includes(subjectLower)) return false;
     if (dateFrom) {
@@ -277,19 +394,39 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
-          <Select value={filterAction} onValueChange={setFilterAction}>
-            <SelectTrigger className="w-[200px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All actions</SelectItem>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="w-[200px] justify-between">
+                <span className="truncate">
+                  {selectedActions.size === 0
+                    ? "All actions"
+                    : selectedActions.size === 1
+                      ? ACTION_LABELS[[...selectedActions][0]] ?? "1 action"
+                      : `${selectedActions.size} actions`}
+                </span>
+                <Filter className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-[200px]">
+              <DropdownMenuCheckboxItem
+                checked={selectedActions.size === 0}
+                onCheckedChange={() => setSelectedActions(new Set())}
+                onSelect={(e) => e.preventDefault()}
+              >
+                All
+              </DropdownMenuCheckboxItem>
               {FILTER_ACTIONS.map((action) => (
-                <SelectItem key={action} value={action}>
+                <DropdownMenuCheckboxItem
+                  key={action}
+                  checked={selectedActions.has(action)}
+                  onCheckedChange={() => toggleAction(action)}
+                  onSelect={(e) => e.preventDefault()}
+                >
                   {ACTION_LABELS[action]}
-                </SelectItem>
+                </DropdownMenuCheckboxItem>
               ))}
-            </SelectContent>
-          </Select>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <div className="flex items-center gap-1.5">
             <CalendarDays className="h-4 w-4 text-muted-foreground shrink-0" />
             <Input
@@ -337,7 +474,7 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
                 className="rounded-md border px-4 py-3"
               >
                 <div
-                  className={`flex items-start gap-3 ${hasDetail ? "cursor-pointer" : ""}`}
+                  className="flex items-start gap-3"
                   onClick={() => hasDetail && toggleExpanded(entry.id)}
                 >
                   <div className="mt-0.5 w-4 shrink-0">
@@ -355,8 +492,27 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
                         {ACTION_LABELS[entry.action] ?? entry.action}
                       </span>
                       {entry.target_label && (
-                        <span className="font-medium">{entry.target_label}</span>
+                        (entry.action === "member.created" || entry.action === "member.updated") && entry.target_id ? (
+                          <button
+                            className="cursor-pointer font-medium text-primary underline underline-offset-2"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              router.push(`/employees?memberId=${entry.target_id}`);
+                            }}
+                          >
+                            {entry.target_label}
+                          </button>
+                        ) : (
+                          <span className="font-medium">{entry.target_label}</span>
+                        )
                       )}
+                      {(entry.action === "member.created" || entry.action === "member.deleted") &&
+                        entry.metadata?.member_count != null &&
+                        entry.metadata?.max_employees != null && (
+                          <span className="text-xs text-muted-foreground">
+                            (now {String(entry.metadata.member_count)}/{String(entry.metadata.max_employees)})
+                          </span>
+                        )}
                     </div>
                     {entry.changes && !isExpanded && (
                       <div className="mt-0.5 text-xs">

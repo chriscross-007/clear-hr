@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize } from "@/lib/label-utils";
 import { addEmployee } from "./actions";
+import { assignProfile } from "./profile-actions";
+import type { Profile } from "./profile-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +29,7 @@ interface AddEmployeeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   teams: Team[];
+  employeeProfiles: Profile[];
   onAdded: (member: Member) => void;
 }
 
@@ -34,6 +37,7 @@ export function AddEmployeeDialog({
   open,
   onOpenChange,
   teams,
+  employeeProfiles,
   onAdded,
 }: AddEmployeeDialogProps) {
   const { memberLabel } = useMemberLabel();
@@ -42,6 +46,7 @@ export function AddEmployeeDialog({
   const [lastName, setLastName] = useState("");
   const [payrollNumber, setPayrollNumber] = useState("");
   const [teamId, setTeamId] = useState<string | null>(null);
+  const [profileId, setProfileId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -51,6 +56,7 @@ export function AddEmployeeDialog({
     setLastName("");
     setPayrollNumber("");
     setTeamId(null);
+    setProfileId(null);
     setError(null);
   }
 
@@ -71,6 +77,11 @@ export function AddEmployeeDialog({
       setError(result.error ?? "Failed to add");
       setLoading(false);
       return;
+    }
+
+    // Assign employee profile if selected
+    if (profileId && result.member) {
+      await assignProfile(result.member.member_id, "employee", profileId);
     }
 
     setLoading(false);
@@ -157,6 +168,27 @@ export function AddEmployeeDialog({
                   {teams.map((team) => (
                     <SelectItem key={team.id} value={team.id}>
                       {team.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {employeeProfiles.length > 0 && (
+            <div className="space-y-2">
+              <Label>Rights Profile</Label>
+              <Select
+                value={profileId ?? "__none__"}
+                onValueChange={(v) => setProfileId(v === "__none__" ? null : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">No profile</SelectItem>
+                  {employeeProfiles.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
