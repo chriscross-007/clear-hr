@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Eye, EyeOff } from "lucide-react";
+import { resetPassword } from "./actions";
 
 function ResetPasswordForm() {
   const [password, setPassword] = useState("");
@@ -51,7 +52,7 @@ function ResetPasswordForm() {
     verifyToken();
   }, [searchParams, supabase.auth]);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
     setError(null);
@@ -62,16 +63,13 @@ function ResetPasswordForm() {
       return;
     }
 
-    const { error } = await supabase.auth.updateUser({
-      password,
-    });
+    const result = await resetPassword(password);
 
-    if (error) {
-      setError(error.message);
+    if (result.error) {
+      setError(result.error);
       setLoading(false);
     } else {
-      router.push("/");
-      router.refresh();
+      window.location.href = "/";
     }
   }
 
