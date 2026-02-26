@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -18,9 +17,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Palette, Users } from "lucide-react";
-import { OrganisationEditDialog } from "./organisation-edit-dialog";
 import { useTheme } from "@/contexts/theme-context";
-import { capitalize, pluralize } from "@/lib/label-utils";
+import { capitalize } from "@/lib/label-utils";
 import {
   getSwitchableMembers,
   type SwitchableMember,
@@ -32,10 +30,7 @@ interface HeaderUserMenuProps {
   initials: string;
   avatarUrl: string | null;
   role: string;
-  orgName: string;
   memberLabel: string;
-  plan: string;
-  requireMfa: boolean;
   profileName: string | null;
 }
 
@@ -45,13 +40,9 @@ export function HeaderUserMenu({
   initials,
   avatarUrl,
   role,
-  orgName,
   memberLabel,
-  plan,
-  requireMfa,
   profileName,
 }: HeaderUserMenuProps) {
-  const [showOrgEdit, setShowOrgEdit] = useState(false);
   const [showSwitchAccount, setShowSwitchAccount] = useState(false);
   const [switchMembers, setSwitchMembers] = useState<SwitchableMember[] | null>(null);
   const [switchLoading, setSwitchLoading] = useState(false);
@@ -117,25 +108,6 @@ export function HeaderUserMenu({
             >
               {email}
             </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link href="/employees">{capitalize(pluralize(memberLabel))} Directory</Link>
-            </DropdownMenuItem>
-            {role === "owner" && (
-              <DropdownMenuItem onSelect={() => setShowOrgEdit(true)}>
-                Organisation Settings
-              </DropdownMenuItem>
-            )}
-            {role === "owner" && (
-              <DropdownMenuItem asChild>
-                <Link href="/billing">Billing</Link>
-              </DropdownMenuItem>
-            )}
-            {(role === "owner" || role === "admin") && (
-              <DropdownMenuItem asChild>
-                <Link href="/audit">Audit Trail</Link>
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={openSwitchAccount}>
               <Users className="mr-2 h-4 w-4" />
               Switch Account
@@ -149,22 +121,11 @@ export function HeaderUserMenu({
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <Link href="/logout">Log out</Link>
+              <a href="/logout">Log out</a>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-
-      {role === "owner" && (
-        <OrganisationEditDialog
-          open={showOrgEdit}
-          onOpenChange={setShowOrgEdit}
-          orgName={orgName}
-          memberLabel={memberLabel}
-          plan={plan}
-          requireMfa={requireMfa}
-        />
-      )}
 
       <Dialog open={showSwitchAccount} onOpenChange={setShowSwitchAccount}>
         <DialogContent className="max-w-sm">

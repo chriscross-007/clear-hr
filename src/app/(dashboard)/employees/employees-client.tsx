@@ -115,7 +115,8 @@ function InviteStatus({ member }: { member: Member }) {
 
 interface EmployeesClientProps {
   initialMembers: Member[];
-  canManage: boolean;
+  canEdit: boolean;
+  canAdd: boolean;
   maxEmployees: number;
   isOwner: boolean;
   orgName: string;
@@ -127,7 +128,8 @@ interface EmployeesClientProps {
 
 export function EmployeesClient({
   initialMembers,
-  canManage,
+  canEdit,
+  canAdd,
   maxEmployees,
   isOwner,
   orgName,
@@ -452,7 +454,7 @@ export function EmployeesClient({
         return true;
       },
     },
-    ...(canManage
+    ...(canAdd
       ? [
           {
             id: "actions",
@@ -663,8 +665,8 @@ export function EmployeesClient({
               table.getRowModel().rows.map((row) => (
                 <TableRow
                   key={row.id}
-                  className={canManage ? "cursor-pointer" : ""}
-                  onClick={() => canManage && setEditingMember(row.original)}
+                  className={canEdit ? "cursor-pointer" : ""}
+                  onClick={() => canEdit && setEditingMember(row.original)}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>
@@ -708,7 +710,7 @@ export function EmployeesClient({
           <FileDown className="h-4 w-4 mr-2" />
           {pdfLoading ? "Generating..." : "Download PDF"}
         </Button>
-        {canManage && (
+        {canAdd && (
           <Button
             variant="outline"
             onClick={() => atCapacity ? setShowCapacityDialog(true) : setShowAddDialog(true)}

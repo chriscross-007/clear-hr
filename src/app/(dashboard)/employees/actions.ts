@@ -41,7 +41,7 @@ async function getCallerMembership() {
     membership.role === "owner" ||
     (membership.role === "admin" &&
       (membership.permissions as Record<string, boolean>)
-        ?.can_manage_members === true);
+        ?.can_add_members === true);
 
   if (!canManage) throw new Error("Insufficient permissions");
 
@@ -128,7 +128,7 @@ export async function addEmployee(formData: {
           can_approve_holidays: false,
           can_view_team_members: false,
           can_view_all_teams: false,
-          can_manage_members: false,
+          can_add_members: false,
           can_edit_organisation: false,
         },
       })

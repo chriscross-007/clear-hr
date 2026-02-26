@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { MemberLabelProvider } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { HeaderUserMenu } from "./header-user-menu";
+import { Sidebar } from "./sidebar";
 
 export default async function DashboardLayout({
   children,
@@ -19,7 +20,7 @@ export default async function DashboardLayout({
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees, require_mfa), admin_profiles(name), employee_profiles(name)")
+    .select("organisation_id, role, permissions, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees, require_mfa), admin_profiles(name), employee_profiles(name)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -43,6 +44,11 @@ export default async function DashboardLayout({
     membership.role === "admin" || membership.role === "owner"
       ? (adminProfile?.name ?? null)
       : (employeeProfile?.name ?? null);
+
+  const memberPermissions = (membership.permissions as Record<string, unknown>) ?? {};
+  const accessMembers = membership.role === "admin"
+    ? (memberPermissions.can_manage_members as string | undefined) ?? "none"
+    : null;
 
   // Member count for header display (bypasses RLS visibility so all users see the true total)
   const { data: countResult } = await supabase
@@ -117,15 +123,22 @@ export default async function DashboardLayout({
               initials={initials}
               avatarUrl={membership.avatar_url}
               role={membership.role}
-              orgName={org?.name}
               memberLabel={memberLabel}
-              plan={org?.plan}
-              requireMfa={org?.require_mfa ?? false}
               profileName={profileName}
             />
           </div>
         </header>
-        <main className="flex-1">{children}</main>
+        <div className="flex flex-1">
+          <Sidebar
+            role={membership.role}
+            accessMembers={accessMembers}
+            memberLabel={memberLabel}
+            orgName={org?.name}
+            plan={org?.plan}
+            requireMfa={org?.require_mfa ?? false}
+          />
+          <main className="flex-1">{children}</main>
+        </div>
       </div>
     </MemberLabelProvider>
   );

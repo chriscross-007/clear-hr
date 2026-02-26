@@ -9,10 +9,10 @@ export interface RightDef {
 
 export const ADMIN_RIGHTS: RightDef[] = [
   {
-    key: "can_manage_members",
-    label: "Manage Members",
+    key: "can_add_members",
+    label: "Add Members",
     type: "boolean",
-    description: "Add, edit, and delete members",
+    description: "Add & delete members",
   },
   {
     key: "can_edit_organisation",
@@ -33,8 +33,8 @@ export const ADMIN_RIGHTS: RightDef[] = [
     description: "Approve/reject holiday requests",
   },
   {
-    key: "access_members",
-    label: "Access Members",
+    key: "can_manage_members",
+    label: "Manage Members",
     type: "access",
     description: "None, read-only, or full read/write access to member records",
   },

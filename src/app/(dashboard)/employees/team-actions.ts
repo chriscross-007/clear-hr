@@ -262,7 +262,7 @@ export async function updateMemberTeam(
       membership.role === "owner" ||
       (membership.role === "admin" &&
         (membership.permissions as Record<string, boolean>)
-          ?.can_manage_members === true);
+          ?.can_add_members === true);
 
     if (!canManage) {
       return { success: false, error: "Insufficient permissions" };
@@ -335,7 +335,7 @@ export async function setMemberTeams(
       membership.role === "owner" ||
       (membership.role === "admin" &&
         (membership.permissions as Record<string, boolean>)
-          ?.can_manage_members === true);
+          ?.can_add_members === true);
 
     if (!canManage) {
       return { success: false, error: "Insufficient permissions" };
