@@ -73,8 +73,8 @@ export function HeaderUserMenu({
         } else {
           setLoadError(result.error ?? "Failed to load members");
         }
-      } catch {
-        setLoadError("Failed to load members");
+      } catch (e) {
+        setLoadError(e instanceof Error ? e.message : String(e));
       } finally {
         setSwitchLoading(false);
       }
