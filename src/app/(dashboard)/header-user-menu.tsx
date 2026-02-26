@@ -66,12 +66,17 @@ export function HeaderUserMenu({
     setSwitchError(null);
     if (switchMembers === null) {
       setSwitchLoading(true);
-      const result = await getSwitchableMembers();
-      setSwitchLoading(false);
-      if (result.success) {
-        setSwitchMembers(result.members ?? []);
-      } else {
-        setLoadError(result.error ?? "Failed to load members");
+      try {
+        const result = await getSwitchableMembers();
+        if (result.success) {
+          setSwitchMembers(result.members ?? []);
+        } else {
+          setLoadError(result.error ?? "Failed to load members");
+        }
+      } catch {
+        setLoadError("Failed to load members");
+      } finally {
+        setSwitchLoading(false);
       }
     }
   }
