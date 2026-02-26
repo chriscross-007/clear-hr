@@ -1,16 +1,18 @@
 import { createClient } from "@supabase/supabase-js";
 
-const adminClient = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  }
-);
+function getAdminClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    }
+  );
+}
 
 export interface AuditEntry {
   organisationId: string;
@@ -30,7 +32,7 @@ export interface AuditEntry {
  */
 export async function logAudit(entry: AuditEntry): Promise<void> {
   try {
-    const { error } = await adminClient.from("audit_log").insert({
+    const { error } = await getAdminClient().from("audit_log").insert({
       organisation_id: entry.organisationId,
       actor_id: entry.actorId,
       actor_name: entry.actorName,
