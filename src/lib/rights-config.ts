@@ -32,6 +32,12 @@ export const ADMIN_RIGHTS: RightDef[] = [
     type: "boolean",
     description: "Approve/reject holiday requests",
   },
+  {
+    key: "access_members",
+    label: "Access Members",
+    type: "access",
+    description: "None, read-only, or full read/write access to member records",
+  },
 ];
 
 export const EMPLOYEE_RIGHTS: RightDef[] = [
@@ -55,7 +61,7 @@ export function buildDefaultRights(
 ): Record<string, unknown> {
   const rights: Record<string, unknown> = {};
   for (const d of defs) {
-    rights[d.key] = d.type === "boolean" ? false : null;
+    rights[d.key] = d.type === "boolean" ? false : "none";
   }
   return rights;
 }

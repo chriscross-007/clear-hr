@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 import type { RightDef } from "@/lib/rights-config";
 import { buildDefaultRights } from "@/lib/rights-config";
 import type { Profile } from "./employees/profile-actions";
@@ -161,9 +162,15 @@ export function ProfileManager({
                 {rightDefs
                   .filter((r) => {
                     const val = profile.rights[r.key];
-                    return r.type === "boolean" ? val === true : val != null;
+                    if (r.type === "boolean") return val === true;
+                    return val === "read" || val === "write";
                   })
-                  .map((r) => r.label)
+                  .map((r) => {
+                    if (r.type === "access") {
+                      return `${r.label} (${profile.rights[r.key]})`;
+                    }
+                    return r.label;
+                  })
                   .join(", ") || "No rights enabled"}
               </div>
             </div>
@@ -205,7 +212,12 @@ export function ProfileManager({
             {rightDefs.map((right) => (
               <div
                 key={right.key}
-                className="flex items-center justify-between rounded-md border px-3 py-2"
+                className={cn(
+                  "rounded-md border px-3 py-2",
+                  right.type === "boolean"
+                    ? "flex items-center justify-between"
+                    : "flex flex-col gap-2"
+                )}
               >
                 <div className="min-w-0">
                   <span className="text-sm">{right.label}</span>
@@ -222,6 +234,25 @@ export function ProfileManager({
                       toggleRight(right.key, checked)
                     }
                   />
+                )}
+                {right.type === "access" && (
+                  <div className="flex overflow-hidden rounded-md border text-xs self-start">
+                    {(["none", "read", "write"] as const).map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        className={cn(
+                          "px-3 py-1.5 capitalize transition-colors",
+                          formRights[right.key] === option
+                            ? "bg-primary text-primary-foreground"
+                            : "hover:bg-muted"
+                        )}
+                        onClick={() => toggleRight(right.key, option)}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
             ))}
