@@ -12,6 +12,12 @@ import {
   type SortingState,
   type ColumnFiltersState,
 } from "@tanstack/react-table";
+import { useColumnPrefs } from "@/hooks/use-column-prefs";
+import { type ColPref } from "@/app/(dashboard)/employees/grid-prefs-actions";
+import {
+  ColumnCustomiserTrigger,
+  ColumnCustomiserDialog,
+} from "@/components/ui/column-customiser";
 import Link from "next/link";
 import { Plus, ArrowUpDown, Trash2, FileDown } from "lucide-react";
 import { useMemberLabel } from "@/contexts/member-label-context";
@@ -113,6 +119,23 @@ function InviteStatus({ member }: { member: Member }) {
   );
 }
 
+const DEFAULT_EMPLOYEE_COLS = [
+  "first_name", "last_name", "email", "role", "profile",
+  "team", "payroll_number", "status", "last_log_in",
+];
+
+const EMPLOYEE_COL_LABELS: Record<string, string> = {
+  first_name: "First Name",
+  last_name: "Last Name",
+  email: "Email",
+  role: "Role",
+  profile: "Profile",
+  team: "Team",
+  payroll_number: "Payroll #",
+  status: "Status",
+  last_log_in: "Last Log-in",
+};
+
 interface EmployeesClientProps {
   initialMembers: Member[];
   canEdit: boolean;
@@ -124,6 +147,7 @@ interface EmployeesClientProps {
   adminProfiles: Profile[];
   employeeProfiles: Profile[];
   initialMemberId?: string;
+  initialColumnPrefs: ColPref[];
 }
 
 export function EmployeesClient({
@@ -137,6 +161,7 @@ export function EmployeesClient({
   adminProfiles,
   employeeProfiles,
   initialMemberId,
+  initialColumnPrefs,
 }: EmployeesClientProps) {
   const { memberLabel } = useMemberLabel();
   const router = useRouter();
@@ -151,7 +176,12 @@ export function EmployeesClient({
   const [showCapacityDialog, setShowCapacityDialog] = useState(false);
   const [showPdfDialog, setShowPdfDialog] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [showCustomiser, setShowCustomiser] = useState(false);
   const atCapacity = members.length >= maxEmployees;
+
+  const { prefs, updatePrefs, resetPrefs, columnOrder, columnVisibility } = useColumnPrefs(
+    "employees", initialColumnPrefs, DEFAULT_EMPLOYEE_COLS
+  );
 
   useEffect(() => {
     if (initialMemberId) {
@@ -195,15 +225,16 @@ export function EmployeesClient({
         }
       }
 
-      const rows = table.getRowModel().rows.map((row) => {
+      const allRowData = table.getRowModel().rows.map((row) => {
         const m = row.original;
         return {
           first_name: m.first_name,
           last_name: m.last_name,
-          payroll_number: m.payroll_number ?? "—",
-          role: m.role === "admin" ? "Admin" : m.role === "owner" ? "Owner" : capitalize(memberLabel),
-          team: m.team_id ? teamMap[m.team_id] ?? "—" : "—",
           email: m.email,
+          role: m.role === "admin" ? "Admin" : m.role === "owner" ? "Owner" : capitalize(memberLabel),
+          profile: m.profile_name ?? "—",
+          team: m.team_id ? teamMap[m.team_id] ?? "—" : "—",
+          payroll_number: m.payroll_number ?? "—",
           status: m.accepted_at ? "Active" : m.invited_at ? "Invited" : "Not invited",
           last_log_in: m.last_log_in
             ? new Date(m.last_log_in).toLocaleString("en-GB", {
@@ -215,13 +246,18 @@ export function EmployeesClient({
                 hour12: false,
               })
             : "—",
-        };
+        } as Record<string, string>;
       });
+
+      const pdfColumns = prefs
+        .filter((c) => c.visible)
+        .map((c) => ({ id: c.id, label: EMPLOYEE_COL_LABELS[c.id] ?? c.id }));
 
       const title = `${capitalize(pluralize(memberLabel))} Directory`;
       const blob = await pdf(
         <EmployeePDF
-          rows={rows}
+          rows={allRowData}
+          columns={pdfColumns}
           orgName={orgName}
           title={title}
           orientation={orientation}
@@ -481,9 +517,11 @@ export function EmployeesClient({
   const table = useReactTable({
     data: members,
     columns,
-    state: { sorting, columnFilters },
+    state: { sorting, columnFilters, columnOrder, columnVisibility },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
+    onColumnOrderChange: () => {},
+    onColumnVisibilityChange: () => {},
     enableMultiSort: true,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -495,6 +533,11 @@ export function EmployeesClient({
       <h1 className="text-2xl font-bold mb-6">
         {capitalize(pluralize(memberLabel))} Directory
       </h1>
+
+      {/* Column customiser trigger */}
+      <div className="mb-2 flex items-center">
+        <ColumnCustomiserTrigger onClick={() => setShowCustomiser(true)} />
+      </div>
 
       {/* Table */}
       <div className="rounded-md border">
@@ -720,6 +763,18 @@ export function EmployeesClient({
           </Button>
         )}
       </div>
+
+      {/* Column customiser dialog */}
+      <ColumnCustomiserDialog
+        open={showCustomiser}
+        onOpenChange={setShowCustomiser}
+        prefs={prefs}
+        colLabels={EMPLOYEE_COL_LABELS}
+        defaultCols={DEFAULT_EMPLOYEE_COLS}
+        onChange={(newPrefs) => {
+          updatePrefs(newPrefs);
+        }}
+      />
 
       {/* Dialogs */}
       <EditEmployeeDialog

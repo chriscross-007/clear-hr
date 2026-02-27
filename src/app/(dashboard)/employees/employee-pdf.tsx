@@ -6,29 +6,31 @@ import {
   StyleSheet,
 } from "@react-pdf/renderer";
 
-interface EmployeePDFRow {
-  first_name: string;
-  last_name: string;
-  payroll_number: string;
-  role: string;
-  team: string;
-  email: string;
-  status: string;
-  last_log_in: string;
-}
-
 export interface ActiveFilter {
   label: string;
   value: string;
 }
 
 interface EmployeePDFProps {
-  rows: EmployeePDFRow[];
+  rows: Record<string, string>[];
+  columns: { id: string; label: string }[];
   orgName: string;
   title: string;
   orientation: "portrait" | "landscape";
   filters?: ActiveFilter[];
 }
+
+const COLUMN_WEIGHTS: Record<string, number> = {
+  first_name:     14,
+  last_name:      14,
+  email:          24,
+  role:           10,
+  profile:        13,
+  team:           13,
+  payroll_number: 11,
+  status:         10,
+  last_log_in:    17,
+};
 
 const styles = StyleSheet.create({
   page: {
@@ -107,47 +109,24 @@ const styles = StyleSheet.create({
   },
 });
 
-const portraitWidths = {
-  first_name: "11%",
-  last_name: "11%",
-  payroll_number: "10%",
-  role: "9%",
-  team: "11%",
-  email: "22%",
-  status: "10%",
-  last_log_in: "16%",
-};
-
-const landscapeWidths = {
-  first_name: "12%",
-  last_name: "12%",
-  payroll_number: "10%",
-  role: "8%",
-  team: "12%",
-  email: "22%",
-  status: "9%",
-  last_log_in: "15%",
-};
-
-const columns = [
-  { key: "first_name" as const, label: "First Name" },
-  { key: "last_name" as const, label: "Last Name" },
-  { key: "payroll_number" as const, label: "Payroll #" },
-  { key: "role" as const, label: "Role" },
-  { key: "team" as const, label: "Team" },
-  { key: "email" as const, label: "Email" },
-  { key: "status" as const, label: "Status" },
-  { key: "last_log_in" as const, label: "Last Log-in" },
-];
-
 export function EmployeePDF({
   rows,
+  columns,
   orgName,
   title,
   orientation,
   filters,
 }: EmployeePDFProps) {
-  const widths = orientation === "landscape" ? landscapeWidths : portraitWidths;
+  const totalWeight = columns.reduce(
+    (sum, col) => sum + (COLUMN_WEIGHTS[col.id] ?? 10),
+    0
+  );
+
+  function colWidth(id: string) {
+    const weight = COLUMN_WEIGHTS[id] ?? 10;
+    return `${((weight / totalWeight) * 100).toFixed(1)}%`;
+  }
+
   const now = new Date().toLocaleDateString("en-GB", {
     day: "numeric",
     month: "short",
@@ -178,8 +157,8 @@ export function EmployeePDF({
           <View style={styles.tableHeader}>
             {columns.map((col) => (
               <Text
-                key={col.key}
-                style={[styles.headerCell, { width: widths[col.key] }]}
+                key={col.id}
+                style={[styles.headerCell, { width: colWidth(col.id) }]}
               >
                 {col.label}
               </Text>
@@ -194,10 +173,10 @@ export function EmployeePDF({
             >
               {columns.map((col) => (
                 <Text
-                  key={col.key}
-                  style={[styles.cell, { width: widths[col.key] }]}
+                  key={col.id}
+                  style={[styles.cell, { width: colWidth(col.id) }]}
                 >
-                  {row[col.key]}
+                  {row[col.id] ?? ""}
                 </Text>
               ))}
             </View>
