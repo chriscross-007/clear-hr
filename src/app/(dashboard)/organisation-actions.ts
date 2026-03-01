@@ -7,6 +7,7 @@ export async function updateOrganisation(data: {
   name: string;
   memberLabel: string;
   requireMfa?: boolean;
+  currencySymbol?: string;
 }) {
   const supabase = await createClient();
   const {
@@ -30,7 +31,7 @@ export async function updateOrganisation(data: {
   // Fetch before-state for audit diff
   const { data: beforeOrg } = await supabase
     .from("organisations")
-    .select("name, member_label, require_mfa")
+    .select("name, member_label, require_mfa, currency_symbol")
     .eq("id", membership.organisation_id)
     .single();
 
@@ -41,6 +42,9 @@ export async function updateOrganisation(data: {
 
   if (typeof data.requireMfa === "boolean") {
     updatePayload.require_mfa = data.requireMfa;
+  }
+  if (typeof data.currencySymbol === "string" && data.currencySymbol.trim()) {
+    updatePayload.currency_symbol = data.currencySymbol.trim();
   }
 
   const { error } = await supabase
@@ -56,11 +60,13 @@ export async function updateOrganisation(data: {
         name: beforeOrg.name,
         member_label: beforeOrg.member_label,
         require_mfa: beforeOrg.require_mfa,
+        currency_symbol: beforeOrg.currency_symbol,
       },
       {
         name: data.name,
         member_label: data.memberLabel || "member",
         require_mfa: data.requireMfa ?? beforeOrg.require_mfa,
+        currency_symbol: (typeof data.currencySymbol === "string" && data.currencySymbol.trim()) ? data.currencySymbol.trim() : beforeOrg.currency_symbol,
       }
     );
 

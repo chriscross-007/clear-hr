@@ -121,45 +121,48 @@ export function ColumnCustomiserDialog({
         </DialogHeader>
 
         <div className="flex flex-col gap-0.5 py-2">
-          {prefs.map((col, i) => (
-            <div
-              key={col.id}
-              draggable
-              onDragStart={(e) => handleDragStart(e, i)}
-              onDragEnter={() => handleDragEnter(i)}
-              onDragOver={handleDragOver}
-              onDrop={(e) => handleDrop(e, i)}
-              onDragEnd={handleDragEnd}
-              className={cn(
-                "flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors cursor-grab active:cursor-grabbing select-none",
-                overIndex === i && dragIndex !== i
-                  ? "border-t-2 border-primary bg-muted/30"
-                  : "hover:bg-muted/50"
-              )}
-            >
-              <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <input
-                type="checkbox"
-                id={`col-${col.id}`}
-                checked={col.visible}
-                onChange={() => toggleVisible(col.id)}
-                className="h-4 w-4 cursor-pointer accent-primary"
-                // Prevent drag from firing when clicking checkbox
-                onMouseDown={(e) => e.stopPropagation()}
-              />
-              <label
-                htmlFor={`col-${col.id}`}
+          {prefs.map((col, i) => {
+            const isCustom = col.id.startsWith("cf_");
+            return (
+              <div
+                key={col.id}
+                draggable
+                onDragStart={(e) => handleDragStart(e, i)}
+                onDragEnter={() => handleDragEnter(i)}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, i)}
+                onDragEnd={handleDragEnd}
                 className={cn(
-                  "flex-1 text-sm",
-                  !col.visible && "text-muted-foreground"
+                  "flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors cursor-grab active:cursor-grabbing select-none",
+                  overIndex === i && dragIndex !== i
+                    ? "border-t-2 border-primary bg-muted/30"
+                    : "hover:bg-muted/50"
                 )}
-                // Allow label click but don't start drag
-                onMouseDown={(e) => e.stopPropagation()}
               >
-                {colLabels[col.id] ?? col.id}
-              </label>
-            </div>
-          ))}
+                <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <input
+                  type="checkbox"
+                  id={`col-${col.id}`}
+                  checked={col.visible}
+                  onChange={() => toggleVisible(col.id)}
+                  className="h-4 w-4 cursor-pointer accent-primary"
+                  onMouseDown={(e) => e.stopPropagation()}
+                />
+                <label
+                  htmlFor={`col-${col.id}`}
+                  className={cn(
+                    "flex-1 text-sm",
+                    isCustom
+                      ? col.visible ? "text-blue-600 dark:text-blue-400" : "text-blue-400 dark:text-blue-600"
+                      : !col.visible && "text-muted-foreground"
+                  )}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  {colLabels[col.id] ?? col.id}
+                </label>
+              </div>
+            );
+          })}
         </div>
 
         <DialogFooter>

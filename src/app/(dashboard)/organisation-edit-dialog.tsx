@@ -40,6 +40,7 @@ interface OrganisationEditDialogProps {
   requireMfa: boolean;
   role: string;
   canDefineCustomFields: boolean;
+  currencySymbol: string;
 }
 
 export function OrganisationEditDialog({
@@ -51,9 +52,11 @@ export function OrganisationEditDialog({
   requireMfa,
   role,
   canDefineCustomFields,
+  currencySymbol: initialCurrencySymbol,
 }: OrganisationEditDialogProps) {
   const [name, setName] = useState(orgName);
   const [label, setLabel] = useState(memberLabel);
+  const [currencySymbol, setCurrencySymbol] = useState(initialCurrencySymbol);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
@@ -67,9 +70,21 @@ export function OrganisationEditDialog({
   const [adminProfiles, setAdminProfiles] = useState<Profile[]>([]);
   const [employeeProfiles, setEmployeeProfiles] = useState<Profile[]>([]);
   const [fieldDefs, setFieldDefs] = useState<FieldDef[]>([]);
+  const [fieldDefsModified, setFieldDefsModified] = useState(false);
   const router = useRouter();
   const isOwner = role === "owner";
   const showCustomFields = isOwner || canDefineCustomFields;
+
+  const hasChanges =
+    name !== orgName ||
+    label !== memberLabel ||
+    currencySymbol !== initialCurrencySymbol ||
+    mfaRequired !== requireMfa ||
+    fieldDefsModified ||
+    teams.some((t) => {
+      const orig = originalTeams.find((o) => o.id === t.id);
+      return orig && orig.name !== t.name;
+    });
 
   useEffect(() => {
     if (open) {
@@ -81,6 +96,8 @@ export function OrganisationEditDialog({
       setEditingTeamId(null);
       setEditingTeamName("");
       setMfaRequired(requireMfa);
+      setCurrencySymbol(initialCurrencySymbol);
+      setFieldDefsModified(false);
       // Load teams
       getTeams().then((result) => {
         if (result.success && result.teams) {
@@ -100,7 +117,7 @@ export function OrganisationEditDialog({
         getCustomFieldDefs().then(setFieldDefs);
       }
     }
-  }, [open, orgName, memberLabel, requireMfa, showCustomFields]);
+  }, [open, orgName, memberLabel, requireMfa, showCustomFields, initialCurrencySymbol]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -128,6 +145,7 @@ export function OrganisationEditDialog({
       name,
       memberLabel: label,
       requireMfa: mfaRequired,
+      currencySymbol,
     });
 
     if (!result.success) {
@@ -135,6 +153,7 @@ export function OrganisationEditDialog({
       setLoading(false);
     } else {
       setLoading(false);
+      setFieldDefsModified(false);
       onOpenChange(false);
       router.refresh();
     }
@@ -173,6 +192,16 @@ export function OrganisationEditDialog({
     setTeamError(null);
   }
 
+  function handleDefsChange(newDefs: FieldDef[]) {
+    setFieldDefs(newDefs);
+    setFieldDefsModified(true);
+  }
+
+  function handleClose() {
+    if (fieldDefsModified) router.refresh();
+    onOpenChange(false);
+  }
+
   function handleRenameTeam(teamId: string) {
     const trimmed = editingTeamName.trim();
     if (!trimmed) {
@@ -189,7 +218,7 @@ export function OrganisationEditDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) handleClose(); else onOpenChange(true); }}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Organisation Settings</DialogTitle>
@@ -246,6 +275,17 @@ export function OrganisationEditDialog({
                   maxLength={50}
                   value={label}
                   onChange={(e) => setLabel(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="org-currency-symbol">Currency Symbol</Label>
+                <Input
+                  id="org-currency-symbol"
+                  type="text"
+                  maxLength={5}
+                  placeholder="£"
+                  value={currencySymbol}
+                  onChange={(e) => setCurrencySymbol(e.target.value)}
                 />
               </div>
               <div className="flex items-center justify-between rounded-md border px-3 py-3">
@@ -383,7 +423,7 @@ export function OrganisationEditDialog({
             {/* Custom Fields tab */}
             {showCustomFields && (
               <TabsContent value="custom-fields" className="mt-4 max-h-[400px] overflow-y-auto">
-                <CustomFieldsManager defs={fieldDefs} onDefsChange={setFieldDefs} />
+                <CustomFieldsManager defs={fieldDefs} onDefsChange={handleDefsChange} currencySymbol={currencySymbol} />
               </TabsContent>
             )}
           </Tabs>
@@ -393,18 +433,18 @@ export function OrganisationEditDialog({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => onOpenChange(false)}
+                onClick={handleClose}
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={loading}>
+              <Button type="submit" disabled={loading || !hasChanges}>
                 {loading ? "Saving..." : "Save changes"}
               </Button>
             </DialogFooter>
           )}
           {!isOwner && (
             <DialogFooter className="mt-4">
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              <Button type="button" variant="outline" onClick={handleClose}>
                 Close
               </Button>
             </DialogFooter>

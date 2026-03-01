@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { GripVertical, Pencil, Trash2, Plus, X, Check } from "lucide-react";
+import { GripVertical, Trash2, Plus, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,6 +33,7 @@ const FIELD_TYPES = [
   { value: "url",       label: "URL" },
   { value: "phone",     label: "Phone" },
   { value: "number",    label: "Number" },
+  { value: "currency",  label: "Currency" },
   { value: "date",      label: "Date" },
   { value: "checkbox",  label: "Checkbox" },
   { value: "dropdown",  label: "Dropdown" },
@@ -117,13 +118,15 @@ interface AddFieldFormProps {
   onAdd: (def: Omit<FieldDef, "id">, nextOrder: number) => Promise<{ success: boolean; error?: string } | undefined>;
   nextOrder: number;
   existingKeys: Set<string>;
+  currencySymbol: string;
 }
 
-function AddFieldForm({ onAdd, nextOrder, existingKeys }: AddFieldFormProps) {
+function AddFieldForm({ onAdd, nextOrder, existingKeys, currencySymbol }: AddFieldFormProps) {
   const [label, setLabel] = useState("");
   const [fieldType, setFieldType] = useState<FieldTypeValue>("text");
   const [required, setRequired] = useState(false);
   const [options, setOptions] = useState<string[]>([]);
+  const [maxDecimalPlaces, setMaxDecimalPlaces] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -136,9 +139,22 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys }: AddFieldFormProps) {
     if (existingKeys.has(fieldKey)) { setError("A field with that key already exists"); return; }
     if (fieldType === "dropdown" && options.length === 0) { setError("Add at least one option"); return; }
 
+    const parsedDecimalPlaces =
+      fieldType === "number" && maxDecimalPlaces !== ""
+        ? parseInt(maxDecimalPlaces, 10)
+        : null;
+
     setSaving(true);
     const result = await onAdd(
-      { label: label.trim(), field_key: fieldKey, field_type: fieldType, options: fieldType === "dropdown" ? options : null, required, sort_order: nextOrder },
+      {
+        label: label.trim(),
+        field_key: fieldKey,
+        field_type: fieldType,
+        options: fieldType === "dropdown" ? options : null,
+        required,
+        sort_order: nextOrder,
+        max_decimal_places: parsedDecimalPlaces,
+      },
       nextOrder
     );
     setSaving(false);
@@ -147,6 +163,7 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys }: AddFieldFormProps) {
       setFieldType("text");
       setRequired(false);
       setOptions([]);
+      setMaxDecimalPlaces("");
     } else {
       setError(result.error ?? "Failed to add field");
     }
@@ -169,7 +186,11 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys }: AddFieldFormProps) {
       </div>
       <div className="flex flex-col gap-1">
         <Label className="text-xs">Type</Label>
-        <Select value={fieldType} onValueChange={(v) => { setFieldType(v as FieldTypeValue); if (v !== "dropdown") setOptions([]); }}>
+        <Select value={fieldType} onValueChange={(v) => {
+          setFieldType(v as FieldTypeValue);
+          if (v !== "dropdown") setOptions([]);
+          if (v !== "number") setMaxDecimalPlaces("");
+        }}>
           <SelectTrigger className="h-8 text-sm">
             <SelectValue />
           </SelectTrigger>
@@ -180,6 +201,23 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys }: AddFieldFormProps) {
           </SelectContent>
         </Select>
       </div>
+      {fieldType === "number" && (
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs">Max decimal places</Label>
+          <Input
+            type="number"
+            min={0}
+            max={10}
+            value={maxDecimalPlaces}
+            onChange={(e) => setMaxDecimalPlaces(e.target.value)}
+            placeholder="Unrestricted"
+            className="h-8 text-sm"
+          />
+        </div>
+      )}
+      {fieldType === "currency" && (
+        <p className="text-xs text-muted-foreground">Currency symbol: <span className="font-medium">{currencySymbol}</span></p>
+      )}
       {fieldType === "dropdown" && (
         <OptionsEditor options={options} onChange={setOptions} />
       )}
@@ -201,13 +239,15 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys }: AddFieldFormProps) {
 interface CustomFieldsManagerProps {
   defs: FieldDef[];
   onDefsChange: (defs: FieldDef[]) => void;
+  currencySymbol: string;
 }
 
-export function CustomFieldsManager({ defs, onDefsChange }: CustomFieldsManagerProps) {
+export function CustomFieldsManager({ defs, onDefsChange, currencySymbol }: CustomFieldsManagerProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState("");
   const [editRequired, setEditRequired] = useState(false);
   const [editOptions, setEditOptions] = useState<string[]>([]);
+  const [editMaxDecimalPlaces, setEditMaxDecimalPlaces] = useState<string>("");
   const [editError, setEditError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -224,6 +264,7 @@ export function CustomFieldsManager({ defs, onDefsChange }: CustomFieldsManagerP
     setEditLabel(def.label);
     setEditRequired(def.required);
     setEditOptions(def.options ?? []);
+    setEditMaxDecimalPlaces(def.max_decimal_places !== null && def.max_decimal_places !== undefined ? String(def.max_decimal_places) : "");
     setEditError(null);
   }
 
@@ -236,14 +277,27 @@ export function CustomFieldsManager({ defs, onDefsChange }: CustomFieldsManagerP
     if (!editLabel.trim()) { setEditError("Label is required"); return; }
     if (def.field_type === "dropdown" && editOptions.length === 0) { setEditError("Add at least one option"); return; }
     setSaving(true);
+
+    const parsedDecimalPlaces =
+      def.field_type === "number" && editMaxDecimalPlaces !== ""
+        ? parseInt(editMaxDecimalPlaces, 10)
+        : null;
+
     const result = await updateCustomFieldDef(def.id, {
       label: editLabel.trim(),
       required: editRequired,
       options: def.field_type === "dropdown" ? editOptions : null,
+      max_decimal_places: def.field_type === "number" ? parsedDecimalPlaces : undefined,
     });
     setSaving(false);
     if (!result.success) { setEditError(result.error ?? "Failed to save"); return; }
-    onDefsChange(defs.map((d) => d.id === def.id ? { ...d, label: editLabel.trim(), required: editRequired, options: def.field_type === "dropdown" ? editOptions : null } : d));
+    onDefsChange(defs.map((d) => d.id === def.id ? {
+      ...d,
+      label: editLabel.trim(),
+      required: editRequired,
+      options: def.field_type === "dropdown" ? editOptions : null,
+      max_decimal_places: def.field_type === "number" ? parsedDecimalPlaces : d.max_decimal_places,
+    } : d));
     setEditingId(null);
   }
 
@@ -332,6 +386,23 @@ export function CustomFieldsManager({ defs, onDefsChange }: CustomFieldsManagerP
                 />
                 <p className="text-[11px] text-muted-foreground">Key: <span className="font-mono">{def.field_key}</span> (fixed)</p>
               </div>
+              {def.field_type === "number" && (
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs">Max decimal places</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={editMaxDecimalPlaces}
+                    onChange={(e) => setEditMaxDecimalPlaces(e.target.value)}
+                    placeholder="Unrestricted"
+                    className="h-8 text-sm"
+                  />
+                </div>
+              )}
+              {def.field_type === "currency" && (
+                <p className="text-xs text-muted-foreground">Currency symbol: <span className="font-medium">{currencySymbol}</span></p>
+              )}
               {def.field_type === "dropdown" && (
                 <OptionsEditor options={editOptions} onChange={setEditOptions} />
               )}
@@ -349,33 +420,31 @@ export function CustomFieldsManager({ defs, onDefsChange }: CustomFieldsManagerP
               </div>
             </div>
           ) : (
-            // Display mode
+            // Display mode — click anywhere on the row to edit
             <div
-              className={cn(
-                "flex items-center gap-2 px-2 py-2 cursor-grab active:cursor-grabbing select-none",
-                "hover:bg-muted/50"
-              )}
+              className="flex items-center gap-2 px-2 py-2 cursor-pointer hover:bg-muted/50 select-none"
+              onClick={() => startEdit(def)}
             >
-              <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <GripVertical
+                className="h-4 w-4 shrink-0 text-muted-foreground cursor-grab active:cursor-grabbing"
+                onClick={(e) => e.stopPropagation()}
+              />
               <span className="flex-1 text-sm font-medium">{def.label}</span>
               <div className="flex items-center gap-1 shrink-0">
                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
                   {fieldTypeLabel(def.field_type)}
                 </Badge>
+                {def.field_type === "number" && def.max_decimal_places !== null && def.max_decimal_places !== undefined && (
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                    {def.max_decimal_places === 0 ? "Integer" : `${def.max_decimal_places}dp`}
+                  </Badge>
+                )}
                 {def.required && (
                   <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-destructive text-destructive">
                     Required
                   </Badge>
                 )}
               </div>
-              <button
-                type="button"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => { e.stopPropagation(); startEdit(def); }}
-                className="text-muted-foreground hover:text-foreground p-1"
-              >
-                <Pencil className="h-3.5 w-3.5" />
-              </button>
               <button
                 type="button"
                 onMouseDown={(e) => e.stopPropagation()}
@@ -393,6 +462,7 @@ export function CustomFieldsManager({ defs, onDefsChange }: CustomFieldsManagerP
         onAdd={handleAdd}
         nextOrder={defs.length}
         existingKeys={existingKeys}
+        currencySymbol={currencySymbol}
       />
     </div>
   );

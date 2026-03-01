@@ -62,6 +62,7 @@ export type MemberResult = {
   last_log_in: string | null;
   profile_name: string | null;
   custom_fields: Record<string, unknown>;
+  avatar_url: string | null;
 };
 
 // Add employee — creates org_member record only, no auth user
@@ -195,6 +196,7 @@ export async function addEmployee(formData: {
         last_log_in: null,
         profile_name: null,
         custom_fields: {},
+        avatar_url: null,
       },
     };
   } catch (e) {
@@ -584,6 +586,57 @@ export async function deleteEmployee(
       success: false,
       error: e instanceof Error ? e.message : "An error occurred",
     };
+  }
+}
+
+// Upload member avatar photo
+export async function uploadMemberAvatar(
+  memberId: string,
+  formData: FormData
+): Promise<{ success: boolean; error?: string; avatarUrl?: string }> {
+  try {
+    const membership = await getCallerMembership();
+    const admin = createAdminClient();
+
+    const file = formData.get("avatar") as File | null;
+    if (!file || file.size === 0) return { success: false, error: "No file provided" };
+    if (file.size > 5 * 1024 * 1024) return { success: false, error: "File must be under 5MB" };
+
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
+    if (!["jpg", "jpeg", "png", "webp", "gif"].includes(ext)) {
+      return { success: false, error: "File must be an image (jpg, png, webp, gif)" };
+    }
+
+    // Verify the target member belongs to caller's org
+    const { data: targetMember } = await admin
+      .from("members")
+      .select("id, avatar_url")
+      .eq("id", memberId)
+      .eq("organisation_id", membership.organisation_id)
+      .single();
+
+    if (!targetMember) return { success: false, error: "Member not found" };
+
+    const path = `${membership.organisation_id}/${memberId}/${Date.now()}.${ext}`;
+    const buffer = Buffer.from(await file.arrayBuffer());
+
+    const { error: uploadError } = await admin.storage
+      .from("member-avatars")
+      .upload(path, buffer, { contentType: file.type, upsert: false });
+
+    if (uploadError) return { success: false, error: uploadError.message };
+
+    const { data: { publicUrl } } = admin.storage.from("member-avatars").getPublicUrl(path);
+
+    await admin
+      .from("members")
+      .update({ avatar_url: publicUrl })
+      .eq("id", memberId)
+      .eq("organisation_id", membership.organisation_id);
+
+    return { success: true, avatarUrl: publicUrl };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }
 }
 

@@ -17,7 +17,7 @@ export default async function EmployeesPage({
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role, permissions, organisations(name, max_employees)")
+    .select("organisation_id, role, permissions, organisations(name, max_employees, currency_symbol)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -42,9 +42,11 @@ export default async function EmployeesPage({
   const canAdd = membership?.role === "owner" ||
     (membership?.role === "admin" && permissions.can_add_members === true);
 
-  const org = membership?.organisations as unknown as { name: string; max_employees: number } | null;
+  const org = membership?.organisations as unknown as { name: string; max_employees: number; currency_symbol: string } | null;
   const orgName = org?.name ?? "";
   const maxEmployees = org?.max_employees ?? 999;
+  const currencySymbol = org?.currency_symbol ?? "£";
+  const canSeeCurrency = membership?.role === "owner" || (membership?.role === "admin" && (permissions.can_see_currency as boolean) === true);
 
   const [{ data: members }, { data: teams }, { data: adminProfiles }, { data: employeeProfiles }, { data: columnPrefsRow }, { data: customFieldDefs }] =
     await Promise.all([
@@ -53,8 +55,11 @@ export default async function EmployeesPage({
       supabase.from("admin_profiles").select("id, name, rights").eq("organisation_id", membership!.organisation_id).order("name"),
       supabase.from("employee_profiles").select("id, name, rights").eq("organisation_id", membership!.organisation_id).order("name"),
       supabase.from("user_grid_preferences").select("prefs").eq("user_id", user.id).eq("grid_id", "employees").maybeSingle(),
-      supabase.from("custom_field_definitions").select("id, label, field_key, field_type, options, required, sort_order").eq("organisation_id", membership!.organisation_id).eq("object_type", "member").order("sort_order"),
+      supabase.from("custom_field_definitions").select("id, label, field_key, field_type, options, required, sort_order, max_decimal_places").eq("organisation_id", membership!.organisation_id).eq("object_type", "member").order("sort_order"),
     ]);
+
+  const allDefs = (customFieldDefs ?? []) as { id: string; label: string; field_key: string; field_type: string; options: string[] | null; required: boolean; sort_order: number; max_decimal_places: number | null }[];
+  const visibleDefs = canSeeCurrency ? allDefs : allDefs.filter((d) => d.field_type !== "currency");
 
   return (
     <EmployeesClient
@@ -69,7 +74,9 @@ export default async function EmployeesPage({
       employeeProfiles={(employeeProfiles ?? []) as { id: string; name: string; rights: Record<string, unknown> }[]}
       initialMemberId={memberId}
       initialColumnPrefs={(columnPrefsRow?.prefs ?? []) as { id: string; visible: boolean }[]}
-      customFieldDefs={(customFieldDefs ?? []) as { id: string; label: string; field_key: string; field_type: string; options: string[] | null; required: boolean; sort_order: number }[]}
+      customFieldDefs={visibleDefs}
+      currencySymbol={currencySymbol}
+      canSeeCurrency={canSeeCurrency}
     />
   );
 }

@@ -44,6 +44,12 @@ export const ADMIN_RIGHTS: RightDef[] = [
     type: "boolean",
     description: "Create, edit and delete custom field definitions",
   },
+  {
+    key: "can_see_currency",
+    label: "See Currency Fields",
+    type: "boolean",
+    description: "View currency-type custom field values",
+  },
 ];
 
 export const EMPLOYEE_RIGHTS: RightDef[] = [

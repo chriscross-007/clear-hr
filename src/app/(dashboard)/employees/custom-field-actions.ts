@@ -11,13 +11,14 @@ export type FieldDef = {
   options: string[] | null;
   required: boolean;
   sort_order: number;
+  max_decimal_places: number | null;
 };
 
 export async function getCustomFieldDefs(): Promise<FieldDef[]> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("custom_field_definitions")
-    .select("id, label, field_key, field_type, options, required, sort_order")
+    .select("id, label, field_key, field_type, options, required, sort_order, max_decimal_places")
     .eq("object_type", "member")
     .order("sort_order");
   return (data ?? []) as FieldDef[];
@@ -48,6 +49,7 @@ export async function createCustomFieldDef(
     options: def.options ? def.options : null,
     required: def.required,
     sort_order: def.sort_order,
+    max_decimal_places: def.max_decimal_places ?? null,
   });
 
   if (error) {
@@ -70,6 +72,7 @@ export async function updateCustomFieldDef(
     payload.options = updates.options?.length ? updates.options : null;
   if (updates.required !== undefined) payload.required = updates.required;
   if (updates.sort_order !== undefined) payload.sort_order = updates.sort_order;
+  if ("max_decimal_places" in updates) payload.max_decimal_places = updates.max_decimal_places ?? null;
 
   const { error } = await supabase
     .from("custom_field_definitions")

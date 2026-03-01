@@ -12,9 +12,17 @@ export function useColumnPrefs(
   initialPrefs: ColPref[],
   defaultCols: string[]
 ) {
-  const [prefs, setPrefs] = useState<ColPref[]>(() =>
-    initialPrefs.length > 0 ? initialPrefs : buildDefaultPrefs(defaultCols)
-  );
+  const [prefs, setPrefs] = useState<ColPref[]>(() => {
+    if (initialPrefs.length === 0) return buildDefaultPrefs(defaultCols);
+    // Remove cols that no longer exist (e.g. deleted custom fields)
+    const valid = initialPrefs.filter((c) => defaultCols.includes(c.id));
+    // Append any new cols not yet in saved prefs (e.g. newly added custom fields), visible by default
+    const savedIds = new Set(valid.map((c) => c.id));
+    const added = defaultCols
+      .filter((id) => !savedIds.has(id))
+      .map((id) => ({ id, visible: true }));
+    return [...valid, ...added];
+  });
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 

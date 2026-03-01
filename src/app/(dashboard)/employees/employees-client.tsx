@@ -75,6 +75,7 @@ export type Member = {
   payroll_number: string | null;
   profile_name: string | null;
   custom_fields: Record<string, unknown>;
+  avatar_url: string | null;
 };
 
 function RoleBadge({ role, memberLabel }: { role: string; memberLabel: string }) {
@@ -121,6 +122,70 @@ function InviteStatus({ member }: { member: Member }) {
   );
 }
 
+function getDateRange(preset: string): { from: string; to: string } | null {
+  const now = new Date();
+  if (preset === "this_week") {
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return { from: monday.toISOString().slice(0, 10), to: sunday.toISOString().slice(0, 10) };
+  }
+  if (preset === "last_week") {
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - ((now.getDay() + 6) % 7) - 7);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return { from: monday.toISOString().slice(0, 10), to: sunday.toISOString().slice(0, 10) };
+  }
+  if (preset === "this_month") {
+    const from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const to = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+    return { from, to };
+  }
+  if (preset === "last_month") {
+    const from = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 10);
+    const to = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10);
+    return { from, to };
+  }
+  if (preset === "this_year") {
+    return { from: `${now.getFullYear()}-01-01`, to: `${now.getFullYear()}-12-31` };
+  }
+  if (preset === "last_year") {
+    const y = now.getFullYear() - 1;
+    return { from: `${y}-01-01`, to: `${y}-12-31` };
+  }
+  if (preset === "next_week") {
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - ((now.getDay() + 6) % 7) + 7);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return { from: monday.toISOString().slice(0, 10), to: sunday.toISOString().slice(0, 10) };
+  }
+  if (preset === "next_month") {
+    const from = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString().slice(0, 10);
+    const to = new Date(now.getFullYear(), now.getMonth() + 2, 0).toISOString().slice(0, 10);
+    return { from, to };
+  }
+  if (preset === "next_year") {
+    const y = now.getFullYear() + 1;
+    return { from: `${y}-01-01`, to: `${y}-12-31` };
+  }
+  return null;
+}
+
+const DATE_PRESET_LABELS: Record<string, string> = {
+  this_week: "This Week",
+  last_week: "Last Week",
+  next_week: "Next Week",
+  this_month: "This Month",
+  last_month: "Last Month",
+  next_month: "Next Month",
+  this_year: "This Year",
+  last_year: "Last Year",
+  next_year: "Next Year",
+};
+
 const DEFAULT_EMPLOYEE_COLS = [
   "first_name", "last_name", "email", "role", "profile",
   "team", "payroll_number", "status", "last_log_in",
@@ -151,6 +216,8 @@ interface EmployeesClientProps {
   initialMemberId?: string;
   initialColumnPrefs: ColPref[];
   customFieldDefs: FieldDef[];
+  currencySymbol: string;
+  canSeeCurrency: boolean;
 }
 
 export function EmployeesClient({
@@ -166,6 +233,7 @@ export function EmployeesClient({
   initialMemberId,
   initialColumnPrefs,
   customFieldDefs,
+  currencySymbol,
 }: EmployeesClientProps) {
   const { memberLabel } = useMemberLabel();
   const router = useRouter();
@@ -218,12 +286,28 @@ export function EmployeesClient({
       };
       for (const cf of columnFilters) {
         const label = filterLabels[cf.id] ?? cf.id;
-        if (cf.id === "last_log_in") {
-          const dv = cf.value as { from?: string; to?: string };
-          const parts: string[] = [];
-          if (dv.from) parts.push(`from ${dv.from}`);
-          if (dv.to) parts.push(`to ${dv.to}`);
-          if (parts.length > 0) activeFilters.push({ label, value: parts.join(" ") });
+        const cfDef = customFieldDefs.find((d) => `cf_${d.field_key}` === cf.id);
+        if (cfDef && (cfDef.field_type === "number" || cfDef.field_type === "currency")) {
+          const nf = cf.value as { op?: string; val?: string; val2?: string };
+          if (nf?.op && nf?.val) {
+            const opLabel = nf.op === "gt" ? ">" : nf.op === "lt" ? "<" : "between";
+            const val = nf.op === "between" ? `${nf.val}${nf.val2 ? ` and ${nf.val2}` : ""}` : nf.val;
+            activeFilters.push({ label, value: `${opLabel} ${val}` });
+          }
+          continue;
+        }
+        if (cf.id === "last_log_in" || (cfDef && cfDef.field_type === "date")) {
+          const dv = cf.value as { preset?: string; from?: string; to?: string };
+          let filterStr = "";
+          if (dv.preset && dv.preset !== "custom") {
+            filterStr = DATE_PRESET_LABELS[dv.preset] ?? dv.preset;
+          } else {
+            const parts: string[] = [];
+            if (dv.from) parts.push(`from ${dv.from}`);
+            if (dv.to) parts.push(`to ${dv.to}`);
+            filterStr = parts.join(" ");
+          }
+          if (filterStr) activeFilters.push({ label, value: filterStr });
         } else {
           activeFilters.push({ label, value: String(cf.value) });
         }
@@ -258,7 +342,19 @@ export function EmployeesClient({
               if (def.field_type === "date" && val) {
                 try { return [`cf_${def.field_key}`, new Date(String(val)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })]; } catch { return [`cf_${def.field_key}`, String(val)]; }
               }
-              return [`cf_${def.field_key}`, val !== undefined && val !== null && val !== "" ? String(val) : "—"];
+              if (val === undefined || val === null || val === "") return [`cf_${def.field_key}`, "—"];
+              if (def.field_type === "currency") {
+                const num = Number(val);
+                return [`cf_${def.field_key}`, isNaN(num) ? String(val) : `${currencySymbol}${num.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`];
+              }
+              if (def.field_type === "number") {
+                const num = Number(val);
+                if (isNaN(num)) return [`cf_${def.field_key}`, String(val)];
+                if (def.max_decimal_places === 0) return [`cf_${def.field_key}`, String(Math.round(num))];
+                if (def.max_decimal_places !== null && def.max_decimal_places !== undefined) return [`cf_${def.field_key}`, num.toFixed(def.max_decimal_places)];
+                return [`cf_${def.field_key}`, String(val)];
+              }
+              return [`cf_${def.field_key}`, String(val)];
             })
           ),
         } as Record<string, string>;
@@ -294,6 +390,29 @@ export function EmployeesClient({
   }
 
   const columns: ColumnDef<Member>[] = [
+    {
+      id: "avatar",
+      size: 48,
+      enableSorting: false,
+      enableColumnFilter: false,
+      header: () => null,
+      cell: ({ row }) => {
+        const m = row.original;
+        const initials = [m.first_name, m.last_name].map((n) => n?.charAt(0).toUpperCase()).join("");
+        return m.avatar_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={m.avatar_url}
+            alt={`${m.first_name} ${m.last_name}`}
+            className="h-8 w-8 rounded-full object-cover shrink-0"
+          />
+        ) : (
+          <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center shrink-0">
+            <span className="text-xs font-medium text-muted-foreground">{initials}</span>
+          </div>
+        );
+      },
+    },
     {
       accessorKey: "first_name",
       sortingFn: (rowA, rowB) =>
@@ -496,12 +615,25 @@ export function EmployeesClient({
         if (!b) return 1;
         return new Date(a).getTime() - new Date(b).getTime();
       },
-      filterFn: (row, _columnId, filterValue: { from?: string; to?: string }) => {
+      filterFn: (row, _columnId, filterValue: { preset?: string; from?: string; to?: string }) => {
+        if (!filterValue) return true;
+        let from: string | undefined;
+        let to: string | undefined;
+        if (!filterValue.preset || filterValue.preset === "custom") {
+          from = filterValue.from;
+          to = filterValue.to;
+        } else {
+          const range = getDateRange(filterValue.preset);
+          if (!range) return true;
+          from = range.from;
+          to = range.to;
+        }
+        if (!from && !to) return true;
         const logIn = row.original.last_log_in;
         if (!logIn) return false;
         const date = logIn.slice(0, 10);
-        if (filterValue.from && date < filterValue.from) return false;
-        if (filterValue.to && date > filterValue.to) return false;
+        if (from && date < from) return false;
+        if (to && date > to) return false;
         return true;
       },
     },
@@ -513,7 +645,19 @@ export function EmployeesClient({
         if (def.field_type === "date" && val) {
           try { return new Date(String(val)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }); } catch { return String(val); }
         }
-        return val !== undefined && val !== null && val !== "" ? String(val) : "—";
+        if (val === undefined || val === null || val === "") return "—";
+        if (def.field_type === "currency") {
+          const num = Number(val);
+          return isNaN(num) ? String(val) : `${currencySymbol}${num.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        }
+        if (def.field_type === "number") {
+          const num = Number(val);
+          if (isNaN(num)) return String(val);
+          if (def.max_decimal_places === 0) return String(Math.round(num));
+          if (def.max_decimal_places !== null && def.max_decimal_places !== undefined) return num.toFixed(def.max_decimal_places);
+          return String(val);
+        }
+        return String(val);
       },
       header: ({ column }) => (
         <Button
@@ -531,6 +675,46 @@ export function EmployeesClient({
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
       ),
+      ...(def.field_type === "number" || def.field_type === "currency" ? {
+        filterFn: (row: { original: Member }, _columnId: string, filterValue: { op?: string; val?: string; val2?: string }) => {
+          if (!filterValue?.op || !filterValue?.val) return true;
+          const raw = row.original.custom_fields?.[def.field_key];
+          const num = Number(raw);
+          if (isNaN(num)) return false;
+          const val = Number(filterValue.val);
+          if (isNaN(val)) return true;
+          if (filterValue.op === "gt") return num > val;
+          if (filterValue.op === "lt") return num < val;
+          if (filterValue.op === "between") {
+            const val2 = Number(filterValue.val2);
+            return num >= val && (isNaN(val2) || num <= val2);
+          }
+          return true;
+        },
+      } : def.field_type === "date" ? {
+        filterFn: (row: { original: Member }, _columnId: string, filterValue: { preset?: string; from?: string; to?: string }) => {
+          if (!filterValue) return true;
+          let from: string | undefined;
+          let to: string | undefined;
+          if (!filterValue.preset || filterValue.preset === "custom") {
+            from = filterValue.from;
+            to = filterValue.to;
+          } else {
+            const range = getDateRange(filterValue.preset);
+            if (!range) return true;
+            from = range.from;
+            to = range.to;
+          }
+          if (!from && !to) return true;
+          const raw = row.original.custom_fields?.[def.field_key];
+          if (!raw) return false;
+          let dateStr: string;
+          try { dateStr = new Date(String(raw)).toISOString().slice(0, 10); } catch { return false; }
+          if (from && dateStr < from) return false;
+          if (to && dateStr > to) return false;
+          return true;
+        },
+      } : {}),
     })),
     ...(canAdd
       ? [
@@ -604,6 +788,9 @@ export function EmployeesClient({
                 const columnId = header.column.id;
                 if (columnId === "actions") {
                   return <TableHead key={`filter-${header.id}`} />;
+                }
+                if (columnId === "avatar") {
+                  return <TableHead key={`filter-${header.id}`} className="w-12 shrink-0" />;
                 }
                 if (columnId === "payroll_number") {
                   return (
@@ -697,35 +884,98 @@ export function EmployeesClient({
                     </TableHead>
                   );
                 }
-                if (columnId === "last_log_in") {
-                  const dateFilter = (header.column.getFilterValue() as { from?: string; to?: string }) ?? {};
+                const cfDef = customFieldDefs.find((d) => `cf_${d.field_key}` === columnId);
+                if (columnId === "last_log_in" || (cfDef && cfDef.field_type === "date")) {
+                  const df = (header.column.getFilterValue() as { preset?: string; from?: string; to?: string }) ?? {};
                   return (
                     <TableHead key={`filter-${header.id}`} className="py-2">
                       <div className="flex flex-col gap-1">
-                        <input
-                          type="date"
+                        <select
                           className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs"
-                          placeholder="From"
-                          value={dateFilter.from ?? ""}
-                          onChange={(e) =>
-                            header.column.setFilterValue({
-                              ...dateFilter,
-                              from: e.target.value || undefined,
-                            })
-                          }
-                        />
-                        <input
-                          type="date"
+                          value={df.preset ?? ""}
+                          onChange={(e) => {
+                            const preset = e.target.value;
+                            header.column.setFilterValue(preset ? { preset } : undefined);
+                          }}
+                        >
+                          <option value="">Any time</option>
+                          <option value="last_week">Last Week</option>
+                          <option value="this_week">This Week</option>
+                          <option value="next_week">Next Week</option>
+                          <option value="last_month">Last Month</option>
+                          <option value="this_month">This Month</option>
+                          <option value="next_month">Next Month</option>
+                          <option value="last_year">Last Year</option>
+                          <option value="this_year">This Year</option>
+                          <option value="next_year">Next Year</option>
+                          <option value="custom">Custom range...</option>
+                        </select>
+                        {df.preset === "custom" && (
+                          <>
+                            <input
+                              type="date"
+                              className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs"
+                              placeholder="From"
+                              value={df.from ?? ""}
+                              onChange={(e) =>
+                                header.column.setFilterValue({ ...df, from: e.target.value || undefined })
+                              }
+                            />
+                            <input
+                              type="date"
+                              className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs"
+                              placeholder="To"
+                              value={df.to ?? ""}
+                              onChange={(e) =>
+                                header.column.setFilterValue({ ...df, to: e.target.value || undefined })
+                              }
+                            />
+                          </>
+                        )}
+                      </div>
+                    </TableHead>
+                  );
+                }
+                if (cfDef && (cfDef.field_type === "number" || cfDef.field_type === "currency")) {
+                  const nf = (header.column.getFilterValue() as { op?: string; val?: string; val2?: string }) ?? {};
+                  return (
+                    <TableHead key={`filter-${header.id}`} className="py-2">
+                      <div className="flex flex-col gap-1">
+                        <select
                           className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs"
-                          placeholder="To"
-                          value={dateFilter.to ?? ""}
-                          onChange={(e) =>
-                            header.column.setFilterValue({
-                              ...dateFilter,
-                              to: e.target.value || undefined,
-                            })
-                          }
-                        />
+                          value={nf.op ?? ""}
+                          onChange={(e) => {
+                            const op = e.target.value;
+                            header.column.setFilterValue(op ? { ...nf, op } : undefined);
+                          }}
+                        >
+                          <option value="">Any</option>
+                          <option value="gt">&gt; Greater than</option>
+                          <option value="lt">&lt; Less than</option>
+                          <option value="between">Between</option>
+                        </select>
+                        {nf.op && (
+                          <input
+                            type="number"
+                            className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs"
+                            placeholder={nf.op === "between" ? "From" : "Value"}
+                            value={nf.val ?? ""}
+                            onChange={(e) =>
+                              header.column.setFilterValue({ ...nf, val: e.target.value || undefined })
+                            }
+                          />
+                        )}
+                        {nf.op === "between" && (
+                          <input
+                            type="number"
+                            className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs"
+                            placeholder="To"
+                            value={nf.val2 ?? ""}
+                            onChange={(e) =>
+                              header.column.setFilterValue({ ...nf, val2: e.target.value || undefined })
+                            }
+                          />
+                        )}
                       </div>
                     </TableHead>
                   );
@@ -827,6 +1077,7 @@ export function EmployeesClient({
         adminProfiles={adminProfiles}
         employeeProfiles={employeeProfiles}
         customFieldDefs={customFieldDefs}
+        currencySymbol={currencySymbol}
         onSaved={(updated) => {
           setMembers((prev) =>
             prev.map((m) =>
@@ -836,6 +1087,12 @@ export function EmployeesClient({
             )
           );
           setEditingMember(null);
+        }}
+        onAvatarChanged={(memberId, avatarUrl) => {
+          setMembers((prev) =>
+            prev.map((m) => m.member_id === memberId ? { ...m, avatar_url: avatarUrl } : m)
+          );
+          setEditingMember((prev) => prev && prev.member_id === memberId ? { ...prev, avatar_url: avatarUrl } : prev);
         }}
         onInviteStatusChanged={(memberId, invitedAt) => {
           setMembers((prev) =>
@@ -851,6 +1108,7 @@ export function EmployeesClient({
         teams={teams}
         employeeProfiles={employeeProfiles}
         customFieldDefs={customFieldDefs}
+        currencySymbol={currencySymbol}
         onAdded={(newMember) => {
           setMembers((prev) => [...prev, newMember]);
           setShowAddDialog(false);

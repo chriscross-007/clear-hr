@@ -176,6 +176,10 @@ Do NOT modify auth code to "fix" cache issues.
 | Turbopack panic | Your code | Cache corruption | Clear cache |
 | Auth callback loops | Token handling | Missing `next` param | Add `?next=` to redirectTo |
 
+## UI Conventions
+- **Row editing:** Never use a pencil/edit icon button on list rows. Make the entire row clickable to open edit mode (`cursor-pointer hover:bg-muted/50 onClick={() => startEdit(...)}`). Only action buttons that are destructive (delete) or independent (drag handle) should remain as separate icons with `e.stopPropagation()`.
+- **Date filters:** Date and datetime columns use a preset dropdown ordered Last/This/Next per period (Last Week, This Week, Next Week, Last Month, This Month, Next Month, Last Year, This Year, Next Year, Custom range...) rather than raw date pickers. "Custom range..." reveals From/To date inputs. Filter value shape: `{ preset?: string; from?: string; to?: string }`. The `getDateRange(preset)` helper in `employees-client.tsx` resolves presets to `{ from, to }` ISO date strings. Applies to `last_log_in` and all `date`-type custom field columns.
+
 ## Commands
 - `npm run dev` — Start dev server
 - `npm run build` — Production build

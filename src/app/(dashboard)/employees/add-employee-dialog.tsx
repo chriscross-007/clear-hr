@@ -35,6 +35,7 @@ interface AddEmployeeDialogProps {
   teams: Team[];
   employeeProfiles: Profile[];
   customFieldDefs: FieldDef[];
+  currencySymbol: string;
   onAdded: (member: Member) => void;
 }
 
@@ -44,6 +45,7 @@ export function AddEmployeeDialog({
   teams,
   employeeProfiles,
   customFieldDefs,
+  currencySymbol,
   onAdded,
 }: AddEmployeeDialogProps) {
   const { memberLabel } = useMemberLabel();
@@ -258,10 +260,23 @@ export function AddEmployeeDialog({
                         ))}
                       </SelectContent>
                     </Select>
+                  ) : def.field_type === "currency" ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="shrink-0 text-sm text-muted-foreground">{currencySymbol}</span>
+                      <Input
+                        id={`acf-${def.field_key}`}
+                        type="number"
+                        step="0.01"
+                        value={String(customValues[def.field_key] ?? "")}
+                        onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
+                        className="flex-1"
+                      />
+                    </div>
                   ) : (
                     <Input
                       id={`acf-${def.field_key}`}
                       type={def.field_type === "number" ? "number" : def.field_type === "date" ? "date" : def.field_type === "email" ? "email" : def.field_type === "url" ? "url" : def.field_type === "phone" ? "tel" : "text"}
+                      step={def.field_type === "number" ? (def.max_decimal_places === null || def.max_decimal_places === undefined ? "any" : def.max_decimal_places === 0 ? "1" : String(Math.pow(10, -def.max_decimal_places))) : undefined}
                       value={String(customValues[def.field_key] ?? "")}
                       onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
                     />

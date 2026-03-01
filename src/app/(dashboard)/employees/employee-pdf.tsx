@@ -74,7 +74,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0.5,
     borderBottomColor: "#ddd",
     minHeight: 20,
-    alignItems: "center",
   },
   tableRowAlt: {
     backgroundColor: "#f9f9f9",
@@ -87,16 +86,16 @@ const styles = StyleSheet.create({
     minHeight: 22,
     alignItems: "center",
   },
-  headerCell: {
-    fontFamily: "Helvetica-Bold",
-    fontSize: 8,
+  cellView: {
     paddingVertical: 4,
     paddingHorizontal: 4,
   },
+  headerCell: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 8,
+  },
   cell: {
     fontSize: 8,
-    paddingVertical: 4,
-    paddingHorizontal: 4,
   },
   footer: {
     position: "absolute",
@@ -117,14 +116,8 @@ export function EmployeePDF({
   orientation,
   filters,
 }: EmployeePDFProps) {
-  const totalWeight = columns.reduce(
-    (sum, col) => sum + (COLUMN_WEIGHTS[col.id] ?? 10),
-    0
-  );
-
-  function colWidth(id: string) {
-    const weight = COLUMN_WEIGHTS[id] ?? 10;
-    return `${((weight / totalWeight) * 100).toFixed(1)}%`;
+  function colFlex(id: string) {
+    return COLUMN_WEIGHTS[id] ?? 10;
   }
 
   const now = new Date().toLocaleDateString("en-GB", {
@@ -156,12 +149,9 @@ export function EmployeePDF({
         <View style={styles.table}>
           <View style={styles.tableHeader}>
             {columns.map((col) => (
-              <Text
-                key={col.id}
-                style={[styles.headerCell, { width: colWidth(col.id) }]}
-              >
-                {col.label}
-              </Text>
+              <View key={col.id} style={[styles.cellView, { flex: colFlex(col.id) }]}>
+                <Text style={styles.headerCell}>{col.label}</Text>
+              </View>
             ))}
           </View>
 
@@ -172,12 +162,9 @@ export function EmployeePDF({
               wrap={false}
             >
               {columns.map((col) => (
-                <Text
-                  key={col.id}
-                  style={[styles.cell, { width: colWidth(col.id) }]}
-                >
-                  {row[col.id] ?? ""}
-                </Text>
+                <View key={col.id} style={[styles.cellView, { flex: colFlex(col.id) }]}>
+                  <Text style={styles.cell}>{row[col.id] ?? ""}</Text>
+                </View>
               ))}
             </View>
           ))}

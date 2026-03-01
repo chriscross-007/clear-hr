@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize } from "@/lib/label-utils";
-import { updateEmployee, sendInvite } from "./actions";
+import { updateEmployee, sendInvite, uploadMemberAvatar } from "./actions";
 import { updateMemberTeam, getMemberTeams, setMemberTeams } from "./team-actions";
 import type { Profile } from "./profile-actions";
 import { getMemberProfile } from "./profile-actions";
@@ -45,6 +45,7 @@ interface EditEmployeeDialogProps {
   adminProfiles: Profile[];
   employeeProfiles: Profile[];
   customFieldDefs: FieldDef[];
+  currencySymbol: string;
   onSaved: (updated: {
     member_id: string;
     first_name: string;
@@ -54,6 +55,7 @@ interface EditEmployeeDialogProps {
     payroll_number: string | null;
     custom_fields: Record<string, unknown>;
   }) => void;
+  onAvatarChanged: (memberId: string, avatarUrl: string) => void;
   onInviteStatusChanged: (memberId: string, invitedAt: string) => void;
 }
 
@@ -65,10 +67,15 @@ export function EditEmployeeDialog({
   adminProfiles,
   employeeProfiles,
   customFieldDefs,
+  currencySymbol,
   onSaved,
+  onAvatarChanged,
   onInviteStatusChanged,
 }: EditEmployeeDialogProps) {
   const { memberLabel } = useMemberLabel();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [payrollNumber, setPayrollNumber] = useState("");
@@ -215,6 +222,23 @@ export function EditEmployeeDialog({
     setInviting(false);
   }
 
+  async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !member) return;
+    setAvatarUploading(true);
+    setAvatarError(null);
+    const fd = new FormData();
+    fd.append("avatar", file);
+    const result = await uploadMemberAvatar(member.member_id, fd);
+    if (result.success && result.avatarUrl) {
+      onAvatarChanged(member.member_id, result.avatarUrl);
+    } else {
+      setAvatarError(result.error ?? "Upload failed");
+    }
+    setAvatarUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
   const isAccepted = !!member?.accepted_at;
   const isInvited = !!member?.invited_at;
 
@@ -250,6 +274,43 @@ export function EditEmployeeDialog({
               )}
             </TabsList>
             <TabsContent value="details" className="space-y-4 mt-0">
+              {/* Avatar upload */}
+              <div className="flex items-center gap-4">
+                {member?.avatar_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={member.avatar_url}
+                    alt={`${member.first_name} ${member.last_name}`}
+                    className="h-16 w-16 rounded-full object-cover shrink-0"
+                  />
+                ) : (
+                  <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center shrink-0">
+                    <span className="text-lg font-medium text-muted-foreground">
+                      {[member?.first_name, member?.last_name].map((n) => n?.charAt(0).toUpperCase()).join("")}
+                    </span>
+                  </div>
+                )}
+                <div className="space-y-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={avatarUploading}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    {avatarUploading ? "Uploading..." : "Change photo"}
+                  </Button>
+                  {avatarError && <p className="text-xs text-destructive">{avatarError}</p>}
+                  <p className="text-xs text-muted-foreground">JPG, PNG, WebP or GIF — max 5MB</p>
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                  onChange={handleAvatarChange}
+                />
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="edit-email">Email Address</Label>
                 <Input
@@ -419,10 +480,23 @@ export function EditEmployeeDialog({
                           ))}
                         </SelectContent>
                       </Select>
+                    ) : def.field_type === "currency" ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="shrink-0 text-sm text-muted-foreground">{currencySymbol}</span>
+                        <Input
+                          id={`cf-${def.field_key}`}
+                          type="number"
+                          step="0.01"
+                          value={String(customValues[def.field_key] ?? "")}
+                          onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
+                          className="flex-1"
+                        />
+                      </div>
                     ) : (
                       <Input
                         id={`cf-${def.field_key}`}
                         type={def.field_type === "number" ? "number" : def.field_type === "date" ? "date" : def.field_type === "email" ? "email" : def.field_type === "url" ? "url" : def.field_type === "phone" ? "tel" : "text"}
+                        step={def.field_type === "number" ? (def.max_decimal_places === null || def.max_decimal_places === undefined ? "any" : def.max_decimal_places === 0 ? "1" : String(Math.pow(10, -def.max_decimal_places))) : undefined}
                         value={String(customValues[def.field_key] ?? "")}
                         onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
                       />

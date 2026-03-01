@@ -17,9 +17,10 @@ interface SidebarProps {
   plan: string;
   requireMfa: boolean;
   canDefineCustomFields: boolean;
+  currencySymbol: string;
 }
 
-export function Sidebar({ role, accessMembers, memberLabel, orgName, plan, requireMfa, canDefineCustomFields }: SidebarProps) {
+export function Sidebar({ role, accessMembers, memberLabel, orgName, plan, requireMfa, canDefineCustomFields, currencySymbol }: SidebarProps) {
   const pathname = usePathname();
   const [showOrgEdit, setShowOrgEdit] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
@@ -108,6 +109,7 @@ export function Sidebar({ role, accessMembers, memberLabel, orgName, plan, requi
           requireMfa={requireMfa}
           role={role}
           canDefineCustomFields={canDefineCustomFields}
+          currencySymbol={currencySymbol}
         />
       )}
     </>
