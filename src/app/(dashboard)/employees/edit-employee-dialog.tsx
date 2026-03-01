@@ -7,6 +7,8 @@ import { updateEmployee, sendInvite } from "./actions";
 import { updateMemberTeam, getMemberTeams, setMemberTeams } from "./team-actions";
 import type { Profile } from "./profile-actions";
 import { getMemberProfile } from "./profile-actions";
+import type { FieldDef } from "./custom-field-actions";
+import { saveCustomFieldValues } from "./custom-field-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +20,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -34,6 +38,7 @@ interface EditEmployeeDialogProps {
   teams: Team[];
   adminProfiles: Profile[];
   employeeProfiles: Profile[];
+  customFieldDefs: FieldDef[];
   onSaved: (updated: {
     member_id: string;
     first_name: string;
@@ -41,6 +46,7 @@ interface EditEmployeeDialogProps {
     role: string;
     team_id: string | null;
     payroll_number: string | null;
+    custom_fields: Record<string, unknown>;
   }) => void;
   onInviteStatusChanged: (memberId: string, invitedAt: string) => void;
 }
@@ -52,6 +58,7 @@ export function EditEmployeeDialog({
   teams,
   adminProfiles,
   employeeProfiles,
+  customFieldDefs,
   onSaved,
   onInviteStatusChanged,
 }: EditEmployeeDialogProps) {
@@ -67,6 +74,7 @@ export function EditEmployeeDialog({
   const [inviting, setInviting] = useState(false);
   const [inviteSuccess, setInviteSuccess] = useState(false);
   const [profileId, setProfileId] = useState<string>("__none__");
+  const [customValues, setCustomValues] = useState<Record<string, unknown>>({});
 
   const isMultiTeam = member?.role === "admin" || member?.role === "owner";
 
@@ -80,6 +88,7 @@ export function EditEmployeeDialog({
       setError(null);
       setInviteSuccess(false);
       setProfileId("__none__");
+      setCustomValues(member.custom_fields ?? {});
       // Load the member's current profile assignment
       getMemberProfile(member.member_id).then((result) => {
         if (result.success) {
@@ -147,6 +156,28 @@ export function EditEmployeeDialog({
       }
     }
 
+    // Validate required custom fields
+    for (const def of customFieldDefs) {
+      if (def.required) {
+        const val = customValues[def.field_key];
+        if (val === undefined || val === null || val === "") {
+          setError(`${def.label} is required`);
+          setLoading(false);
+          return;
+        }
+      }
+    }
+
+    // Save custom field values
+    if (customFieldDefs.length > 0) {
+      const cfResult = await saveCustomFieldValues(member.member_id, customValues);
+      if (!cfResult.success) {
+        setError(cfResult.error ?? "Failed to save custom fields");
+        setLoading(false);
+        return;
+      }
+    }
+
     setLoading(false);
     onSaved({
       member_id: member.member_id,
@@ -155,6 +186,7 @@ export function EditEmployeeDialog({
       role,
       team_id: isMultiTeam ? (selectedTeamIds[0] ?? null) : teamId,
       payroll_number: payrollNumber.trim() || null,
+      custom_fields: customValues,
     });
   }
 
@@ -335,6 +367,56 @@ export function EditEmployeeDialog({
               </div>
             );
           })()}
+          {customFieldDefs.length > 0 && (
+            <div className="space-y-3 rounded-md border p-3">
+              <p className="text-sm font-medium">Custom Fields</p>
+              {customFieldDefs.map((def) => (
+                <div key={def.field_key} className="space-y-1">
+                  <Label htmlFor={`cf-${def.field_key}`}>
+                    {def.label}{def.required && <span className="text-destructive ml-0.5">*</span>}
+                  </Label>
+                  {def.field_type === "checkbox" ? (
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id={`cf-${def.field_key}`}
+                        checked={customValues[def.field_key] === true}
+                        onCheckedChange={(v) => setCustomValues((prev) => ({ ...prev, [def.field_key]: v }))}
+                      />
+                    </div>
+                  ) : def.field_type === "multiline" ? (
+                    <Textarea
+                      id={`cf-${def.field_key}`}
+                      value={String(customValues[def.field_key] ?? "")}
+                      onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
+                      rows={3}
+                    />
+                  ) : def.field_type === "dropdown" ? (
+                    <Select
+                      value={String(customValues[def.field_key] ?? "__none__")}
+                      onValueChange={(v) => setCustomValues((prev) => ({ ...prev, [def.field_key]: v === "__none__" ? "" : v }))}
+                    >
+                      <SelectTrigger id={`cf-${def.field_key}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {!def.required && <SelectItem value="__none__">—</SelectItem>}
+                        {(def.options ?? []).map((opt) => (
+                          <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      id={`cf-${def.field_key}`}
+                      type={def.field_type === "number" ? "number" : def.field_type === "date" ? "date" : def.field_type === "email" ? "email" : def.field_type === "url" ? "url" : def.field_type === "phone" ? "tel" : "text"}
+                      value={String(customValues[def.field_key] ?? "")}
+                      onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           <DialogFooter>
             {!isAccepted && (
               <Button

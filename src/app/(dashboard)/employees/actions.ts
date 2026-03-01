@@ -61,6 +61,7 @@ export type MemberResult = {
   payroll_number: string | null;
   last_log_in: string | null;
   profile_name: string | null;
+  custom_fields: Record<string, unknown>;
 };
 
 // Add employee — creates org_member record only, no auth user
@@ -193,6 +194,7 @@ export async function addEmployee(formData: {
         payroll_number: trimmedPayroll,
         last_log_in: null,
         profile_name: null,
+        custom_fields: {},
       },
     };
   } catch (e) {

@@ -16,15 +16,16 @@ interface SidebarProps {
   orgName: string;
   plan: string;
   requireMfa: boolean;
+  canDefineCustomFields: boolean;
 }
 
-export function Sidebar({ role, accessMembers, memberLabel, orgName, plan, requireMfa }: SidebarProps) {
+export function Sidebar({ role, accessMembers, memberLabel, orgName, plan, requireMfa, canDefineCustomFields }: SidebarProps) {
   const pathname = usePathname();
   const [showOrgEdit, setShowOrgEdit] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
 
   const showEmployees = role !== "admin" || accessMembers === "read" || accessMembers === "write";
-  const showOrg = role === "owner";
+  const showOrg = role === "owner" || canDefineCustomFields;
   const showBilling = role === "owner";
   const showAudit = role === "owner" || role === "admin";
   const showReports = hasPlanFeature(plan, "reports");
@@ -39,7 +40,7 @@ export function Sidebar({ role, accessMembers, memberLabel, orgName, plan, requi
 
   return (
     <>
-      <nav className="w-48 shrink-0 border-r bg-background">
+      <nav className="w-48 shrink-0 border-r bg-background sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto">
         <div className="flex flex-col gap-0.5 p-2 pt-4">
           {showEmployees && (
             <Link href="/employees" className={linkClass("/employees")}>
@@ -105,6 +106,8 @@ export function Sidebar({ role, accessMembers, memberLabel, orgName, plan, requi
           memberLabel={memberLabel}
           plan={plan}
           requireMfa={requireMfa}
+          role={role}
+          canDefineCustomFields={canDefineCustomFields}
         />
       )}
     </>

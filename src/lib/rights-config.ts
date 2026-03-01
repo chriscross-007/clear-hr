@@ -38,6 +38,12 @@ export const ADMIN_RIGHTS: RightDef[] = [
     type: "access",
     description: "None, read-only, or full read/write access to member records",
   },
+  {
+    key: "can_define_custom_fields",
+    label: "Define Custom Fields",
+    type: "boolean",
+    description: "Create, edit and delete custom field definitions",
+  },
 ];
 
 export const EMPLOYEE_RIGHTS: RightDef[] = [

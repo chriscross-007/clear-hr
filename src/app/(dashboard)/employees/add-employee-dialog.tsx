@@ -6,6 +6,8 @@ import { capitalize } from "@/lib/label-utils";
 import { addEmployee } from "./actions";
 import { assignProfile } from "./profile-actions";
 import type { Profile } from "./profile-actions";
+import type { FieldDef } from "./custom-field-actions";
+import { saveCustomFieldValues } from "./custom-field-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +18,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +34,7 @@ interface AddEmployeeDialogProps {
   onOpenChange: (open: boolean) => void;
   teams: Team[];
   employeeProfiles: Profile[];
+  customFieldDefs: FieldDef[];
   onAdded: (member: Member) => void;
 }
 
@@ -38,6 +43,7 @@ export function AddEmployeeDialog({
   onOpenChange,
   teams,
   employeeProfiles,
+  customFieldDefs,
   onAdded,
 }: AddEmployeeDialogProps) {
   const { memberLabel } = useMemberLabel();
@@ -47,6 +53,7 @@ export function AddEmployeeDialog({
   const [payrollNumber, setPayrollNumber] = useState("");
   const [teamId, setTeamId] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
+  const [customValues, setCustomValues] = useState<Record<string, unknown>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -57,6 +64,7 @@ export function AddEmployeeDialog({
     setPayrollNumber("");
     setTeamId(null);
     setProfileId(null);
+    setCustomValues({});
     setError(null);
   }
 
@@ -79,9 +87,26 @@ export function AddEmployeeDialog({
       return;
     }
 
+    // Validate required custom fields
+    for (const def of customFieldDefs) {
+      if (def.required) {
+        const val = customValues[def.field_key];
+        if (val === undefined || val === null || val === "") {
+          setError(`${def.label} is required`);
+          setLoading(false);
+          return;
+        }
+      }
+    }
+
     // Assign employee profile if selected
     if (profileId && result.member) {
       await assignProfile(result.member.member_id, "employee", profileId);
+    }
+
+    // Save custom field values if any
+    if (result.member && customFieldDefs.length > 0 && Object.keys(customValues).length > 0) {
+      await saveCustomFieldValues(result.member.member_id, customValues);
     }
 
     setLoading(false);
@@ -193,6 +218,56 @@ export function AddEmployeeDialog({
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+          )}
+          {customFieldDefs.length > 0 && (
+            <div className="space-y-3 rounded-md border p-3">
+              <p className="text-sm font-medium">Custom Fields</p>
+              {customFieldDefs.map((def) => (
+                <div key={def.field_key} className="space-y-1">
+                  <Label htmlFor={`acf-${def.field_key}`}>
+                    {def.label}{def.required && <span className="text-destructive ml-0.5">*</span>}
+                  </Label>
+                  {def.field_type === "checkbox" ? (
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id={`acf-${def.field_key}`}
+                        checked={customValues[def.field_key] === true}
+                        onCheckedChange={(v) => setCustomValues((prev) => ({ ...prev, [def.field_key]: v }))}
+                      />
+                    </div>
+                  ) : def.field_type === "multiline" ? (
+                    <Textarea
+                      id={`acf-${def.field_key}`}
+                      value={String(customValues[def.field_key] ?? "")}
+                      onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
+                      rows={3}
+                    />
+                  ) : def.field_type === "dropdown" ? (
+                    <Select
+                      value={String(customValues[def.field_key] ?? "__none__")}
+                      onValueChange={(v) => setCustomValues((prev) => ({ ...prev, [def.field_key]: v === "__none__" ? "" : v }))}
+                    >
+                      <SelectTrigger id={`acf-${def.field_key}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {!def.required && <SelectItem value="__none__">—</SelectItem>}
+                        {(def.options ?? []).map((opt) => (
+                          <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      id={`acf-${def.field_key}`}
+                      type={def.field_type === "number" ? "number" : def.field_type === "date" ? "date" : def.field_type === "email" ? "email" : def.field_type === "url" ? "url" : def.field_type === "phone" ? "tel" : "text"}
+                      value={String(customValues[def.field_key] ?? "")}
+                      onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
+                    />
+                  )}
+                </div>
+              ))}
             </div>
           )}
           <DialogFooter>

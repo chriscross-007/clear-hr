@@ -10,6 +10,9 @@ import { getProfiles } from "./employees/profile-actions";
 import type { Profile } from "./employees/profile-actions";
 import { ADMIN_RIGHTS, EMPLOYEE_RIGHTS } from "@/lib/rights-config";
 import { ProfileManager } from "./organisation-edit-dialog-profiles";
+import { CustomFieldsManager } from "./organisation-edit-dialog-custom-fields";
+import { getCustomFieldDefs } from "./employees/custom-field-actions";
+import type { FieldDef } from "./employees/custom-field-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,6 +38,8 @@ interface OrganisationEditDialogProps {
   memberLabel: string;
   plan: string;
   requireMfa: boolean;
+  role: string;
+  canDefineCustomFields: boolean;
 }
 
 export function OrganisationEditDialog({
@@ -44,6 +49,8 @@ export function OrganisationEditDialog({
   memberLabel,
   plan,
   requireMfa,
+  role,
+  canDefineCustomFields,
 }: OrganisationEditDialogProps) {
   const [name, setName] = useState(orgName);
   const [label, setLabel] = useState(memberLabel);
@@ -59,7 +66,10 @@ export function OrganisationEditDialog({
   const [mfaRequired, setMfaRequired] = useState(requireMfa);
   const [adminProfiles, setAdminProfiles] = useState<Profile[]>([]);
   const [employeeProfiles, setEmployeeProfiles] = useState<Profile[]>([]);
+  const [fieldDefs, setFieldDefs] = useState<FieldDef[]>([]);
   const router = useRouter();
+  const isOwner = role === "owner";
+  const showCustomFields = isOwner || canDefineCustomFields;
 
   useEffect(() => {
     if (open) {
@@ -85,8 +95,12 @@ export function OrganisationEditDialog({
       getProfiles("employee").then((result) => {
         if (result.success && result.profiles) setEmployeeProfiles(result.profiles);
       });
+      // Load custom field definitions
+      if (showCustomFields) {
+        getCustomFieldDefs().then(setFieldDefs);
+      }
     }
-  }, [open, orgName, memberLabel, requireMfa]);
+  }, [open, orgName, memberLabel, requireMfa, showCustomFields]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -181,12 +195,13 @@ export function OrganisationEditDialog({
           <DialogTitle>Organisation Settings</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
-          <Tabs defaultValue="general" className="w-full">
-            <TabsList className="w-full">
-              <TabsTrigger value="general" className="flex-1">General</TabsTrigger>
-              <TabsTrigger value="teams" className="flex-1">Teams</TabsTrigger>
-              <TabsTrigger value="admin-profiles" className="flex-1">Admin Profiles</TabsTrigger>
-              <TabsTrigger value="employee-profiles" className="flex-1">Employee Profiles</TabsTrigger>
+          <Tabs defaultValue={isOwner ? "general" : "custom-fields"} className="w-full">
+            <TabsList className="w-full flex-wrap h-auto gap-0.5">
+              {isOwner && <TabsTrigger value="general" className="flex-1">General</TabsTrigger>}
+              {isOwner && <TabsTrigger value="teams" className="flex-1">Teams</TabsTrigger>}
+              {isOwner && <TabsTrigger value="admin-profiles" className="flex-1">Admin Profiles</TabsTrigger>}
+              {isOwner && <TabsTrigger value="employee-profiles" className="flex-1">Employee Profiles</TabsTrigger>}
+              {showCustomFields && <TabsTrigger value="custom-fields" className="flex-1">Custom Fields</TabsTrigger>}
             </TabsList>
 
             {/* General tab */}
@@ -340,38 +355,58 @@ export function OrganisationEditDialog({
             </TabsContent>
 
             {/* Admin Profiles tab */}
-            <TabsContent value="admin-profiles" className="mt-4">
-              <ProfileManager
-                type="admin"
-                rightDefs={ADMIN_RIGHTS}
-                profiles={adminProfiles}
-                onProfilesChange={setAdminProfiles}
-              />
-            </TabsContent>
+            {isOwner && (
+              <TabsContent value="admin-profiles" className="mt-4">
+                <ProfileManager
+                  type="admin"
+                  rightDefs={ADMIN_RIGHTS}
+                  profiles={adminProfiles}
+                  onProfilesChange={setAdminProfiles}
+                />
+              </TabsContent>
+            )}
 
             {/* Employee Profiles tab */}
-            <TabsContent value="employee-profiles" className="mt-4">
-              <ProfileManager
-                type="employee"
-                rightDefs={EMPLOYEE_RIGHTS}
-                profiles={employeeProfiles}
-                onProfilesChange={setEmployeeProfiles}
-              />
-            </TabsContent>
+            {isOwner && (
+              <TabsContent value="employee-profiles" className="mt-4">
+                <ProfileManager
+                  type="employee"
+                  rightDefs={EMPLOYEE_RIGHTS}
+                  profiles={employeeProfiles}
+                  onProfilesChange={setEmployeeProfiles}
+                />
+              </TabsContent>
+            )}
+
+            {/* Custom Fields tab */}
+            {showCustomFields && (
+              <TabsContent value="custom-fields" className="mt-4 max-h-[400px] overflow-y-auto">
+                <CustomFieldsManager defs={fieldDefs} onDefsChange={setFieldDefs} />
+              </TabsContent>
+            )}
           </Tabs>
 
-          <DialogFooter className="mt-4">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={loading}>
-              {loading ? "Saving..." : "Save changes"}
-            </Button>
-          </DialogFooter>
+          {isOwner && (
+            <DialogFooter className="mt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={loading}>
+                {loading ? "Saving..." : "Save changes"}
+              </Button>
+            </DialogFooter>
+          )}
+          {!isOwner && (
+            <DialogFooter className="mt-4">
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                Close
+              </Button>
+            </DialogFooter>
+          )}
         </form>
       </DialogContent>
     </Dialog>

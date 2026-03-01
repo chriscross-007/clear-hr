@@ -54,6 +54,7 @@ import {
 import { EditEmployeeDialog } from "./edit-employee-dialog";
 import { AddEmployeeDialog } from "./add-employee-dialog";
 import type { Profile } from "./profile-actions";
+import type { FieldDef } from "./custom-field-actions";
 
 export type Team = {
   id: string;
@@ -73,6 +74,7 @@ export type Member = {
   last_log_in: string | null;
   payroll_number: string | null;
   profile_name: string | null;
+  custom_fields: Record<string, unknown>;
 };
 
 function RoleBadge({ role, memberLabel }: { role: string; memberLabel: string }) {
@@ -148,6 +150,7 @@ interface EmployeesClientProps {
   employeeProfiles: Profile[];
   initialMemberId?: string;
   initialColumnPrefs: ColPref[];
+  customFieldDefs: FieldDef[];
 }
 
 export function EmployeesClient({
@@ -162,6 +165,7 @@ export function EmployeesClient({
   employeeProfiles,
   initialMemberId,
   initialColumnPrefs,
+  customFieldDefs,
 }: EmployeesClientProps) {
   const { memberLabel } = useMemberLabel();
   const router = useRouter();
@@ -179,8 +183,15 @@ export function EmployeesClient({
   const [showCustomiser, setShowCustomiser] = useState(false);
   const atCapacity = members.length >= maxEmployees;
 
+  const customFieldColIds = customFieldDefs.map((d) => `cf_${d.field_key}`);
+  const allDefaultCols = [...DEFAULT_EMPLOYEE_COLS, ...customFieldColIds];
+  const allColLabels: Record<string, string> = {
+    ...EMPLOYEE_COL_LABELS,
+    ...Object.fromEntries(customFieldDefs.map((d) => [`cf_${d.field_key}`, d.label])),
+  };
+
   const { prefs, updatePrefs, resetPrefs, columnOrder, columnVisibility } = useColumnPrefs(
-    "employees", initialColumnPrefs, DEFAULT_EMPLOYEE_COLS
+    "employees", initialColumnPrefs, allDefaultCols
   );
 
   useEffect(() => {
@@ -202,14 +213,7 @@ export function EmployeesClient({
       // Build active filters list
       const activeFilters: { label: string; value: string }[] = [];
       const filterLabels: Record<string, string> = {
-        first_name: "First Name",
-        last_name: "Last Name",
-        payroll_number: "Payroll #",
-        email: "Email",
-        role: "Role",
-        profile: "Profile",
-        team: "Team",
-        status: "Status",
+        ...allColLabels,
         last_log_in: "Last Log-in",
       };
       for (const cf of columnFilters) {
@@ -246,12 +250,23 @@ export function EmployeesClient({
                 hour12: false,
               })
             : "—",
+          // Custom field values
+          ...Object.fromEntries(
+            customFieldDefs.map((def) => {
+              const val = m.custom_fields?.[def.field_key];
+              if (def.field_type === "checkbox") return [`cf_${def.field_key}`, val === true ? "Yes" : val === false ? "No" : "—"];
+              if (def.field_type === "date" && val) {
+                try { return [`cf_${def.field_key}`, new Date(String(val)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })]; } catch { return [`cf_${def.field_key}`, String(val)]; }
+              }
+              return [`cf_${def.field_key}`, val !== undefined && val !== null && val !== "" ? String(val) : "—"];
+            })
+          ),
         } as Record<string, string>;
       });
 
       const pdfColumns = prefs
         .filter((c) => c.visible)
-        .map((c) => ({ id: c.id, label: EMPLOYEE_COL_LABELS[c.id] ?? c.id }));
+        .map((c) => ({ id: c.id, label: allColLabels[c.id] ?? c.id }));
 
       const title = `${capitalize(pluralize(memberLabel))} Directory`;
       const blob = await pdf(
@@ -490,6 +505,33 @@ export function EmployeesClient({
         return true;
       },
     },
+    ...customFieldDefs.map((def): ColumnDef<Member> => ({
+      id: `cf_${def.field_key}`,
+      accessorFn: (row) => {
+        const val = row.custom_fields?.[def.field_key];
+        if (def.field_type === "checkbox") return val === true ? "Yes" : val === false ? "No" : "—";
+        if (def.field_type === "date" && val) {
+          try { return new Date(String(val)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }); } catch { return String(val); }
+        }
+        return val !== undefined && val !== null && val !== "" ? String(val) : "—";
+      },
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          className="-ml-4"
+          onClick={(e) => {
+            if (e.shiftKey) {
+              column.toggleSorting(column.getIsSorted() === "asc", true);
+            } else {
+              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+            }
+          }}
+        >
+          {def.label}
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+    })),
     ...(canAdd
       ? [
           {
@@ -769,8 +811,8 @@ export function EmployeesClient({
         open={showCustomiser}
         onOpenChange={setShowCustomiser}
         prefs={prefs}
-        colLabels={EMPLOYEE_COL_LABELS}
-        defaultCols={DEFAULT_EMPLOYEE_COLS}
+        colLabels={allColLabels}
+        defaultCols={allDefaultCols}
         onChange={(newPrefs) => {
           updatePrefs(newPrefs);
         }}
@@ -784,11 +826,12 @@ export function EmployeesClient({
         teams={teams}
         adminProfiles={adminProfiles}
         employeeProfiles={employeeProfiles}
+        customFieldDefs={customFieldDefs}
         onSaved={(updated) => {
           setMembers((prev) =>
             prev.map((m) =>
               m.member_id === updated.member_id
-                ? { ...m, first_name: updated.first_name, last_name: updated.last_name, role: updated.role, team_id: updated.team_id, payroll_number: updated.payroll_number }
+                ? { ...m, first_name: updated.first_name, last_name: updated.last_name, role: updated.role, team_id: updated.team_id, payroll_number: updated.payroll_number, custom_fields: updated.custom_fields }
                 : m
             )
           );
@@ -807,6 +850,7 @@ export function EmployeesClient({
         onOpenChange={setShowAddDialog}
         teams={teams}
         employeeProfiles={employeeProfiles}
+        customFieldDefs={customFieldDefs}
         onAdded={(newMember) => {
           setMembers((prev) => [...prev, newMember]);
           setShowAddDialog(false);

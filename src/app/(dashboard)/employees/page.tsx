@@ -46,13 +46,14 @@ export default async function EmployeesPage({
   const orgName = org?.name ?? "";
   const maxEmployees = org?.max_employees ?? 999;
 
-  const [{ data: members }, { data: teams }, { data: adminProfiles }, { data: employeeProfiles }, { data: columnPrefsRow }] =
+  const [{ data: members }, { data: teams }, { data: adminProfiles }, { data: employeeProfiles }, { data: columnPrefsRow }, { data: customFieldDefs }] =
     await Promise.all([
       supabase.rpc("get_org_members"),
       supabase.from("teams").select("id, name").eq("organisation_id", membership!.organisation_id).order("name"),
       supabase.from("admin_profiles").select("id, name, rights").eq("organisation_id", membership!.organisation_id).order("name"),
       supabase.from("employee_profiles").select("id, name, rights").eq("organisation_id", membership!.organisation_id).order("name"),
       supabase.from("user_grid_preferences").select("prefs").eq("user_id", user.id).eq("grid_id", "employees").maybeSingle(),
+      supabase.from("custom_field_definitions").select("id, label, field_key, field_type, options, required, sort_order").eq("organisation_id", membership!.organisation_id).eq("object_type", "member").order("sort_order"),
     ]);
 
   return (
@@ -68,6 +69,7 @@ export default async function EmployeesPage({
       employeeProfiles={(employeeProfiles ?? []) as { id: string; name: string; rights: Record<string, unknown> }[]}
       initialMemberId={memberId}
       initialColumnPrefs={(columnPrefsRow?.prefs ?? []) as { id: string; visible: boolean }[]}
+      customFieldDefs={(customFieldDefs ?? []) as { id: string; label: string; field_key: string; field_type: string; options: string[] | null; required: boolean; sort_order: number }[]}
     />
   );
 }

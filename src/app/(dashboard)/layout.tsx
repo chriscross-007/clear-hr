@@ -49,6 +49,9 @@ export default async function DashboardLayout({
   const accessMembers = membership.role === "admin"
     ? (memberPermissions.can_manage_members as string | undefined) ?? "none"
     : null;
+  const canDefineCustomFields = membership.role === "admin"
+    ? (memberPermissions.can_define_custom_fields as boolean) === true
+    : false;
 
   // Member count for header display (bypasses RLS visibility so all users see the true total)
   const { data: countResult } = await supabase
@@ -136,6 +139,7 @@ export default async function DashboardLayout({
             orgName={org?.name}
             plan={org?.plan}
             requireMfa={org?.require_mfa ?? false}
+            canDefineCustomFields={canDefineCustomFields}
           />
           <main className="flex-1">{children}</main>
         </div>
