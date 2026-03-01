@@ -29,6 +29,12 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import type { Member, Team } from "./employees-client";
 
 interface EditEmployeeDialogProps {
@@ -236,187 +242,196 @@ export function EditEmployeeDialog({
               Invite sent successfully.
             </div>
           )}
-          <div className="space-y-2">
-            <Label htmlFor="edit-email">Email Address</Label>
-            <Input
-              id="edit-email"
-              type="email"
-              value={member?.email ?? ""}
-              disabled
-              className="bg-muted"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="edit-first-name">First Name</Label>
-            <Input
-              id="edit-first-name"
-              type="text"
-              maxLength={50}
-              value={firstName}
-              onChange={(e) => setFirstName(e.target.value)}
-              required
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="edit-last-name">Last Name</Label>
-            <Input
-              id="edit-last-name"
-              type="text"
-              maxLength={50}
-              value={lastName}
-              onChange={(e) => setLastName(e.target.value)}
-              required
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="edit-payroll">Payroll Number</Label>
-            <Input
-              id="edit-payroll"
-              type="text"
-              placeholder="Optional"
-              maxLength={50}
-              value={payrollNumber}
-              onChange={(e) => setPayrollNumber(e.target.value)}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Role</Label>
-            {member?.role === "owner" ? (
-              <Input value="Owner" disabled className="bg-muted" />
-            ) : (
-              <Select value={role} onValueChange={(v) => { setRole(v); setProfileId("__none__"); }}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">Admin</SelectItem>
-                  <SelectItem value="employee">{capitalize(memberLabel)}</SelectItem>
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-          {teams.length > 0 && (
-            <div className="space-y-2">
-              <Label>{isMultiTeam ? "Teams" : "Team"}</Label>
-              {isMultiTeam ? (
-                <div className="space-y-2 rounded-md border p-3">
-                  {teams.map((team) => (
-                    <div key={team.id} className="flex items-center gap-2">
-                      <Checkbox
-                        id={`team-${team.id}`}
-                        checked={selectedTeamIds.includes(team.id)}
-                        onCheckedChange={(checked) => {
-                          setSelectedTeamIds((prev) =>
-                            checked
-                              ? [...prev, team.id]
-                              : prev.filter((id) => id !== team.id)
-                          );
-                        }}
-                      />
-                      <label
-                        htmlFor={`team-${team.id}`}
-                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                      >
-                        {team.name}
-                      </label>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <Select
-                  value={teamId ?? "__none__"}
-                  onValueChange={(v) => setTeamId(v === "__none__" ? null : v)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">No team</SelectItem>
-                    {teams.map((team) => (
-                      <SelectItem key={team.id} value={team.id}>
-                        {team.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+          <Tabs defaultValue="details">
+            <TabsList className={customFieldDefs.length > 0 ? "" : "hidden"}>
+              <TabsTrigger value="details">Details</TabsTrigger>
+              {customFieldDefs.length > 0 && (
+                <TabsTrigger value="custom-fields">Custom Fields</TabsTrigger>
               )}
-            </div>
-          )}
-          {member?.role !== "owner" && (() => {
-            const applicableProfiles = role === "admin" ? adminProfiles : employeeProfiles;
-            if (applicableProfiles.length === 0) return null;
-            return (
+            </TabsList>
+            <TabsContent value="details" className="space-y-4 mt-0">
               <div className="space-y-2">
-                <Label>Rights Profile</Label>
-                <Select
-                  value={profileId}
-                  onValueChange={setProfileId}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">No profile</SelectItem>
-                    {applicableProfiles.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label htmlFor="edit-email">Email Address</Label>
+                <Input
+                  id="edit-email"
+                  type="email"
+                  value={member?.email ?? ""}
+                  disabled
+                  className="bg-muted"
+                />
               </div>
-            );
-          })()}
-          {customFieldDefs.length > 0 && (
-            <div className="space-y-3 rounded-md border p-3">
-              <p className="text-sm font-medium">Custom Fields</p>
-              {customFieldDefs.map((def) => (
-                <div key={def.field_key} className="space-y-1">
-                  <Label htmlFor={`cf-${def.field_key}`}>
-                    {def.label}{def.required && <span className="text-destructive ml-0.5">*</span>}
-                  </Label>
-                  {def.field_type === "checkbox" ? (
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        id={`cf-${def.field_key}`}
-                        checked={customValues[def.field_key] === true}
-                        onCheckedChange={(v) => setCustomValues((prev) => ({ ...prev, [def.field_key]: v }))}
-                      />
+              <div className="space-y-2">
+                <Label htmlFor="edit-first-name">First Name</Label>
+                <Input
+                  id="edit-first-name"
+                  type="text"
+                  maxLength={50}
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-last-name">Last Name</Label>
+                <Input
+                  id="edit-last-name"
+                  type="text"
+                  maxLength={50}
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-payroll">Payroll Number</Label>
+                <Input
+                  id="edit-payroll"
+                  type="text"
+                  placeholder="Optional"
+                  maxLength={50}
+                  value={payrollNumber}
+                  onChange={(e) => setPayrollNumber(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Role</Label>
+                {member?.role === "owner" ? (
+                  <Input value="Owner" disabled className="bg-muted" />
+                ) : (
+                  <Select value={role} onValueChange={(v) => { setRole(v); setProfileId("__none__"); }}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="employee">{capitalize(memberLabel)}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+              {teams.length > 0 && (
+                <div className="space-y-2">
+                  <Label>{isMultiTeam ? "Teams" : "Team"}</Label>
+                  {isMultiTeam ? (
+                    <div className="space-y-2 rounded-md border p-3">
+                      {teams.map((team) => (
+                        <div key={team.id} className="flex items-center gap-2">
+                          <Checkbox
+                            id={`team-${team.id}`}
+                            checked={selectedTeamIds.includes(team.id)}
+                            onCheckedChange={(checked) => {
+                              setSelectedTeamIds((prev) =>
+                                checked
+                                  ? [...prev, team.id]
+                                  : prev.filter((id) => id !== team.id)
+                              );
+                            }}
+                          />
+                          <label
+                            htmlFor={`team-${team.id}`}
+                            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                          >
+                            {team.name}
+                          </label>
+                        </div>
+                      ))}
                     </div>
-                  ) : def.field_type === "multiline" ? (
-                    <Textarea
-                      id={`cf-${def.field_key}`}
-                      value={String(customValues[def.field_key] ?? "")}
-                      onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
-                      rows={3}
-                    />
-                  ) : def.field_type === "dropdown" ? (
+                  ) : (
                     <Select
-                      value={String(customValues[def.field_key] ?? "__none__")}
-                      onValueChange={(v) => setCustomValues((prev) => ({ ...prev, [def.field_key]: v === "__none__" ? "" : v }))}
+                      value={teamId ?? "__none__"}
+                      onValueChange={(v) => setTeamId(v === "__none__" ? null : v)}
                     >
-                      <SelectTrigger id={`cf-${def.field_key}`}>
+                      <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {!def.required && <SelectItem value="__none__">—</SelectItem>}
-                        {(def.options ?? []).map((opt) => (
-                          <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                        <SelectItem value="__none__">No team</SelectItem>
+                        {teams.map((team) => (
+                          <SelectItem key={team.id} value={team.id}>
+                            {team.name}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                  ) : (
-                    <Input
-                      id={`cf-${def.field_key}`}
-                      type={def.field_type === "number" ? "number" : def.field_type === "date" ? "date" : def.field_type === "email" ? "email" : def.field_type === "url" ? "url" : def.field_type === "phone" ? "tel" : "text"}
-                      value={String(customValues[def.field_key] ?? "")}
-                      onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
-                    />
                   )}
                 </div>
-              ))}
-            </div>
-          )}
+              )}
+              {member?.role !== "owner" && (() => {
+                const applicableProfiles = role === "admin" ? adminProfiles : employeeProfiles;
+                if (applicableProfiles.length === 0) return null;
+                return (
+                  <div className="space-y-2">
+                    <Label>Rights Profile</Label>
+                    <Select
+                      value={profileId}
+                      onValueChange={setProfileId}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">No profile</SelectItem>
+                        {applicableProfiles.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                );
+              })()}
+            </TabsContent>
+            {customFieldDefs.length > 0 && (
+              <TabsContent value="custom-fields" className="space-y-3 mt-0">
+                {customFieldDefs.map((def) => (
+                  <div key={def.field_key} className="space-y-1">
+                    <Label htmlFor={`cf-${def.field_key}`}>
+                      {def.label}{def.required && <span className="text-destructive ml-0.5">*</span>}
+                    </Label>
+                    {def.field_type === "checkbox" ? (
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          id={`cf-${def.field_key}`}
+                          checked={customValues[def.field_key] === true}
+                          onCheckedChange={(v) => setCustomValues((prev) => ({ ...prev, [def.field_key]: v }))}
+                        />
+                      </div>
+                    ) : def.field_type === "multiline" ? (
+                      <Textarea
+                        id={`cf-${def.field_key}`}
+                        value={String(customValues[def.field_key] ?? "")}
+                        onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
+                        rows={3}
+                      />
+                    ) : def.field_type === "dropdown" ? (
+                      <Select
+                        value={String(customValues[def.field_key] ?? "__none__")}
+                        onValueChange={(v) => setCustomValues((prev) => ({ ...prev, [def.field_key]: v === "__none__" ? "" : v }))}
+                      >
+                        <SelectTrigger id={`cf-${def.field_key}`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {!def.required && <SelectItem value="__none__">—</SelectItem>}
+                          {(def.options ?? []).map((opt) => (
+                            <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input
+                        id={`cf-${def.field_key}`}
+                        type={def.field_type === "number" ? "number" : def.field_type === "date" ? "date" : def.field_type === "email" ? "email" : def.field_type === "url" ? "url" : def.field_type === "phone" ? "tel" : "text"}
+                        value={String(customValues[def.field_key] ?? "")}
+                        onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
+                      />
+                    )}
+                  </div>
+                ))}
+              </TabsContent>
+            )}
+          </Tabs>
           <DialogFooter>
             {!isAccepted && (
               <Button
