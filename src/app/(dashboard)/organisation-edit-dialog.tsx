@@ -196,13 +196,15 @@ export function OrganisationEditDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <Tabs defaultValue={isOwner ? "general" : "custom-fields"} className="w-full">
-            <TabsList className="w-full flex-wrap h-auto gap-0.5">
-              {isOwner && <TabsTrigger value="general" className="flex-1">General</TabsTrigger>}
-              {isOwner && <TabsTrigger value="teams" className="flex-1">Teams</TabsTrigger>}
-              {isOwner && <TabsTrigger value="admin-profiles" className="flex-1">Admin Profiles</TabsTrigger>}
-              {isOwner && <TabsTrigger value="employee-profiles" className="flex-1">Employee Profiles</TabsTrigger>}
-              {showCustomFields && <TabsTrigger value="custom-fields" className="flex-1">Custom Fields</TabsTrigger>}
-            </TabsList>
+            <div className="overflow-x-auto">
+              <TabsList className="w-full min-w-max">
+                {isOwner && <TabsTrigger value="general">General</TabsTrigger>}
+                {isOwner && <TabsTrigger value="teams">Teams</TabsTrigger>}
+                {isOwner && <TabsTrigger value="admin-profiles">Admin Profiles</TabsTrigger>}
+                {isOwner && <TabsTrigger value="employee-profiles">Employee Profiles</TabsTrigger>}
+                {showCustomFields && <TabsTrigger value="custom-fields">Custom Fields</TabsTrigger>}
+              </TabsList>
+            </div>
 
             {/* General tab */}
             <TabsContent value="general" className="space-y-4 mt-4">
