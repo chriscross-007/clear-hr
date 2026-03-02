@@ -21,6 +21,27 @@ interface ProfileManagerProps {
   rightDefs: RightDef[];
   profiles: Profile[];
   onProfilesChange: (profiles: Profile[]) => void;
+  teams?: { id: string; name: string }[];
+}
+
+type TeamScope = "own" | "all" | "selected";
+
+interface TeamAccess {
+  scope: TeamScope;
+  ids: string[];
+}
+
+function getTeamAccess(rights: Record<string, unknown>): TeamAccess {
+  const oa = rights["object_access"] as
+    | { teams?: { scope: TeamScope; ids: string[] } }
+    | undefined;
+  return oa?.teams ?? { scope: "own", ids: [] };
+}
+
+function teamScopeLabel(scope: TeamScope): string {
+  if (scope === "all") return "All teams";
+  if (scope === "own") return "Own team(s)";
+  return "Selected teams";
 }
 
 export function ProfileManager({
@@ -28,6 +49,7 @@ export function ProfileManager({
   rightDefs,
   profiles,
   onProfilesChange,
+  teams = [],
 }: ProfileManagerProps) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -36,11 +58,27 @@ export function ProfileManager({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  function getFormTeamAccess(): TeamAccess {
+    return getTeamAccess(formRights);
+  }
+
+  function setFormTeamAccess(ta: TeamAccess) {
+    const oa = (formRights["object_access"] as Record<string, unknown>) ?? {};
+    setFormRights((prev) => ({
+      ...prev,
+      object_access: { ...oa, teams: ta },
+    }));
+  }
+
   function startAdd() {
     setAdding(true);
     setEditingId(null);
     setFormName("");
-    setFormRights(buildDefaultRights(rightDefs));
+    const defaults = buildDefaultRights(rightDefs);
+    if (type === "admin") {
+      defaults["object_access"] = { teams: { scope: "own", ids: [] } };
+    }
+    setFormRights(defaults);
     setError(null);
   }
 
@@ -48,8 +86,11 @@ export function ProfileManager({
     setEditingId(profile.id);
     setAdding(false);
     setFormName(profile.name);
-    // Merge with defaults so any new rights appear
-    setFormRights({ ...buildDefaultRights(rightDefs), ...profile.rights });
+    const merged = { ...buildDefaultRights(rightDefs), ...profile.rights };
+    if (type === "admin" && !merged["object_access"]) {
+      merged["object_access"] = { teams: { scope: "own", ids: [] } };
+    }
+    setFormRights(merged);
     setError(null);
   }
 
@@ -65,6 +106,15 @@ export function ProfileManager({
     setFormRights((prev) => ({ ...prev, [key]: value }));
   }
 
+  function buildSaveRights(): Record<string, unknown> {
+    const rights = { ...formRights };
+    if (type === "admin") {
+      const ta = getTeamAccess(rights);
+      rights["can_view_all_teams"] = ta.scope === "all";
+    }
+    return rights;
+  }
+
   async function handleSaveNew() {
     if (!formName.trim()) {
       setError("Profile name is required");
@@ -73,7 +123,7 @@ export function ProfileManager({
     setLoading(true);
     setError(null);
 
-    const result = await createProfile(type, formName.trim(), formRights);
+    const result = await createProfile(type, formName.trim(), buildSaveRights());
 
     if (!result.success) {
       setError(result.error ?? "Failed to create profile");
@@ -100,7 +150,8 @@ export function ProfileManager({
     setLoading(true);
     setError(null);
 
-    const result = await updateProfile(type, editingId, formName.trim(), formRights);
+    const saveRights = buildSaveRights();
+    const result = await updateProfile(type, editingId, formName.trim(), saveRights);
 
     if (!result.success) {
       setError(result.error ?? "Failed to update profile");
@@ -112,7 +163,7 @@ export function ProfileManager({
       profiles
         .map((p) =>
           p.id === editingId
-            ? { ...p, name: formName.trim(), rights: formRights }
+            ? { ...p, name: formName.trim(), rights: saveRights }
             : p
         )
         .sort((a, b) => a.name.localeCompare(b.name))
@@ -134,7 +185,37 @@ export function ProfileManager({
     if (editingId === profileId) cancelForm();
   }
 
+  function profileSummary(profile: Profile): string {
+    const rights = rightDefs
+      .filter((r) => {
+        const val = profile.rights[r.key];
+        if (r.type === "boolean") return val === true;
+        return val === "read" || val === "write";
+      })
+      .map((r) => {
+        if (r.type === "access") {
+          return `${r.label} (${profile.rights[r.key]})`;
+        }
+        return r.label;
+      });
+
+    if (type === "admin") {
+      const ta = getTeamAccess(profile.rights as Record<string, unknown>);
+      if (ta.scope === "selected") {
+        const names = ta.ids
+          .map((id) => teams.find((t) => t.id === id)?.name ?? id)
+          .join(", ");
+        rights.push(names ? `${names} only` : "No teams selected");
+      } else {
+        rights.push(teamScopeLabel(ta.scope));
+      }
+    }
+
+    return rights.join(", ") || "No rights enabled";
+  }
+
   const isFormOpen = adding || editingId !== null;
+  const formTeamAccess = getFormTeamAccess();
 
   return (
     <div className="space-y-3">
@@ -159,19 +240,7 @@ export function ProfileManager({
             <div className="min-w-0">
               <span className="text-sm font-medium">{profile.name}</span>
               <div className="mt-0.5 text-xs text-muted-foreground">
-                {rightDefs
-                  .filter((r) => {
-                    const val = profile.rights[r.key];
-                    if (r.type === "boolean") return val === true;
-                    return val === "read" || val === "write";
-                  })
-                  .map((r) => {
-                    if (r.type === "access") {
-                      return `${r.label} (${profile.rights[r.key]})`;
-                    }
-                    return r.label;
-                  })
-                  .join(", ") || "No rights enabled"}
+                {profileSummary(profile)}
               </div>
             </div>
             <div className="flex items-center shrink-0 ml-2">
@@ -257,6 +326,75 @@ export function ProfileManager({
               </div>
             ))}
           </div>
+
+          {/* Team Access — admin profiles only */}
+          {type === "admin" && (
+            <div className="space-y-2">
+              <Label className="text-xs">Team Access</Label>
+              <div className="rounded-md border px-3 py-2 space-y-2">
+                <div className="flex overflow-hidden rounded-md border text-xs self-start">
+                  {(["own", "all", "selected"] as const).map((scope) => (
+                    <button
+                      key={scope}
+                      type="button"
+                      className={cn(
+                        "px-3 py-1.5 transition-colors",
+                        formTeamAccess.scope === scope
+                          ? "bg-primary text-primary-foreground"
+                          : "hover:bg-muted"
+                      )}
+                      onClick={() =>
+                        setFormTeamAccess({
+                          scope,
+                          ids: scope === "selected" ? formTeamAccess.ids : [],
+                        })
+                      }
+                    >
+                      {scope === "own" ? "Own team(s)" : scope === "all" ? "All teams" : "Specific teams"}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {formTeamAccess.scope === "own" && "Admin can see members in their own team(s) only."}
+                  {formTeamAccess.scope === "all" && "Admin can see members across all teams."}
+                  {formTeamAccess.scope === "selected" && "Admin can see members in the selected teams only. Unteamed members are hidden."}
+                </p>
+
+                {formTeamAccess.scope === "selected" && teams.length > 0 && (
+                  <div className="max-h-40 overflow-y-auto space-y-1 pt-1 border-t">
+                    {teams.map((team) => {
+                      const checked = formTeamAccess.ids.includes(team.id);
+                      return (
+                        <label
+                          key={team.id}
+                          className="flex items-center gap-2 cursor-pointer rounded px-1 py-1 hover:bg-muted/50 text-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5 rounded"
+                            checked={checked}
+                            onChange={() => {
+                              const ids = checked
+                                ? formTeamAccess.ids.filter((id) => id !== team.id)
+                                : [...formTeamAccess.ids, team.id];
+                              setFormTeamAccess({ scope: "selected", ids });
+                            }}
+                          />
+                          {team.name}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {formTeamAccess.scope === "selected" && teams.length === 0 && (
+                  <p className="text-xs text-muted-foreground pt-1 border-t">
+                    No teams have been created yet.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="flex justify-end gap-2">
             <Button

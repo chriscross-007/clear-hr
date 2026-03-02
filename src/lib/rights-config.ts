@@ -21,12 +21,6 @@ export const ADMIN_RIGHTS: RightDef[] = [
     description: "Change org name, label, MFA settings",
   },
   {
-    key: "can_view_all_teams",
-    label: "View All Teams",
-    type: "boolean",
-    description: "See members across all teams",
-  },
-  {
     key: "can_approve_holidays",
     label: "Approve Holidays",
     type: "boolean",

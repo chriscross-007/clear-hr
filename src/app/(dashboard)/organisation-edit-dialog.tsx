@@ -227,7 +227,7 @@ export function OrganisationEditDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <Tabs defaultValue={isOwner ? "general" : "custom-fields"} className="w-full">
-            <TabsList className="h-auto w-full flex-wrap [&>button]:flex-none">
+            <TabsList className="!h-auto w-full flex-wrap [&>button]:flex-none">
               {isOwner && <TabsTrigger value="general">General</TabsTrigger>}
               {isOwner && <TabsTrigger value="teams">Teams</TabsTrigger>}
               {isOwner && <TabsTrigger value="user-rights">User Rights</TabsTrigger>}
@@ -421,6 +421,7 @@ export function OrganisationEditDialog({
                     rightDefs={ADMIN_RIGHTS}
                     profiles={adminProfiles}
                     onProfilesChange={setAdminProfiles}
+                    teams={teams}
                   />
                 ) : (
                   <ProfileManager
