@@ -20,7 +20,7 @@ import {
   ColumnCustomiserDialog,
 } from "@/components/ui/column-customiser";
 import Link from "next/link";
-import { Plus, ArrowUpDown, Trash2, FileDown, List, LayoutGrid } from "lucide-react";
+import { Plus, ArrowUpDown, ArrowUp, ArrowDown, Trash2, FileDown, List, LayoutGrid } from "lucide-react";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { deleteEmployee } from "./actions";
@@ -449,16 +449,32 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
+            e.preventDefault();
             if (e.shiftKey) {
-              column.toggleSorting(column.getIsSorted() === "asc", true);
+              setSorting((old) => {
+                const idx = old.findIndex((s) => s.id === column.id);
+                return idx >= 0
+                  ? old.map((s, i) => i === idx ? { ...s, desc: !s.desc } : s)
+                  : [...old, { id: column.id, desc: false }];
+              });
             } else {
-              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+              setSorting((old) => {
+                const existing = old.find((s) => s.id === column.id);
+                return [{ id: column.id, desc: existing ? !existing.desc : false }];
+              });
             }
           }}
         >
           First Name
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          {column.getIsSorted() === "asc" ? (
+            <ArrowUp className="ml-2 h-4 w-4" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ArrowDown className="ml-2 h-4 w-4" />
+          ) : (
+            <ArrowUpDown className="ml-2 h-4 w-4 opacity-40" />
+          )}
         </Button>
       ),
     },
@@ -470,16 +486,32 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
+            e.preventDefault();
             if (e.shiftKey) {
-              column.toggleSorting(column.getIsSorted() === "asc", true);
+              setSorting((old) => {
+                const idx = old.findIndex((s) => s.id === column.id);
+                return idx >= 0
+                  ? old.map((s, i) => i === idx ? { ...s, desc: !s.desc } : s)
+                  : [...old, { id: column.id, desc: false }];
+              });
             } else {
-              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+              setSorting((old) => {
+                const existing = old.find((s) => s.id === column.id);
+                return [{ id: column.id, desc: existing ? !existing.desc : false }];
+              });
             }
           }}
         >
           Last Name
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          {column.getIsSorted() === "asc" ? (
+            <ArrowUp className="ml-2 h-4 w-4" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ArrowDown className="ml-2 h-4 w-4" />
+          ) : (
+            <ArrowUpDown className="ml-2 h-4 w-4 opacity-40" />
+          )}
         </Button>
       ),
     },
@@ -491,16 +523,32 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
+            e.preventDefault();
             if (e.shiftKey) {
-              column.toggleSorting(column.getIsSorted() === "asc", true);
+              setSorting((old) => {
+                const idx = old.findIndex((s) => s.id === column.id);
+                return idx >= 0
+                  ? old.map((s, i) => i === idx ? { ...s, desc: !s.desc } : s)
+                  : [...old, { id: column.id, desc: false }];
+              });
             } else {
-              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+              setSorting((old) => {
+                const existing = old.find((s) => s.id === column.id);
+                return [{ id: column.id, desc: existing ? !existing.desc : false }];
+              });
             }
           }}
         >
           Payroll #
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          {column.getIsSorted() === "asc" ? (
+            <ArrowUp className="ml-2 h-4 w-4" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ArrowDown className="ml-2 h-4 w-4" />
+          ) : (
+            <ArrowUpDown className="ml-2 h-4 w-4 opacity-40" />
+          )}
         </Button>
       ),
       cell: ({ row }) => row.original.payroll_number ?? "—",
@@ -513,16 +561,32 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
+            e.preventDefault();
             if (e.shiftKey) {
-              column.toggleSorting(column.getIsSorted() === "asc", true);
+              setSorting((old) => {
+                const idx = old.findIndex((s) => s.id === column.id);
+                return idx >= 0
+                  ? old.map((s, i) => i === idx ? { ...s, desc: !s.desc } : s)
+                  : [...old, { id: column.id, desc: false }];
+              });
             } else {
-              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+              setSorting((old) => {
+                const existing = old.find((s) => s.id === column.id);
+                return [{ id: column.id, desc: existing ? !existing.desc : false }];
+              });
             }
           }}
         >
           Role
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          {column.getIsSorted() === "asc" ? (
+            <ArrowUp className="ml-2 h-4 w-4" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ArrowDown className="ml-2 h-4 w-4" />
+          ) : (
+            <ArrowUpDown className="ml-2 h-4 w-4 opacity-40" />
+          )}
         </Button>
       ),
       cell: ({ row }) => <RoleBadge role={row.original.role} memberLabel={memberLabel} />,
@@ -539,16 +603,32 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
+            e.preventDefault();
             if (e.shiftKey) {
-              column.toggleSorting(column.getIsSorted() === "asc", true);
+              setSorting((old) => {
+                const idx = old.findIndex((s) => s.id === column.id);
+                return idx >= 0
+                  ? old.map((s, i) => i === idx ? { ...s, desc: !s.desc } : s)
+                  : [...old, { id: column.id, desc: false }];
+              });
             } else {
-              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+              setSorting((old) => {
+                const existing = old.find((s) => s.id === column.id);
+                return [{ id: column.id, desc: existing ? !existing.desc : false }];
+              });
             }
           }}
         >
           Profile
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          {column.getIsSorted() === "asc" ? (
+            <ArrowUp className="ml-2 h-4 w-4" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ArrowDown className="ml-2 h-4 w-4" />
+          ) : (
+            <ArrowUpDown className="ml-2 h-4 w-4 opacity-40" />
+          )}
         </Button>
       ),
       cell: ({ row }) => row.original.profile_name ?? "—",
@@ -565,16 +645,32 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
+            e.preventDefault();
             if (e.shiftKey) {
-              column.toggleSorting(column.getIsSorted() === "asc", true);
+              setSorting((old) => {
+                const idx = old.findIndex((s) => s.id === column.id);
+                return idx >= 0
+                  ? old.map((s, i) => i === idx ? { ...s, desc: !s.desc } : s)
+                  : [...old, { id: column.id, desc: false }];
+              });
             } else {
-              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+              setSorting((old) => {
+                const existing = old.find((s) => s.id === column.id);
+                return [{ id: column.id, desc: existing ? !existing.desc : false }];
+              });
             }
           }}
         >
           Team
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          {column.getIsSorted() === "asc" ? (
+            <ArrowUp className="ml-2 h-4 w-4" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ArrowDown className="ml-2 h-4 w-4" />
+          ) : (
+            <ArrowUpDown className="ml-2 h-4 w-4 opacity-40" />
+          )}
         </Button>
       ),
     },
@@ -586,16 +682,32 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
+            e.preventDefault();
             if (e.shiftKey) {
-              column.toggleSorting(column.getIsSorted() === "asc", true);
+              setSorting((old) => {
+                const idx = old.findIndex((s) => s.id === column.id);
+                return idx >= 0
+                  ? old.map((s, i) => i === idx ? { ...s, desc: !s.desc } : s)
+                  : [...old, { id: column.id, desc: false }];
+              });
             } else {
-              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+              setSorting((old) => {
+                const existing = old.find((s) => s.id === column.id);
+                return [{ id: column.id, desc: existing ? !existing.desc : false }];
+              });
             }
           }}
         >
           Email Address
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          {column.getIsSorted() === "asc" ? (
+            <ArrowUp className="ml-2 h-4 w-4" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ArrowDown className="ml-2 h-4 w-4" />
+          ) : (
+            <ArrowUpDown className="ml-2 h-4 w-4 opacity-40" />
+          )}
         </Button>
       ),
     },
@@ -623,16 +735,32 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
+            e.preventDefault();
             if (e.shiftKey) {
-              column.toggleSorting(column.getIsSorted() === "asc", true);
+              setSorting((old) => {
+                const idx = old.findIndex((s) => s.id === column.id);
+                return idx >= 0
+                  ? old.map((s, i) => i === idx ? { ...s, desc: !s.desc } : s)
+                  : [...old, { id: column.id, desc: false }];
+              });
             } else {
-              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+              setSorting((old) => {
+                const existing = old.find((s) => s.id === column.id);
+                return [{ id: column.id, desc: existing ? !existing.desc : false }];
+              });
             }
           }}
         >
           Last Log-in
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          {column.getIsSorted() === "asc" ? (
+            <ArrowUp className="ml-2 h-4 w-4" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ArrowDown className="ml-2 h-4 w-4" />
+          ) : (
+            <ArrowUpDown className="ml-2 h-4 w-4 opacity-40" />
+          )}
         </Button>
       ),
       sortingFn: (rowA, rowB) => {
@@ -691,16 +819,32 @@ export function EmployeesClient({
         <Button
           variant="ghost"
           className="-ml-4"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
+            e.preventDefault();
             if (e.shiftKey) {
-              column.toggleSorting(column.getIsSorted() === "asc", true);
+              setSorting((old) => {
+                const idx = old.findIndex((s) => s.id === column.id);
+                return idx >= 0
+                  ? old.map((s, i) => i === idx ? { ...s, desc: !s.desc } : s)
+                  : [...old, { id: column.id, desc: false }];
+              });
             } else {
-              setSorting([{ id: column.id, desc: column.getIsSorted() === "asc" }]);
+              setSorting((old) => {
+                const existing = old.find((s) => s.id === column.id);
+                return [{ id: column.id, desc: existing ? !existing.desc : false }];
+              });
             }
           }}
         >
           {def.label}
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          {column.getIsSorted() === "asc" ? (
+            <ArrowUp className="ml-2 h-4 w-4" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ArrowDown className="ml-2 h-4 w-4" />
+          ) : (
+            <ArrowUpDown className="ml-2 h-4 w-4 opacity-40" />
+          )}
         </Button>
       ),
       ...(def.field_type === "number" || def.field_type === "currency" ? {
@@ -782,6 +926,7 @@ export function EmployeesClient({
     onColumnOrderChange: () => {},
     onColumnVisibilityChange: () => {},
     enableMultiSort: true,
+    enableSortingRemoval: false,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),

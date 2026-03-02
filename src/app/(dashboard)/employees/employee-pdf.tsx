@@ -89,6 +89,7 @@ const styles = StyleSheet.create({
   cellView: {
     paddingVertical: 4,
     paddingHorizontal: 4,
+    overflow: "hidden",
   },
   headerCell: {
     fontFamily: "Helvetica-Bold",
@@ -107,6 +108,12 @@ const styles = StyleSheet.create({
     color: "#999",
   },
 });
+
+// Approximate max chars based on flex weight — prevents text wrapping into adjacent columns
+function truncate(text: string, flexWeight: number): string {
+  const maxChars = Math.floor(flexWeight * 1.8);
+  return text.length > maxChars ? text.slice(0, maxChars - 1) + "…" : text;
+}
 
 export function EmployeePDF({
   rows,
@@ -163,7 +170,7 @@ export function EmployeePDF({
             >
               {columns.map((col) => (
                 <View key={col.id} style={[styles.cellView, { flex: colFlex(col.id) }]}>
-                  <Text style={styles.cell}>{row[col.id] ?? ""}</Text>
+                  <Text style={styles.cell}>{truncate(row[col.id] ?? "", colFlex(col.id))}</Text>
                 </View>
               ))}
             </View>
