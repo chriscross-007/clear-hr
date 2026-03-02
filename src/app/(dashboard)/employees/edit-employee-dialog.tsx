@@ -281,11 +281,11 @@ export function EditEmployeeDialog({
                   <img
                     src={member.avatar_url}
                     alt={`${member.first_name} ${member.last_name}`}
-                    className="h-16 w-16 rounded-full object-cover shrink-0"
+                    className="h-24 w-24 rounded-full object-cover shrink-0"
                   />
                 ) : (
-                  <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center shrink-0">
-                    <span className="text-lg font-medium text-muted-foreground">
+                  <div className="h-24 w-24 rounded-full bg-muted flex items-center justify-center shrink-0">
+                    <span className="text-2xl font-medium text-muted-foreground">
                       {[member?.first_name, member?.last_name].map((n) => n?.charAt(0).toUpperCase()).join("")}
                     </span>
                   </div>

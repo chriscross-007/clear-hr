@@ -77,6 +77,7 @@ export default async function EmployeesPage({
       customFieldDefs={visibleDefs}
       currencySymbol={currencySymbol}
       canSeeCurrency={canSeeCurrency}
+      userId={user.id}
     />
   );
 }

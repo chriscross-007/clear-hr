@@ -11,6 +11,7 @@ import type { Profile } from "./employees/profile-actions";
 import { ADMIN_RIGHTS, EMPLOYEE_RIGHTS } from "@/lib/rights-config";
 import { ProfileManager } from "./organisation-edit-dialog-profiles";
 import { CustomFieldsManager } from "./organisation-edit-dialog-custom-fields";
+import { BackupsManager } from "./organisation-edit-dialog-backups";
 import { getCustomFieldDefs } from "./employees/custom-field-actions";
 import type { FieldDef } from "./employees/custom-field-actions";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,7 @@ export function OrganisationEditDialog({
   const [mfaRequired, setMfaRequired] = useState(requireMfa);
   const [adminProfiles, setAdminProfiles] = useState<Profile[]>([]);
   const [employeeProfiles, setEmployeeProfiles] = useState<Profile[]>([]);
+  const [userRightsType, setUserRightsType] = useState<"admin" | "employee">("admin");
   const [fieldDefs, setFieldDefs] = useState<FieldDef[]>([]);
   const [fieldDefsModified, setFieldDefsModified] = useState(false);
   const router = useRouter();
@@ -225,15 +227,13 @@ export function OrganisationEditDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <Tabs defaultValue={isOwner ? "general" : "custom-fields"} className="w-full">
-            <div className="overflow-x-auto">
-              <TabsList className="w-full min-w-max">
-                {isOwner && <TabsTrigger value="general">General</TabsTrigger>}
-                {isOwner && <TabsTrigger value="teams">Teams</TabsTrigger>}
-                {isOwner && <TabsTrigger value="admin-profiles">Admin Profiles</TabsTrigger>}
-                {isOwner && <TabsTrigger value="employee-profiles">Employee Profiles</TabsTrigger>}
-                {showCustomFields && <TabsTrigger value="custom-fields">Custom Fields</TabsTrigger>}
-              </TabsList>
-            </div>
+            <TabsList className="h-auto w-full flex-wrap [&>button]:flex-none">
+              {isOwner && <TabsTrigger value="general">General</TabsTrigger>}
+              {isOwner && <TabsTrigger value="teams">Teams</TabsTrigger>}
+              {isOwner && <TabsTrigger value="user-rights">User Rights</TabsTrigger>}
+              {showCustomFields && <TabsTrigger value="custom-fields">Custom Fields</TabsTrigger>}
+              {isOwner && <TabsTrigger value="backups">Backups</TabsTrigger>}
+            </TabsList>
 
             {/* General tab */}
             <TabsContent value="general" className="space-y-4 mt-4">
@@ -396,27 +396,40 @@ export function OrganisationEditDialog({
               </div>
             </TabsContent>
 
-            {/* Admin Profiles tab */}
+            {/* User Rights tab */}
             {isOwner && (
-              <TabsContent value="admin-profiles" className="mt-4">
-                <ProfileManager
-                  type="admin"
-                  rightDefs={ADMIN_RIGHTS}
-                  profiles={adminProfiles}
-                  onProfilesChange={setAdminProfiles}
-                />
-              </TabsContent>
-            )}
-
-            {/* Employee Profiles tab */}
-            {isOwner && (
-              <TabsContent value="employee-profiles" className="mt-4">
-                <ProfileManager
-                  type="employee"
-                  rightDefs={EMPLOYEE_RIGHTS}
-                  profiles={employeeProfiles}
-                  onProfilesChange={setEmployeeProfiles}
-                />
+              <TabsContent value="user-rights" className="mt-4 space-y-3">
+                <div className="flex overflow-hidden rounded-md border border-input text-sm w-fit">
+                  {(["admin", "employee"] as const).map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setUserRightsType(type)}
+                      className={`px-3 py-1.5 transition-colors ${
+                        userRightsType === type
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-background text-muted-foreground hover:bg-muted"
+                      }`}
+                    >
+                      {type === "admin" ? "Admin" : "Employee"}
+                    </button>
+                  ))}
+                </div>
+                {userRightsType === "admin" ? (
+                  <ProfileManager
+                    type="admin"
+                    rightDefs={ADMIN_RIGHTS}
+                    profiles={adminProfiles}
+                    onProfilesChange={setAdminProfiles}
+                  />
+                ) : (
+                  <ProfileManager
+                    type="employee"
+                    rightDefs={EMPLOYEE_RIGHTS}
+                    profiles={employeeProfiles}
+                    onProfilesChange={setEmployeeProfiles}
+                  />
+                )}
               </TabsContent>
             )}
 
@@ -424,6 +437,13 @@ export function OrganisationEditDialog({
             {showCustomFields && (
               <TabsContent value="custom-fields" className="mt-4 max-h-[400px] overflow-y-auto">
                 <CustomFieldsManager defs={fieldDefs} onDefsChange={handleDefsChange} currencySymbol={currencySymbol} />
+              </TabsContent>
+            )}
+
+            {/* Backups tab */}
+            {isOwner && (
+              <TabsContent value="backups" className="mt-4 max-h-[400px] overflow-y-auto">
+                <BackupsManager orgName={name} />
               </TabsContent>
             )}
           </Tabs>

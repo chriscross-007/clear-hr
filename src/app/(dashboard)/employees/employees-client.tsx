@@ -7,6 +7,7 @@ import {
   getCoreRowModel,
   getSortedRowModel,
   getFilteredRowModel,
+  getPaginationRowModel,
   flexRender,
   type ColumnDef,
   type SortingState,
@@ -19,7 +20,7 @@ import {
   ColumnCustomiserDialog,
 } from "@/components/ui/column-customiser";
 import Link from "next/link";
-import { Plus, ArrowUpDown, Trash2, FileDown } from "lucide-react";
+import { Plus, ArrowUpDown, Trash2, FileDown, List, LayoutGrid } from "lucide-react";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { deleteEmployee } from "./actions";
@@ -55,6 +56,7 @@ import { EditEmployeeDialog } from "./edit-employee-dialog";
 import { AddEmployeeDialog } from "./add-employee-dialog";
 import type { Profile } from "./profile-actions";
 import type { FieldDef } from "./custom-field-actions";
+import { cn } from "@/lib/utils";
 
 export type Team = {
   id: string;
@@ -218,6 +220,7 @@ interface EmployeesClientProps {
   customFieldDefs: FieldDef[];
   currencySymbol: string;
   canSeeCurrency: boolean;
+  userId: string;
 }
 
 export function EmployeesClient({
@@ -234,6 +237,7 @@ export function EmployeesClient({
   initialColumnPrefs,
   customFieldDefs,
   currencySymbol,
+  userId,
 }: EmployeesClientProps) {
   const { memberLabel } = useMemberLabel();
   const router = useRouter();
@@ -249,6 +253,30 @@ export function EmployeesClient({
   const [showPdfDialog, setShowPdfDialog] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [showCustomiser, setShowCustomiser] = useState(false);
+  const [view, setView] = useState<"list" | "card">("list");
+  useEffect(() => {
+    const saved = localStorage.getItem(`employee-directory-view-${userId}`) as "list" | "card" | null;
+    if (saved === "card") setView("card");
+  }, [userId]);
+  useEffect(() => {
+    localStorage.setItem(`employee-directory-view-${userId}`, view);
+  }, [view, userId]);
+
+  const [pageSize, setPageSize] = useState(50);
+  const [pageIndex, setPageIndex] = useState(0);
+  useEffect(() => {
+    const saved = localStorage.getItem(`employee-directory-page-size-${userId}`);
+    if (saved) {
+      const n = parseInt(saved, 10);
+      if ([10, 25, 50, 100, 250].includes(n)) setPageSize(n);
+    }
+  }, [userId]);
+  useEffect(() => {
+    localStorage.setItem(`employee-directory-page-size-${userId}`, String(pageSize));
+  }, [pageSize, userId]);
+  useEffect(() => {
+    setPageIndex(0);
+  }, [columnFilters]);
   const atCapacity = members.length >= maxEmployees;
 
   const customFieldColIds = customFieldDefs.map((d) => `cf_${d.field_key}`);
@@ -313,7 +341,7 @@ export function EmployeesClient({
         }
       }
 
-      const allRowData = table.getRowModel().rows.map((row) => {
+      const allRowData = table.getPrePaginationRowModel().rows.map((row) => {
         const m = row.original;
         return {
           first_name: m.first_name,
@@ -392,7 +420,7 @@ export function EmployeesClient({
   const columns: ColumnDef<Member>[] = [
     {
       id: "avatar",
-      size: 48,
+      size: 64,
       enableSorting: false,
       enableColumnFilter: false,
       header: () => null,
@@ -404,11 +432,11 @@ export function EmployeesClient({
           <img
             src={m.avatar_url}
             alt={`${m.first_name} ${m.last_name}`}
-            className="h-8 w-8 rounded-full object-cover shrink-0"
+            className="h-12 w-12 rounded-full object-cover shrink-0"
           />
         ) : (
-          <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center shrink-0">
-            <span className="text-xs font-medium text-muted-foreground">{initials}</span>
+          <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center shrink-0">
+            <span className="text-sm font-medium text-muted-foreground">{initials}</span>
           </div>
         );
       },
@@ -743,15 +771,21 @@ export function EmployeesClient({
   const table = useReactTable({
     data: members,
     columns,
-    state: { sorting, columnFilters, columnOrder, columnVisibility },
+    state: { sorting, columnFilters, columnOrder, columnVisibility, pagination: { pageIndex, pageSize } },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
+    onPaginationChange: (updater) => {
+      const next = typeof updater === "function" ? updater({ pageIndex, pageSize }) : updater;
+      setPageIndex(next.pageIndex);
+      if (next.pageSize !== pageSize) setPageSize(next.pageSize);
+    },
     onColumnOrderChange: () => {},
     onColumnVisibilityChange: () => {},
     enableMultiSort: true,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
   });
 
   return (
@@ -760,13 +794,89 @@ export function EmployeesClient({
         {capitalize(pluralize(memberLabel))} Directory
       </h1>
 
-      {/* Column customiser trigger */}
-      <div className="mb-2 flex items-center">
-        <ColumnCustomiserTrigger onClick={() => setShowCustomiser(true)} />
+      {/* Toolbar: column customiser (list only) + counts + view toggle */}
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <div>
+          {view === "list" && (
+            <ColumnCustomiserTrigger onClick={() => setShowCustomiser(true)} />
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-muted-foreground whitespace-nowrap">
+            <span className="font-medium text-foreground">
+              {table.getFilteredRowModel().rows.length}
+            </span>{" "}
+            shown · out of{" "}
+            <span className="font-medium text-foreground">{members.length}</span>
+          </span>
+          <div className="flex overflow-hidden rounded-md border border-input text-sm">
+            <button
+              className={cn("flex items-center gap-1.5 px-3 py-1.5", view === "list" ? "bg-muted font-medium" : "hover:bg-muted/50")}
+              onClick={() => setView("list")}
+            >
+              <List className="h-3.5 w-3.5" />
+              List
+            </button>
+            <button
+              className={cn("flex items-center gap-1.5 border-l border-input px-3 py-1.5", view === "card" ? "bg-muted font-medium" : "hover:bg-muted/50")}
+              onClick={() => setView("card")}
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              Card
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Table */}
-      <div className="rounded-md border">
+      {/* Card view */}
+      {view === "card" && (
+        <div className="mb-4">
+          {table.getRowModel().rows.length ? (
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+              {table.getRowModel().rows.map((row) => {
+                const m = row.original;
+                const initials = [m.first_name, m.last_name]
+                  .map((n) => n?.charAt(0).toUpperCase())
+                  .join("");
+                return (
+                  <div
+                    key={m.member_id}
+                    className={cn(
+                      "flex flex-col items-center gap-3 rounded-lg border bg-card p-6 text-center",
+                      canEdit && "cursor-pointer hover:bg-muted/50"
+                    )}
+                    onClick={() => canEdit && setEditingMember(m)}
+                  >
+                    {m.avatar_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={m.avatar_url}
+                        alt={`${m.first_name} ${m.last_name}`}
+                        className="h-[7.5rem] w-[7.5rem] rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-[7.5rem] w-[7.5rem] items-center justify-center rounded-full bg-muted">
+                        <span className="text-3xl font-medium text-muted-foreground">{initials}</span>
+                      </div>
+                    )}
+                    <div className="w-full">
+                      <p className="font-semibold">{m.first_name} {m.last_name}</p>
+                      <p className="truncate text-sm text-muted-foreground">{m.email}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="py-12 text-center text-muted-foreground">
+              No {pluralize(memberLabel)} found.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* List view */}
+      {view === "list" && <div className="rounded-md border">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -790,7 +900,7 @@ export function EmployeesClient({
                   return <TableHead key={`filter-${header.id}`} />;
                 }
                 if (columnId === "avatar") {
-                  return <TableHead key={`filter-${header.id}`} className="w-12 shrink-0" />;
+                  return <TableHead key={`filter-${header.id}`} className="w-16 shrink-0" />;
                 }
                 if (columnId === "payroll_number") {
                   return (
@@ -1025,6 +1135,47 @@ export function EmployeesClient({
             )}
           </TableBody>
         </Table>
+      </div>}
+
+      {/* Pagination */}
+      <div className="mt-4 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span>Rows per page</span>
+          <select
+            className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+            value={pageSize}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              setPageSize(n);
+              setPageIndex(0);
+            }}
+          >
+            {[10, 25, 50, 100, 250].map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">
+            Page {pageIndex + 1} of {Math.max(1, table.getPageCount())}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPageIndex((p) => p - 1)}
+            disabled={!table.getCanPreviousPage()}
+          >
+            ← Previous
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPageIndex((p) => p + 1)}
+            disabled={!table.getCanNextPage()}
+          >
+            Next →
+          </Button>
+        </div>
       </div>
 
       {/* Action buttons */}
