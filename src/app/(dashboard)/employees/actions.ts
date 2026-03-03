@@ -695,7 +695,7 @@ export async function acceptInvite(
 
     const { data: member, error: fetchError } = await admin
       .from("members")
-      .select("email, first_name, last_name, accepted_at")
+      .select("id, organisation_id, email, first_name, last_name, accepted_at")
       .eq("invite_token", token)
       .single();
 
@@ -729,6 +729,16 @@ export async function acceptInvite(
     }
 
     // The DB trigger link_user_to_org_member will automatically link the user
+    logAudit({
+      organisationId: member.organisation_id,
+      actorId: member.id,
+      actorName: `${member.first_name} ${member.last_name}`,
+      action: "member.accepted_invite",
+      targetType: "member",
+      targetId: member.id,
+      targetLabel: `${member.first_name} ${member.last_name}`,
+    });
+
     return { success: true };
   } catch (e) {
     return {

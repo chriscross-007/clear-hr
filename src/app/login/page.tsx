@@ -50,9 +50,23 @@ function LoginForm() {
 
       if (aalData?.nextLevel === "aal2") {
         router.push("/mfa-verify");
-      } else {
-        router.push("/");
+        router.refresh();
+        return;
       }
+
+      // Determine the correct home page based on role
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: membership } = user
+        ? await supabase
+            .from("members")
+            .select("role")
+            .eq("user_id", user.id)
+            .limit(1)
+            .single()
+        : { data: null };
+
+      const home = membership?.role === "employee" ? "/dashboard" : "/employees";
+      router.push(home);
       router.refresh();
     }
   }

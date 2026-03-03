@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { logAudit } from "@/lib/audit";
 
 function createAdminClient() {
   return createSupabaseClient(
@@ -17,7 +18,9 @@ function createAdminClient() {
   );
 }
 
-async function getCallerOrgId(): Promise<string> {
+type CallerInfo = { orgId: string; actorId: string; actorName: string };
+
+async function getCallerOrgId(): Promise<CallerInfo> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -26,7 +29,7 @@ async function getCallerOrgId(): Promise<string> {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role")
+    .select("id, organisation_id, role, first_name, last_name")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -34,7 +37,11 @@ async function getCallerOrgId(): Promise<string> {
   if (!membership) throw new Error("No organisation");
   if (membership.role !== "owner") throw new Error("Owner access required");
 
-  return membership.organisation_id;
+  return {
+    orgId: membership.organisation_id,
+    actorId: membership.id,
+    actorName: `${membership.first_name} ${membership.last_name}`,
+  };
 }
 
 export type BackupSummary = {
@@ -100,7 +107,7 @@ export async function createBackup(
   name: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const orgId = await getCallerOrgId();
+    const { orgId, actorId, actorName } = await getCallerOrgId();
     const admin = createAdminClient();
 
     const { data: org } = await admin
@@ -181,6 +188,16 @@ export async function createBackup(
       return { success: false, error: insertError.message };
     }
 
+    logAudit({
+      organisationId: orgId,
+      actorId,
+      actorName,
+      action: "backup.created",
+      targetType: "backup",
+      targetLabel: name,
+      metadata: { member_count: backupMembers.length },
+    });
+
     return { success: true };
   } catch (e) {
     return { success: false, error: (e as Error).message };
@@ -193,7 +210,7 @@ export async function listBackups(): Promise<{
   error?: string;
 }> {
   try {
-    const orgId = await getCallerOrgId();
+    const { orgId } = await getCallerOrgId();
     const admin = createAdminClient();
 
     const { data, error } = await admin
@@ -213,7 +230,7 @@ export async function deleteBackup(
   backupId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const orgId = await getCallerOrgId();
+    const { orgId } = await getCallerOrgId();
     const admin = createAdminClient();
 
     const { data: row } = await admin
@@ -270,7 +287,7 @@ export async function previewRestore(
   mode: RestoreMode
 ): Promise<{ success: boolean; preview?: RestorePreview; error?: string }> {
   try {
-    const orgId = await getCallerOrgId();
+    const { orgId } = await getCallerOrgId();
     const admin = createAdminClient();
     const backup = await downloadBackupJson(backupId, orgId);
 
@@ -382,7 +399,7 @@ export async function restoreBackup(
   confirmText?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const orgId = await getCallerOrgId();
+    const { orgId } = await getCallerOrgId();
     const admin = createAdminClient();
 
     if (mode === "full") {

@@ -43,13 +43,15 @@ export async function GET(request: Request) {
   // Target member must be in same org and have accepted their invite
   const { data: member } = await admin
     .from("members")
-    .select("email")
+    .select("email, role")
     .eq("id", memberId)
     .eq("organisation_id", callerMembership.organisation_id)
     .not("user_id", "is", null)
     .single();
 
   if (!member) return NextResponse.redirect(`${origin}/employees`);
+
+  const targetHome = member.role === "employee" ? "/dashboard" : "/employees";
 
   // Generate a magic link — gives us a hashed_token we can verify server-side
   const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
@@ -72,5 +74,5 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}/employees`);
   }
 
-  return NextResponse.redirect(`${origin}/employees`);
+  return NextResponse.redirect(`${origin}${targetHome}`);
 }

@@ -63,7 +63,7 @@ export async function updateSession(request: NextRequest) {
   if (claims?.sub && !isSkipped) {
     const { data: membership } = await supabase
       .from("members")
-      .select("id, organisations(require_mfa)")
+      .select("id, role, organisations(require_mfa)")
       .eq("user_id", claims.sub)
       .limit(1)
       .maybeSingle();
@@ -91,10 +91,23 @@ export async function updateSession(request: NextRequest) {
       return redirectResponse;
     }
 
-    // Authenticated user with org on landing page → redirect to /employees
+    const isEmployee = membership.role === "employee";
+
+    // Employees trying to access /employees → redirect to /dashboard
+    if (isEmployee && pathname.startsWith("/employees")) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/dashboard";
+      const redirectResponse = NextResponse.redirect(url);
+      supabaseResponse.cookies.getAll().forEach((cookie) => {
+        redirectResponse.cookies.set(cookie.name, cookie.value);
+      });
+      return redirectResponse;
+    }
+
+    // Authenticated user with org on landing page → redirect to role home
     if (pathname === "/") {
       const url = request.nextUrl.clone();
-      url.pathname = "/employees";
+      url.pathname = isEmployee ? "/dashboard" : "/employees";
       const redirectResponse = NextResponse.redirect(url);
       supabaseResponse.cookies.getAll().forEach((cookie) => {
         redirectResponse.cookies.set(cookie.name, cookie.value);
