@@ -53,6 +53,7 @@ interface DialogProps {
   prefs: ColPref[];
   colLabels: Record<string, string>;
   defaultCols: string[];
+  allStandardCols?: string[];
   onChange: (prefs: ColPref[]) => void;
 }
 
@@ -62,6 +63,7 @@ export function ColumnCustomiserDialog({
   prefs,
   colLabels,
   defaultCols,
+  allStandardCols,
   onChange,
 }: DialogProps) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -73,7 +75,23 @@ export function ColumnCustomiserDialog({
   }
 
   function resetToDefault() {
-    onChange(defaultCols.map((id) => ({ id, visible: true })));
+    const defaultSet = new Set(defaultCols);
+    const defaults = defaultCols.map((id) => ({ id, visible: true }));
+    if (allStandardCols) {
+      const standardSet = new Set(allStandardCols);
+      const standardOthers = allStandardCols
+        .filter((id) => !defaultSet.has(id))
+        .map((id) => ({ id, visible: false }));
+      const extraOthers = prefs
+        .filter((c) => !defaultSet.has(c.id) && !standardSet.has(c.id))
+        .map((c) => ({ ...c, visible: false }));
+      onChange([...defaults, ...standardOthers, ...extraOthers]);
+    } else {
+      const others = prefs
+        .filter((c) => !defaultSet.has(c.id))
+        .map((c) => ({ ...c, visible: false }));
+      onChange([...defaults, ...others]);
+    }
   }
 
   function handleDragStart(e: React.DragEvent<HTMLDivElement>, index: number) {

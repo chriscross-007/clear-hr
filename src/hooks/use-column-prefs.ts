@@ -10,7 +10,8 @@ function buildDefaultPrefs(defaultCols: string[]): ColPref[] {
 export function useColumnPrefs(
   gridId: string,
   initialPrefs: ColPref[],
-  defaultCols: string[]
+  defaultCols: string[],
+  resetCols?: string[]
 ) {
   const [prefs, setPrefs] = useState<ColPref[]>(() => {
     if (initialPrefs.length === 0) return buildDefaultPrefs(defaultCols);
@@ -35,7 +36,7 @@ export function useColumnPrefs(
   }
 
   function resetPrefs() {
-    updatePrefs(buildDefaultPrefs(defaultCols));
+    updatePrefs(buildDefaultPrefs(resetCols ?? defaultCols));
   }
 
   const columnOrder = prefs.map((c) => c.id);

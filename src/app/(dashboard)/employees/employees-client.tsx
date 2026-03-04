@@ -188,19 +188,25 @@ const DATE_PRESET_LABELS: Record<string, string> = {
   next_year: "Next Year",
 };
 
+const ALL_EMPLOYEE_COLS = [
+  "avatar", "first_name", "last_name", "payroll_number", "email", "role", "profile",
+  "team", "status", "last_log_in",
+];
+
 const DEFAULT_EMPLOYEE_COLS = [
-  "first_name", "last_name", "email", "role", "profile",
-  "team", "payroll_number", "status", "last_log_in",
+  "avatar", "first_name", "last_name", "payroll_number", "email", "role", "profile",
+  "team", "status",
 ];
 
 const EMPLOYEE_COL_LABELS: Record<string, string> = {
+  avatar: "Avatar",
   first_name: "First Name",
   last_name: "Last Name",
+  payroll_number: "Payroll #",
   email: "Email",
   role: "Role",
   profile: "Profile",
   team: "Team",
-  payroll_number: "Payroll #",
   status: "Status",
   last_log_in: "Last Log-in",
 };
@@ -280,14 +286,14 @@ export function EmployeesClient({
   const atCapacity = members.length >= maxEmployees;
 
   const customFieldColIds = customFieldDefs.map((d) => `cf_${d.field_key}`);
-  const allDefaultCols = [...DEFAULT_EMPLOYEE_COLS, ...customFieldColIds];
+  const allDefaultCols = [...ALL_EMPLOYEE_COLS, ...customFieldColIds];
   const allColLabels: Record<string, string> = {
     ...EMPLOYEE_COL_LABELS,
     ...Object.fromEntries(customFieldDefs.map((d) => [`cf_${d.field_key}`, d.label])),
   };
 
   const { prefs, updatePrefs, resetPrefs, columnOrder, columnVisibility } = useColumnPrefs(
-    "employees", initialColumnPrefs, allDefaultCols
+    "employees", initialColumnPrefs, allDefaultCols, DEFAULT_EMPLOYEE_COLS
   );
 
   useEffect(() => {
@@ -986,11 +992,8 @@ export function EmployeesClient({
                 return (
                   <div
                     key={m.member_id}
-                    className={cn(
-                      "flex flex-col items-center gap-3 rounded-lg border bg-card p-6 text-center",
-                      canEdit && "cursor-pointer hover:bg-muted/50"
-                    )}
-                    onClick={() => canEdit && setEditingMember(m)}
+                    className="flex flex-col items-center gap-3 rounded-lg border bg-card p-6 text-center cursor-pointer hover:bg-muted/50"
+                    onClick={() => router.push(`/employees/${m.member_id}/dashboard`)}
                   >
                     {m.avatar_url ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -1027,7 +1030,7 @@ export function EmployeesClient({
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id}>
+                  <TableHead key={header.id} className={header.column.id === "avatar" ? "w-20 shrink-0" : ""}>
                     {header.isPlaceholder
                       ? null
                       : flexRender(
@@ -1045,7 +1048,7 @@ export function EmployeesClient({
                   return <TableHead key={`filter-${header.id}`} />;
                 }
                 if (columnId === "avatar") {
-                  return <TableHead key={`filter-${header.id}`} className="w-16 shrink-0" />;
+                  return <TableHead key={`filter-${header.id}`} className="w-20 shrink-0" />;
                 }
                 if (columnId === "payroll_number") {
                   return (
@@ -1259,7 +1262,7 @@ export function EmployeesClient({
                   onClick={() => canEdit && setEditingMember(row.original)}
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
+                    <TableCell key={cell.id} className={cell.column.id === "avatar" ? "w-20 shrink-0 py-2" : ""}>
                       {flexRender(
                         cell.column.columnDef.cell,
                         cell.getContext()
@@ -1358,7 +1361,8 @@ export function EmployeesClient({
         onOpenChange={setShowCustomiser}
         prefs={prefs}
         colLabels={allColLabels}
-        defaultCols={allDefaultCols}
+        defaultCols={DEFAULT_EMPLOYEE_COLS}
+        allStandardCols={ALL_EMPLOYEE_COLS}
         onChange={(newPrefs) => {
           updatePrefs(newPrefs);
         }}
