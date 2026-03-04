@@ -63,6 +63,7 @@ export type MemberResult = {
   profile_name: string | null;
   custom_fields: Record<string, unknown>;
   avatar_url: string | null;
+  updated_at: string | null;
 };
 
 // Add employee — creates org_member record only, no auth user
@@ -197,6 +198,7 @@ export async function addEmployee(formData: {
         profile_name: null,
         custom_fields: {},
         avatar_url: null,
+        updated_at: null,
       },
     };
   } catch (e) {
@@ -296,7 +298,8 @@ export async function updateEmployee(formData: {
   isMultiTeam?: boolean;
   // undefined = no change, "__none__" = clear profile, UUID = assign profile
   profileId?: string;
-}): Promise<{ success: boolean; error?: string }> {
+  updatedAt?: string | null;
+}): Promise<{ success: boolean; error?: string; conflict?: boolean }> {
   try {
     const membership = await getCallerMembership();
     const admin = createAdminClient();
@@ -403,14 +406,28 @@ export async function updateEmployee(formData: {
       }
     }
 
-    const { error } = await admin
+    const query = admin
       .from("members")
       .update(updateData)
       .eq("id", formData.memberId)
       .eq("organisation_id", membership.organisation_id);
 
+    if (formData.updatedAt) {
+      query.eq("updated_at", formData.updatedAt);
+    }
+
+    const { data: updated, error } = await query.select("id");
+
     if (error) {
       return { success: false, error: error.message };
+    }
+
+    if (formData.updatedAt && (!updated || updated.length === 0)) {
+      return {
+        success: false,
+        conflict: true,
+        error: "This record was updated by someone else while you were editing. Please close and reopen to see the latest changes.",
+      };
     }
 
     if (beforeState) {

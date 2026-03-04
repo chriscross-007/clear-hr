@@ -78,6 +78,7 @@ export type Member = {
   profile_name: string | null;
   custom_fields: Record<string, unknown>;
   avatar_url: string | null;
+  updated_at: string | null;
 };
 
 function RoleBadge({ role, memberLabel }: { role: string; memberLabel: string }) {

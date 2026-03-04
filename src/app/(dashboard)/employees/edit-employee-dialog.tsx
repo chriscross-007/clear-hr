@@ -144,6 +144,7 @@ export function EditEmployeeDialog({
       teamIds,
       isMultiTeam,
       profileId,
+      updatedAt: member.updated_at,
     });
 
     if (!result.success) {
