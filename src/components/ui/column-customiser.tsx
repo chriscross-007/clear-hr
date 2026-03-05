@@ -11,13 +11,20 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { ColPref } from "@/app/(dashboard)/employees/grid-prefs-actions";
+import type { ColPref } from "@/lib/grid-prefs-actions";
 
 // ---------------------------------------------------------------------------
 // Trigger button
@@ -34,10 +41,10 @@ export function ColumnCustomiserTrigger({ onClick }: TriggerProps) {
         <TooltipTrigger asChild>
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClick}>
             <SlidersHorizontal className="h-4 w-4" />
-            <span className="sr-only">Customise Columns</span>
+            <span className="sr-only">Customise</span>
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="right">Customise Columns</TooltipContent>
+        <TooltipContent side="right">Customise</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );
@@ -55,6 +62,10 @@ interface DialogProps {
   defaultCols: string[];
   allStandardCols?: string[];
   onChange: (prefs: ColPref[]) => void;
+  /** All column IDs available for Group By (should exclude avatar). If omitted, Group By section is hidden. */
+  allColIds?: string[];
+  groupBy?: string;
+  onGroupByChange?: (groupBy: string) => void;
 }
 
 export function ColumnCustomiserDialog({
@@ -65,10 +76,15 @@ export function ColumnCustomiserDialog({
   defaultCols,
   allStandardCols,
   onChange,
+  allColIds,
+  groupBy,
+  onGroupByChange,
 }: DialogProps) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
   const dragNodeRef = useRef<HTMLDivElement | null>(null);
+
+  const showGroupBy = !!(allColIds && onGroupByChange);
 
   function toggleVisible(id: string) {
     onChange(prefs.map((c) => (c.id === id ? { ...c, visible: !c.visible } : c)));
@@ -97,9 +113,7 @@ export function ColumnCustomiserDialog({
   function handleDragStart(e: React.DragEvent<HTMLDivElement>, index: number) {
     setDragIndex(index);
     dragNodeRef.current = e.currentTarget;
-    // Minimal ghost image — use the row itself but faded
     e.dataTransfer.effectAllowed = "move";
-    // Slight delay so the row doesn't disappear immediately
     setTimeout(() => {
       if (dragNodeRef.current) dragNodeRef.current.style.opacity = "0.4";
     }, 0);
@@ -131,56 +145,104 @@ export function ColumnCustomiserDialog({
     setOverIndex(null);
   }
 
+  // Group By options: all cols except avatar, sorted by label
+  const groupByOptions = allColIds
+    ? allColIds
+        .filter((id) => id !== "avatar")
+        .map((id) => ({ id, label: colLabels[id] ?? id }))
+        .sort((a, b) => a.label.localeCompare(b.label))
+    : [];
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className={showGroupBy ? "max-w-2xl" : "max-w-sm"}>
         <DialogHeader>
-          <DialogTitle>Customise Columns</DialogTitle>
+          <DialogTitle>Customise</DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col gap-0.5 py-2">
-          {prefs.map((col, i) => {
-            const isCustom = col.id.startsWith("cf_");
-            return (
-              <div
-                key={col.id}
-                draggable
-                onDragStart={(e) => handleDragStart(e, i)}
-                onDragEnter={() => handleDragEnter(i)}
-                onDragOver={handleDragOver}
-                onDrop={(e) => handleDrop(e, i)}
-                onDragEnd={handleDragEnd}
-                className={cn(
-                  "flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors cursor-grab active:cursor-grabbing select-none",
-                  overIndex === i && dragIndex !== i
-                    ? "border-t-2 border-primary bg-muted/30"
-                    : "hover:bg-muted/50"
-                )}
-              >
-                <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <input
-                  type="checkbox"
-                  id={`col-${col.id}`}
-                  checked={col.visible}
-                  onChange={() => toggleVisible(col.id)}
-                  className="h-4 w-4 cursor-pointer accent-primary"
-                  onMouseDown={(e) => e.stopPropagation()}
-                />
-                <label
-                  htmlFor={`col-${col.id}`}
-                  className={cn(
-                    "flex-1 text-sm",
-                    isCustom
-                      ? col.visible ? "text-blue-600 dark:text-blue-400" : "text-blue-400 dark:text-blue-600"
-                      : !col.visible && "text-muted-foreground"
-                  )}
-                  onMouseDown={(e) => e.stopPropagation()}
+        <div className={cn("py-2", showGroupBy ? "grid grid-cols-2 gap-6" : "")}>
+          {/* Left column — column list */}
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Columns
+            </p>
+            <div className="flex flex-col gap-0.5">
+              {prefs.map((col, i) => {
+                const isCustom = col.id.startsWith("cf_");
+                return (
+                  <div
+                    key={col.id}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, i)}
+                    onDragEnter={() => handleDragEnter(i)}
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, i)}
+                    onDragEnd={handleDragEnd}
+                    className={cn(
+                      "flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors cursor-grab active:cursor-grabbing select-none",
+                      overIndex === i && dragIndex !== i
+                        ? "border-t-2 border-primary bg-muted/30"
+                        : "hover:bg-muted/50"
+                    )}
+                  >
+                    <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <input
+                      type="checkbox"
+                      id={`col-${col.id}`}
+                      checked={col.visible}
+                      onChange={() => toggleVisible(col.id)}
+                      className="h-4 w-4 cursor-pointer accent-primary"
+                      onMouseDown={(e) => e.stopPropagation()}
+                    />
+                    <label
+                      htmlFor={`col-${col.id}`}
+                      className={cn(
+                        "flex-1 text-sm",
+                        isCustom
+                          ? col.visible ? "text-blue-600 dark:text-blue-400" : "text-blue-400 dark:text-blue-600"
+                          : !col.visible && "text-muted-foreground"
+                      )}
+                      onMouseDown={(e) => e.stopPropagation()}
+                    >
+                      {colLabels[col.id] ?? col.id}
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Right column — PDF options */}
+          {showGroupBy && (
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                PDF Options
+              </p>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Group By</label>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Rows in the downloaded PDF will be sorted and grouped by the chosen column.
+                </p>
+                <Select
+                  value={groupBy || "__none__"}
+                  onValueChange={(v) => onGroupByChange!(v === "__none__" ? "" : v)}
                 >
-                  {colLabels[col.id] ?? col.id}
-                </label>
+                  <SelectTrigger>
+                    <SelectValue placeholder="None" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">None</SelectItem>
+                    {groupByOptions.map((opt) => (
+                      <SelectItem key={opt.id} value={opt.id}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-            );
-          })}
+            </div>
+          )}
         </div>
 
         <DialogFooter>

@@ -18,6 +18,10 @@ interface EmployeePDFProps {
   title: string;
   orientation: "portrait" | "landscape";
   filters?: ActiveFilter[];
+  /** Column ID to group by. Rows must be pre-sorted by this column. */
+  groupBy?: string;
+  /** Display label for the group-by column (e.g. "Team") */
+  groupByLabel?: string;
 }
 
 const COLUMN_WEIGHTS: Record<string, number> = {
@@ -86,6 +90,24 @@ const styles = StyleSheet.create({
     minHeight: 22,
     alignItems: "center",
   },
+  groupHeader: {
+    flexDirection: "row",
+    backgroundColor: "#e8f0fe",
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#aac",
+    borderTopWidth: 0.5,
+    borderTopColor: "#aac",
+    minHeight: 18,
+    alignItems: "center",
+    paddingVertical: 3,
+    paddingHorizontal: 6,
+    marginTop: 4,
+  },
+  groupHeaderText: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 8,
+    color: "#334",
+  },
   cellView: {
     paddingVertical: 4,
     paddingHorizontal: 4,
@@ -122,6 +144,8 @@ export function EmployeePDF({
   title,
   orientation,
   filters,
+  groupBy,
+  groupByLabel,
 }: EmployeePDFProps) {
   function colFlex(id: string) {
     return COLUMN_WEIGHTS[id] ?? 10;
@@ -135,6 +159,27 @@ export function EmployeePDF({
     minute: "2-digit",
     hour12: false,
   });
+
+  // Build a flat list of items to render: group headers interleaved with data rows
+  type RenderItem =
+    | { kind: "group"; value: string }
+    | { kind: "row"; row: Record<string, string>; altIndex: number };
+
+  const items: RenderItem[] = [];
+  let lastGroupValue: string | null = null;
+  let altIndex = 0;
+
+  for (const row of rows) {
+    if (groupBy) {
+      const groupValue = row[groupBy] ?? "—";
+      if (groupValue !== lastGroupValue) {
+        items.push({ kind: "group", value: groupValue });
+        lastGroupValue = groupValue;
+        altIndex = 0;
+      }
+    }
+    items.push({ kind: "row", row, altIndex: altIndex++ });
+  }
 
   return (
     <Document>
@@ -162,19 +207,29 @@ export function EmployeePDF({
             ))}
           </View>
 
-          {rows.map((row, i) => (
-            <View
-              key={i}
-              style={[styles.tableRow, i % 2 === 1 ? styles.tableRowAlt : {}]}
-              wrap={false}
-            >
-              {columns.map((col) => (
-                <View key={col.id} style={[styles.cellView, { flex: colFlex(col.id) }]}>
-                  <Text style={styles.cell}>{truncate(row[col.id] ?? "", colFlex(col.id))}</Text>
+          {items.map((item, i) => {
+            if (item.kind === "group") {
+              const prefix = groupByLabel ? `${groupByLabel}: ` : "";
+              return (
+                <View key={`group-${i}`} style={styles.groupHeader} wrap={false}>
+                  <Text style={styles.groupHeaderText}>{prefix}{item.value}</Text>
                 </View>
-              ))}
-            </View>
-          ))}
+              );
+            }
+            return (
+              <View
+                key={`row-${i}`}
+                style={[styles.tableRow, item.altIndex % 2 === 1 ? styles.tableRowAlt : {}]}
+                wrap={false}
+              >
+                {columns.map((col) => (
+                  <View key={col.id} style={[styles.cellView, { flex: colFlex(col.id) }]}>
+                    <Text style={styles.cell}>{truncate(item.row[col.id] ?? "", colFlex(col.id))}</Text>
+                  </View>
+                ))}
+              </View>
+            );
+          })}
         </View>
 
         <Text

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { MemberLabelProvider } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
+import { hasPlanFeature } from "@/lib/plan-config";
 import { HeaderUserMenu } from "./header-user-menu";
 import { Sidebar } from "./sidebar";
 
@@ -63,6 +64,20 @@ export default async function DashboardLayout({
     .filter(Boolean)
     .map((n) => n!.charAt(0).toUpperCase())
     .join("") || user.email?.charAt(0).toUpperCase() || "U";
+
+  // Fetch reports sidebar data for owners/admins on plans with reports
+  const isOwnerOrAdmin = membership.role === "owner" || membership.role === "admin";
+  const showReports = hasPlanFeature(org?.plan ?? "lite", "reports");
+  let sidebarFavouriteIds: string[] = [];
+  let sidebarCustomReports: { id: string; name: string }[] = [];
+  if (showReports && isOwnerOrAdmin) {
+    const [{ data: favData }, { data: customData }] = await Promise.all([
+      supabase.from("report_favourites").select("report_id").eq("user_id", user.id),
+      supabase.from("custom_reports").select("id, name").eq("organisation_id", membership.organisation_id).order("name"),
+    ]);
+    sidebarFavouriteIds = (favData ?? []).map((f: { report_id: string }) => f.report_id);
+    sidebarCustomReports = (customData ?? []) as { id: string; name: string }[];
+  }
 
   // Trial banner logic
   const trialEndsAt = org?.trial_ends_at ? new Date(org.trial_ends_at) : null;
@@ -142,6 +157,8 @@ export default async function DashboardLayout({
             requireMfa={org?.require_mfa ?? false}
             canDefineCustomFields={canDefineCustomFields}
             currencySymbol={org?.currency_symbol ?? "£"}
+            initialFavouriteIds={sidebarFavouriteIds}
+            initialCustomReports={sidebarCustomReports}
           />
           <main className="flex-1">{children}</main>
         </div>

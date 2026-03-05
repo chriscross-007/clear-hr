@@ -1,5 +1,8 @@
+export const dynamic = 'force-dynamic';
+
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { parseGridPrefs } from "@/lib/grid-prefs";
 import { EmployeesClient } from "./employees-client";
 
 export default async function EmployeesPage({
@@ -60,6 +63,7 @@ export default async function EmployeesPage({
 
   const allDefs = (customFieldDefs ?? []) as { id: string; label: string; field_key: string; field_type: string; options: string[] | null; required: boolean; sort_order: number; max_decimal_places: number | null }[];
   const visibleDefs = canSeeCurrency ? allDefs : allDefs.filter((d) => d.field_type !== "currency");
+  const gridPrefs = parseGridPrefs(columnPrefsRow?.prefs);
 
   return (
     <EmployeesClient
@@ -73,7 +77,8 @@ export default async function EmployeesPage({
       adminProfiles={(adminProfiles ?? []) as { id: string; name: string; rights: Record<string, unknown> }[]}
       employeeProfiles={(employeeProfiles ?? []) as { id: string; name: string; rights: Record<string, unknown> }[]}
       initialMemberId={memberId}
-      initialColumnPrefs={(columnPrefsRow?.prefs ?? []) as { id: string; visible: boolean }[]}
+      initialColumnPrefs={gridPrefs.columns}
+      initialGroupBy={gridPrefs.groupBy}
       customFieldDefs={visibleDefs}
       currencySymbol={currencySymbol}
       canSeeCurrency={canSeeCurrency}
