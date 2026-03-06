@@ -58,6 +58,9 @@ interface EmployeesClientProps {
   initialMemberId?: string;
   initialColumnPrefs: ColPref[];
   initialGroupBy?: string;
+  initialPdfPageBreak?: boolean;
+  initialPdfRepeatHeaders?: boolean;
+  initialAggregateMetrics?: string[];
   customFieldDefs: FieldDef[];
   currencySymbol: string;
   canSeeCurrency: boolean;
@@ -77,6 +80,9 @@ export function EmployeesClient({
   initialMemberId,
   initialColumnPrefs,
   initialGroupBy,
+  initialPdfPageBreak,
+  initialPdfRepeatHeaders,
+  initialAggregateMetrics,
   customFieldDefs,
   currencySymbol,
   userId,
@@ -134,7 +140,10 @@ export function EmployeesClient({
     prefs: ColPref[],
     colLabels: Record<string, string>,
     orientation: "portrait" | "landscape",
-    groupBy?: string
+    groupBy?: string,
+    pdfPageBreak?: boolean,
+    pdfRepeatHeaders?: boolean,
+    aggregateMetrics?: string[]
   ) {
     try {
       const [{ pdf }, { EmployeePDF }] = await Promise.all([
@@ -164,25 +173,32 @@ export function EmployeesClient({
             })
           : "—",
         ...Object.fromEntries(
-          customFieldDefs.map((def) => {
+          customFieldDefs.flatMap((def) => {
             const val = m.custom_fields?.[def.field_key];
-            if (def.field_type === "checkbox") return [`cf_${def.field_key}`, val === true ? "Yes" : val === false ? "No" : "—"];
-            if (def.field_type === "date" && val) {
-              try { return [`cf_${def.field_key}`, new Date(String(val)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })]; } catch { return [`cf_${def.field_key}`, String(val)]; }
-            }
-            if (val === undefined || val === null || val === "") return [`cf_${def.field_key}`, "—"];
-            if (def.field_type === "currency") {
+            let display: string;
+            if (def.field_type === "checkbox") display = val === true ? "Yes" : val === false ? "No" : "—";
+            else if (def.field_type === "date" && val) {
+              try { display = new Date(String(val)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }); } catch { display = String(val); }
+            } else if (val === undefined || val === null || val === "") {
+              display = "—";
+            } else if (def.field_type === "currency") {
               const num = Number(val);
-              return [`cf_${def.field_key}`, isNaN(num) ? String(val) : `${currencySymbol}${num.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`];
-            }
-            if (def.field_type === "number") {
+              display = isNaN(num) ? String(val) : `${currencySymbol}${num.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            } else if (def.field_type === "number") {
               const num = Number(val);
-              if (isNaN(num)) return [`cf_${def.field_key}`, String(val)];
-              if (def.max_decimal_places === 0) return [`cf_${def.field_key}`, String(Math.round(num))];
-              if (def.max_decimal_places !== null && def.max_decimal_places !== undefined) return [`cf_${def.field_key}`, num.toFixed(def.max_decimal_places)];
-              return [`cf_${def.field_key}`, String(val)];
+              if (isNaN(num)) display = String(val);
+              else if (def.max_decimal_places === 0) display = String(Math.round(num));
+              else if (def.max_decimal_places !== null && def.max_decimal_places !== undefined) display = num.toFixed(def.max_decimal_places);
+              else display = String(val);
+            } else {
+              display = String(val);
             }
-            return [`cf_${def.field_key}`, String(val)];
+            const pairs: [string, string][] = [[`cf_${def.field_key}`, display]];
+            if (def.field_type === "currency" || def.field_type === "number") {
+              const num = Number(val);
+              pairs.push([`_raw_cf_${def.field_key}`, val !== null && val !== undefined && val !== "" && !isNaN(num) ? String(num) : ""]);
+            }
+            return pairs;
           })
         ),
       } as Record<string, string>));
@@ -193,7 +209,18 @@ export function EmployeesClient({
 
       const pdfColumns = prefs
         .filter((c) => c.visible && c.id !== "avatar")
-        .map((c) => ({ id: c.id, label: colLabels[c.id] ?? c.id }));
+        .map((c) => {
+          const def = c.id.startsWith("cf_") ? customFieldDefs.find((d) => `cf_${d.field_key}` === c.id) : null;
+          return {
+            id: c.id,
+            label: colLabels[c.id] ?? c.id,
+            ...(def && (def.field_type === "number" || def.field_type === "currency") ? {
+              aggregateFormat: def.field_type as "currency" | "number",
+              aggregateCurrencySymbol: def.field_type === "currency" ? currencySymbol : undefined,
+              aggregateDecimals: def.field_type === "number" ? def.max_decimal_places : 2,
+            } : {}),
+          };
+        });
 
       const title = `${capitalize(pluralize(memberLabel))} Directory`;
       const blob = await pdf(
@@ -205,6 +232,9 @@ export function EmployeesClient({
           orientation={orientation}
           groupBy={groupBy}
           groupByLabel={groupBy ? (colLabels[groupBy] ?? groupBy) : undefined}
+          pdfPageBreak={pdfPageBreak}
+          pdfRepeatHeaders={pdfRepeatHeaders}
+          aggregateMetrics={aggregateMetrics}
         />
       ).toBlob();
 
@@ -271,6 +301,9 @@ export function EmployeesClient({
           colLabels={allColLabels}
           initialColPrefs={initialColumnPrefs}
           initialGroupBy={initialGroupBy}
+          initialPdfPageBreak={initialPdfPageBreak}
+          initialPdfRepeatHeaders={initialPdfRepeatHeaders}
+          initialAggregateMetrics={initialAggregateMetrics}
           userId={userId}
           toolbar={toolbar}
           onRowClick={canEdit ? (m) => setEditingMember(m) : undefined}

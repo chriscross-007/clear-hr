@@ -3,6 +3,8 @@
 import { useState, useRef } from "react";
 import { saveGridPrefs, type ColPref } from "@/lib/grid-prefs-actions";
 
+const ALL_AGG_METRICS = ["sum", "avg", "count", "min", "max"];
+
 function buildDefaultPrefs(defaultCols: string[]): ColPref[] {
   return defaultCols.map((id) => ({ id, visible: true }));
 }
@@ -12,7 +14,10 @@ export function useColumnPrefs(
   initialPrefs: ColPref[],
   defaultCols: string[],
   resetCols?: string[],
-  initialGroupBy?: string
+  initialGroupBy?: string,
+  initialPdfPageBreak?: boolean,
+  initialPdfRepeatHeaders?: boolean,
+  initialAggregateMetrics?: string[]
 ) {
   const [prefs, setPrefs] = useState<ColPref[]>(() => {
     if (initialPrefs.length === 0) return buildDefaultPrefs(defaultCols);
@@ -27,6 +32,11 @@ export function useColumnPrefs(
   });
 
   const [groupBy, setGroupByState] = useState(initialGroupBy ?? "");
+  const [pdfPageBreak, setPdfPageBreak] = useState(initialPdfPageBreak ?? false);
+  const [pdfRepeatHeaders, setPdfRepeatHeaders] = useState(initialPdfRepeatHeaders ?? false);
+  const [aggregateMetrics, setAggregateMetrics] = useState<string[]>(
+    initialAggregateMetrics ?? ALL_AGG_METRICS
+  );
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Refs so debounce callbacks always see the latest values
@@ -34,6 +44,12 @@ export function useColumnPrefs(
   prefsRef.current = prefs;
   const groupByRef = useRef(groupBy);
   groupByRef.current = groupBy;
+  const pdfPageBreakRef = useRef(pdfPageBreak);
+  pdfPageBreakRef.current = pdfPageBreak;
+  const pdfRepeatHeadersRef = useRef(pdfRepeatHeaders);
+  pdfRepeatHeadersRef.current = pdfRepeatHeaders;
+  const aggregateMetricsRef = useRef(aggregateMetrics);
+  aggregateMetricsRef.current = aggregateMetrics;
 
   function scheduleSave() {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -41,6 +57,9 @@ export function useColumnPrefs(
       saveGridPrefs(gridId, {
         columns: prefsRef.current,
         groupBy: groupByRef.current || undefined,
+        pdfPageBreak: pdfPageBreakRef.current || undefined,
+        pdfRepeatHeaders: pdfRepeatHeadersRef.current || undefined,
+        aggregateMetrics: aggregateMetricsRef.current,
       });
     }, 800);
   }
@@ -61,8 +80,32 @@ export function useColumnPrefs(
     scheduleSave();
   }
 
+  function updatePdfPageBreak(v: boolean) {
+    setPdfPageBreak(v);
+    pdfPageBreakRef.current = v;
+    scheduleSave();
+  }
+
+  function updatePdfRepeatHeaders(v: boolean) {
+    setPdfRepeatHeaders(v);
+    pdfRepeatHeadersRef.current = v;
+    scheduleSave();
+  }
+
+  function updateAggregateMetrics(metrics: string[]) {
+    setAggregateMetrics(metrics);
+    aggregateMetricsRef.current = metrics;
+    scheduleSave();
+  }
+
   const columnOrder = prefs.map((c) => c.id);
   const columnVisibility = Object.fromEntries(prefs.map((c) => [c.id, c.visible]));
 
-  return { prefs, updatePrefs, resetPrefs, columnOrder, columnVisibility, groupBy, updateGroupBy };
+  return {
+    prefs, updatePrefs, resetPrefs, columnOrder, columnVisibility,
+    groupBy, updateGroupBy,
+    pdfPageBreak, updatePdfPageBreak,
+    pdfRepeatHeaders, updatePdfRepeatHeaders,
+    aggregateMetrics, updateAggregateMetrics,
+  };
 }

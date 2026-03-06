@@ -106,6 +106,9 @@ export default async function StandardReportPage({
       canSeeCurrency={canSeeCurrency}
       initialColumnPrefs={gridPrefs.columns}
       initialGroupBy={gridPrefs.groupBy}
+      initialPdfPageBreak={gridPrefs.pdfPageBreak}
+      initialPdfRepeatHeaders={gridPrefs.pdfRepeatHeaders}
+      initialAggregateMetrics={gridPrefs.aggregateMetrics}
       gridId={gridId}
       userId={user.id}
       isFavourited={isFavourited}

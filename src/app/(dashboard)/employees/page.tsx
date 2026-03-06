@@ -79,6 +79,9 @@ export default async function EmployeesPage({
       initialMemberId={memberId}
       initialColumnPrefs={gridPrefs.columns}
       initialGroupBy={gridPrefs.groupBy}
+      initialPdfPageBreak={gridPrefs.pdfPageBreak}
+      initialPdfRepeatHeaders={gridPrefs.pdfRepeatHeaders}
+      initialAggregateMetrics={gridPrefs.aggregateMetrics}
       customFieldDefs={visibleDefs}
       currencySymbol={currencySymbol}
       canSeeCurrency={canSeeCurrency}

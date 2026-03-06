@@ -13,6 +13,7 @@ import {
   type ColumnFiltersState,
   type Column,
   type RowData,
+  type Row,
 } from "@tanstack/react-table";
 import { useColumnPrefs } from "@/hooks/use-column-prefs";
 import { type ColPref } from "@/lib/grid-prefs-actions";
@@ -48,6 +49,10 @@ declare module "@tanstack/react-table" {
     filterElement?: (column: Column<TData, unknown>) => ReactNode;
     headerClassName?: string;
     cellClassName?: string;
+    getAggregateValue?: (row: TData) => number | null;
+    aggregateFormat?: "currency" | "number";
+    aggregateCurrencySymbol?: string;
+    aggregateDecimals?: number | null;
   }
 }
 
@@ -69,6 +74,9 @@ interface DataGridProps<T> {
   initialColPrefs: ColPref[];
   /** Initial group-by column ID (persisted with column prefs) */
   initialGroupBy?: string;
+  initialPdfPageBreak?: boolean;
+  initialPdfRepeatHeaders?: boolean;
+  initialAggregateMetrics?: string[];
   userId: string;
   /** Right-side toolbar slot for page-specific controls */
   toolbar?: ReactNode;
@@ -80,7 +88,10 @@ interface DataGridProps<T> {
     prefs: ColPref[],
     colLabels: Record<string, string>,
     orientation: "portrait" | "landscape",
-    groupBy?: string
+    groupBy?: string,
+    pdfPageBreak?: boolean,
+    pdfRepeatHeaders?: boolean,
+    aggregateMetrics?: string[]
   ) => Promise<void>;
   /** Called whenever the current page's rows change (e.g. for card view rendering) */
   onPageRowsChange?: (rows: T[]) => void;
@@ -102,6 +113,9 @@ export function DataGrid<T extends object>({
   colLabels,
   initialColPrefs,
   initialGroupBy,
+  initialPdfPageBreak,
+  initialPdfRepeatHeaders,
+  initialAggregateMetrics,
   toolbar,
   onRowClick,
   emptyMessage,
@@ -132,9 +146,22 @@ export function DataGrid<T extends object>({
   // Reset to page 0 whenever filters change
   useEffect(() => { setPageIndex(0); }, [columnFilters]);
 
-  const { prefs, updatePrefs, columnOrder, columnVisibility, groupBy, updateGroupBy } = useColumnPrefs(
-    gridId, initialColPrefs, allCols, defaultCols, initialGroupBy
+  const { prefs, updatePrefs, columnOrder, columnVisibility, groupBy, updateGroupBy, pdfPageBreak, updatePdfPageBreak, pdfRepeatHeaders, updatePdfRepeatHeaders, aggregateMetrics, updateAggregateMetrics } = useColumnPrefs(
+    gridId, initialColPrefs, allCols, defaultCols, initialGroupBy, initialPdfPageBreak, initialPdfRepeatHeaders, initialAggregateMetrics
   );
+
+  // When groupBy is set, keep it as the primary sort so groups are contiguous
+  useEffect(() => {
+    if (groupBy) {
+      setSorting((prev) => {
+        const rest = prev.filter((s) => s.id !== groupBy);
+        return [{ id: groupBy, desc: false }, ...rest];
+      });
+    } else {
+      setSorting((prev) => prev.filter((s) => s.id !== groupBy));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupBy]);
 
   const table = useReactTable({
     data,
@@ -170,9 +197,92 @@ export function DataGrid<T extends object>({
     setShowPdfDialog(false);
     try {
       const rows = table.getPrePaginationRowModel().rows.map((r) => r.original);
-      await onExportPdf(rows, prefs, colLabels, orientation, groupBy || undefined);
+      await onExportPdf(rows, prefs, colLabels, orientation, groupBy || undefined, pdfPageBreak || undefined, pdfRepeatHeaders || undefined, aggregateMetrics);
     } finally {
       setPdfLoading(false);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Aggregate helpers
+  // ---------------------------------------------------------------------------
+  type AggValues = { sum: number; avg: number; count: number; min: number; max: number };
+
+  const visibleLeafCols = table.getVisibleLeafColumns();
+  const hasAggregates = visibleLeafCols.some((col) => col.columnDef.meta?.getAggregateValue);
+
+  function fmtAgg(value: number, meta: { aggregateFormat?: "currency" | "number"; aggregateCurrencySymbol?: string; aggregateDecimals?: number | null }): string {
+    const fmt = meta.aggregateFormat;
+    const sym = meta.aggregateCurrencySymbol ?? "£";
+    const dp = meta.aggregateDecimals;
+    if (fmt === "currency") return `${sym}${value.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (dp === 0) return String(Math.round(value));
+    if (dp !== null && dp !== undefined) return value.toFixed(dp);
+    return parseFloat(value.toFixed(4)).toString();
+  }
+
+  function computeAggs(rows: Row<T>[]): Map<string, AggValues> {
+    const result = new Map<string, AggValues>();
+    for (const col of visibleLeafCols) {
+      if (!col.columnDef.meta?.getAggregateValue) continue;
+      const values = rows
+        .map((r) => col.columnDef.meta!.getAggregateValue!(r.original))
+        .filter((v): v is number => v !== null);
+      if (values.length === 0) continue;
+      const sum = values.reduce((a, b) => a + b, 0);
+      result.set(col.id, { sum, avg: sum / values.length, count: values.length, min: Math.min(...values), max: Math.max(...values) });
+    }
+    return result;
+  }
+
+  function renderAggRow(key: string, label: string, aggs: Map<string, AggValues>): ReactNode {
+    return (
+      <TableRow key={key} className="bg-muted/70 hover:bg-muted/70 border-t-2 border-border">
+        {visibleLeafCols.map((col, colIdx) => {
+          const a = aggs.get(col.id);
+          if (!col.columnDef.meta?.getAggregateValue || !a) {
+            return (
+              <TableCell key={col.id} className={cn("py-2 text-xs", col.columnDef.meta?.cellClassName ?? "")}>
+                {colIdx === 0 && <span className="font-semibold text-muted-foreground">{label}</span>}
+              </TableCell>
+            );
+          }
+          return (
+            <TableCell key={col.id} className={cn("py-1.5 align-top text-xs", col.columnDef.meta?.cellClassName ?? "")}>
+              <div className="space-y-0.5 text-muted-foreground font-medium tabular-nums">
+                {aggregateMetrics.includes("sum") && <div>Sum: {fmtAgg(a.sum, col.columnDef.meta)}</div>}
+                {aggregateMetrics.includes("avg") && <div>Avg: {fmtAgg(a.avg, col.columnDef.meta)}</div>}
+                {aggregateMetrics.includes("count") && <div>Count: {a.count}</div>}
+                {aggregateMetrics.includes("min") && <div>Min: {fmtAgg(a.min, col.columnDef.meta)}</div>}
+                {aggregateMetrics.includes("max") && <div>Max: {fmtAgg(a.max, col.columnDef.meta)}</div>}
+              </div>
+            </TableCell>
+          );
+        })}
+      </TableRow>
+    );
+  }
+
+  const allFilteredRows = table.getPrePaginationRowModel().rows;
+  const grandTotalAggs = hasAggregates ? computeAggs(allFilteredRows) : null;
+
+  // Per-group aggregates and group-end row IDs (computed across all pages)
+  const lastRowIdOfGroup = new Set<string>();
+  const groupAggregates = new Map<string, Map<string, AggValues>>();
+  const allGroupCounts = new Map<string, number>();
+  if (groupBy) {
+    const groupRows = new Map<string, Row<T>[]>();
+    const groupLastRow = new Map<string, string>();
+    for (const row of allFilteredRows) {
+      const gv = String(row.getValue(groupBy) ?? "—");
+      allGroupCounts.set(gv, (allGroupCounts.get(gv) ?? 0) + 1);
+      if (!groupRows.has(gv)) groupRows.set(gv, []);
+      groupRows.get(gv)!.push(row);
+      groupLastRow.set(gv, row.id);
+    }
+    for (const id of groupLastRow.values()) lastRowIdOfGroup.add(id);
+    if (hasAggregates) {
+      for (const [gv, gRows] of groupRows) groupAggregates.set(gv, computeAggs(gRows));
     }
   }
 
@@ -268,22 +378,65 @@ export function DataGrid<T extends object>({
           </TableHeader>
           <TableBody>
             {table.getRowModel().rows.length ? (
-              table.getRowModel().rows.map((row) => (
-                <TableRow
-                  key={row.id}
-                  className={onRowClick ? "cursor-pointer" : ""}
-                  onClick={() => onRowClick?.(row.original)}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell
-                      key={cell.id}
-                      className={cell.column.columnDef.meta?.cellClassName ?? ""}
+              (() => {
+                const pageRows = table.getRowModel().rows;
+                let lastGroupValue: string | null = null;
+                const colSpan = visibleLeafCols.length;
+                const result: ReactNode[] = [];
+
+                for (let i = 0; i < pageRows.length; i++) {
+                  const row = pageRows[i];
+
+                  if (groupBy) {
+                    const groupValue = String(row.getValue(groupBy) ?? "—");
+                    if (groupValue !== lastGroupValue) {
+                      lastGroupValue = groupValue;
+                      const count = allGroupCounts.get(groupValue) ?? 0;
+                      result.push(
+                        <TableRow key={`grp-${groupValue}-${row.id}`} className="bg-blue-50/60 dark:bg-blue-950/30 hover:bg-blue-50/60 dark:hover:bg-blue-950/30">
+                          <TableCell colSpan={colSpan} className="py-2 px-4 text-base font-bold">
+                            {colLabels[groupBy] ?? groupBy}: {groupValue}{" "}
+                            <span className="font-normal text-muted-foreground text-sm">({count})</span>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }
+                  }
+
+                  result.push(
+                    <TableRow
+                      key={row.id}
+                      className={onRowClick ? "cursor-pointer" : ""}
+                      onClick={() => onRowClick?.(row.original)}
                     >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell
+                          key={cell.id}
+                          className={cell.column.columnDef.meta?.cellClassName ?? ""}
+                        >
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  );
+
+                  // Insert group subtotal after the last row of each group (across all pages)
+                  if (groupBy && hasAggregates && aggregateMetrics.length > 0 && lastRowIdOfGroup.has(row.id)) {
+                    const gv = String(row.getValue(groupBy) ?? "—");
+                    const groupAggs = groupAggregates.get(gv);
+                    if (groupAggs && groupAggs.size > 0) {
+                      result.push(renderAggRow(`subtotal-${gv}`, "Subtotal", groupAggs));
+                    }
+                  }
+                }
+
+                // Grand total after the last row on this page
+                if (grandTotalAggs && grandTotalAggs.size > 0 && pageRows.length > 0 && aggregateMetrics.length > 0) {
+                  result.push(renderAggRow("grand-total", "Grand Total", grandTotalAggs));
+                }
+
+                return result;
+              })()
             ) : (
               <TableRow>
                 <TableCell colSpan={columns.length} className="h-24 text-center">
@@ -349,6 +502,13 @@ export function DataGrid<T extends object>({
         allColIds={onExportPdf ? allCols : undefined}
         groupBy={groupBy}
         onGroupByChange={onExportPdf ? updateGroupBy : undefined}
+        pdfPageBreak={onExportPdf ? pdfPageBreak : undefined}
+        onPdfPageBreakChange={onExportPdf ? updatePdfPageBreak : undefined}
+        pdfRepeatHeaders={onExportPdf ? pdfRepeatHeaders : undefined}
+        onPdfRepeatHeadersChange={onExportPdf ? updatePdfRepeatHeaders : undefined}
+        hasAggregateColumns={onExportPdf ? hasAggregates : undefined}
+        aggregateMetrics={onExportPdf ? aggregateMetrics : undefined}
+        onAggregateMetricsChange={onExportPdf ? updateAggregateMetrics : undefined}
       />
 
       {/* PDF orientation dialog */}

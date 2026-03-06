@@ -49,6 +49,9 @@ interface ReportClientProps {
   canSeeCurrency: boolean;
   initialColumnPrefs: ColPref[];
   initialGroupBy?: string;
+  initialPdfPageBreak?: boolean;
+  initialPdfRepeatHeaders?: boolean;
+  initialAggregateMetrics?: string[];
   gridId: string;
   userId: string;
   isFavourited: boolean;
@@ -68,6 +71,9 @@ export function ReportClient({
   currencySymbol,
   initialColumnPrefs,
   initialGroupBy,
+  initialPdfPageBreak,
+  initialPdfRepeatHeaders,
+  initialAggregateMetrics,
   gridId,
   userId,
   isFavourited: initialFavourited,
@@ -125,7 +131,10 @@ export function ReportClient({
     prefs: ColPref[],
     colLabels: Record<string, string>,
     orientation: "portrait" | "landscape",
-    groupBy?: string
+    groupBy?: string,
+    pdfPageBreak?: boolean,
+    pdfRepeatHeaders?: boolean,
+    aggregateMetrics?: string[]
   ) {
     try {
       const [{ pdf }, { EmployeePDF }, { formatMemberForPdf }] = await Promise.all([
@@ -139,10 +148,21 @@ export function ReportClient({
       const sortedRows = groupBy
         ? [...formattedRows].sort((a, b) => (a[groupBy] ?? "").localeCompare(b[groupBy] ?? ""))
         : formattedRows;
-      const pdfColumns = prefs.filter((c) => c.visible && c.id !== "avatar").map((c) => ({ id: c.id, label: colLabels[c.id] ?? c.id }));
+      const pdfColumns = prefs.filter((c) => c.visible && c.id !== "avatar").map((c) => {
+        const def = c.id.startsWith("cf_") ? customFieldDefs.find((d) => `cf_${d.field_key}` === c.id) : null;
+        return {
+          id: c.id,
+          label: colLabels[c.id] ?? c.id,
+          ...(def && (def.field_type === "number" || def.field_type === "currency") ? {
+            aggregateFormat: def.field_type as "currency" | "number",
+            aggregateCurrencySymbol: def.field_type === "currency" ? currencySymbol : undefined,
+            aggregateDecimals: def.field_type === "number" ? def.max_decimal_places : 2,
+          } : {}),
+        };
+      });
       const title = report.name;
       const blob = await pdf(
-        <EmployeePDF rows={sortedRows} columns={pdfColumns} orgName={orgName} title={title} orientation={orientation} groupBy={groupBy} groupByLabel={groupBy ? (colLabels[groupBy] ?? groupBy) : undefined} />
+        <EmployeePDF rows={sortedRows} columns={pdfColumns} orgName={orgName} title={title} orientation={orientation} groupBy={groupBy} groupByLabel={groupBy ? (colLabels[groupBy] ?? groupBy) : undefined} pdfPageBreak={pdfPageBreak} pdfRepeatHeaders={pdfRepeatHeaders} aggregateMetrics={aggregateMetrics} />
       ).toBlob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -220,6 +240,9 @@ export function ReportClient({
         colLabels={allColLabels}
         initialColPrefs={initialColumnPrefs}
         initialGroupBy={initialGroupBy}
+        initialPdfPageBreak={initialPdfPageBreak}
+        initialPdfRepeatHeaders={initialPdfRepeatHeaders}
+        initialAggregateMetrics={initialAggregateMetrics}
         userId={userId}
         toolbar={toolbar}
         emptyMessage={`No ${pluralize(memberLabel)} found.`}

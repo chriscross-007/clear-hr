@@ -39,31 +39,37 @@ export function formatMemberForPdf(
         })
       : "—",
     ...Object.fromEntries(
-      customFieldDefs.map((def) => {
+      customFieldDefs.flatMap((def) => {
         const val = (m.custom_fields as Record<string, unknown> | null)?.[def.field_key];
+        let display: string;
         if (def.field_type === "checkbox")
-          return [`cf_${def.field_key}`, val === true ? "Yes" : val === false ? "No" : "—"];
-        if (def.field_type === "date" && val) {
+          display = val === true ? "Yes" : val === false ? "No" : "—";
+        else if (def.field_type === "date" && val) {
           try {
-            return [`cf_${def.field_key}`, new Date(String(val)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })];
+            display = new Date(String(val)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
           } catch {
-            return [`cf_${def.field_key}`, String(val)];
+            display = String(val);
           }
-        }
-        if (val === undefined || val === null || val === "")
-          return [`cf_${def.field_key}`, "—"];
-        if (def.field_type === "currency") {
+        } else if (val === undefined || val === null || val === "") {
+          display = "—";
+        } else if (def.field_type === "currency") {
           const num = Number(val);
-          return [`cf_${def.field_key}`, isNaN(num) ? String(val) : `${currencySymbol}${num.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`];
-        }
-        if (def.field_type === "number") {
+          display = isNaN(num) ? String(val) : `${currencySymbol}${num.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        } else if (def.field_type === "number") {
           const num = Number(val);
-          if (isNaN(num)) return [`cf_${def.field_key}`, String(val)];
-          if (def.max_decimal_places === 0) return [`cf_${def.field_key}`, String(Math.round(num))];
-          if (def.max_decimal_places != null) return [`cf_${def.field_key}`, num.toFixed(def.max_decimal_places)];
-          return [`cf_${def.field_key}`, String(val)];
+          if (isNaN(num)) display = String(val);
+          else if (def.max_decimal_places === 0) display = String(Math.round(num));
+          else if (def.max_decimal_places != null) display = num.toFixed(def.max_decimal_places);
+          else display = String(val);
+        } else {
+          display = String(val);
         }
-        return [`cf_${def.field_key}`, String(val)];
+        const pairs: [string, string][] = [[`cf_${def.field_key}`, display]];
+        if (def.field_type === "currency" || def.field_type === "number") {
+          const num = Number(val);
+          pairs.push([`_raw_cf_${def.field_key}`, val !== null && val !== undefined && val !== "" && !isNaN(num) ? String(num) : ""]);
+        }
+        return pairs;
       })
     ),
   };

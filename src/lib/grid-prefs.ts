@@ -1,6 +1,12 @@
 export type ColPref = { id: string; visible: boolean };
 
-export type GridPrefs = { columns: ColPref[]; groupBy?: string };
+export type GridPrefs = {
+  columns: ColPref[];
+  groupBy?: string;
+  pdfPageBreak?: boolean;
+  pdfRepeatHeaders?: boolean;
+  aggregateMetrics?: string[];
+};
 
 /** Normalises the raw JSONB value from user_grid_preferences.prefs.
  *  Handles both the legacy ColPref[] array format and the current {columns, groupBy} object format. */
@@ -11,6 +17,11 @@ export function parseGridPrefs(raw: unknown): GridPrefs {
     return {
       columns: Array.isArray(obj.columns) ? (obj.columns as ColPref[]) : [],
       groupBy: typeof obj.groupBy === "string" && obj.groupBy ? obj.groupBy : undefined,
+      pdfPageBreak: obj.pdfPageBreak === true ? true : undefined,
+      pdfRepeatHeaders: obj.pdfRepeatHeaders === true ? true : undefined,
+      aggregateMetrics: Array.isArray(obj.aggregateMetrics)
+        ? (obj.aggregateMetrics as unknown[]).filter((m): m is string => typeof m === "string")
+        : undefined,
     };
   }
   return { columns: [] };

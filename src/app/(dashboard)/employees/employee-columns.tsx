@@ -23,6 +23,11 @@ declare module "@tanstack/react-table" {
     headerClassName?: string;
     /** Extra classes for the <TableCell> cell */
     cellClassName?: string;
+    /** Returns the raw numeric value for aggregation, or null if not applicable */
+    getAggregateValue?: (row: TData) => number | null;
+    aggregateFormat?: "currency" | "number";
+    aggregateCurrencySymbol?: string;
+    aggregateDecimals?: number | null;
   }
 }
 
@@ -567,7 +572,18 @@ export function buildEmployeeColumns(opts: {
               }
               return true;
             },
-            meta: { filterElement: (column: Column<Member, unknown>) => <NumberFilter column={column} /> },
+            meta: {
+              filterElement: (column: Column<Member, unknown>) => <NumberFilter column={column} />,
+              getAggregateValue: (row: Member) => {
+                const val = row.custom_fields?.[def.field_key];
+                if (val === null || val === undefined || val === "") return null;
+                const num = Number(val);
+                return isNaN(num) ? null : num;
+              },
+              aggregateFormat: def.field_type as "currency" | "number",
+              aggregateCurrencySymbol: def.field_type === "currency" ? currencySymbol : undefined,
+              aggregateDecimals: def.field_type === "number" ? def.max_decimal_places : 2,
+            },
           }
         : def.field_type === "date"
         ? {

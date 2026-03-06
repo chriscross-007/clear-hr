@@ -54,6 +54,16 @@ export function ColumnCustomiserTrigger({ onClick }: TriggerProps) {
 // Dialog
 // ---------------------------------------------------------------------------
 
+const AGG_METRICS = [
+  { key: "sum", label: "Sum" },
+  { key: "avg", label: "Average" },
+  { key: "count", label: "Count" },
+  { key: "min", label: "Min" },
+  { key: "max", label: "Max" },
+] as const;
+
+const ALL_AGG_KEYS = AGG_METRICS.map((m) => m.key) as string[];
+
 interface DialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -66,6 +76,14 @@ interface DialogProps {
   allColIds?: string[];
   groupBy?: string;
   onGroupByChange?: (groupBy: string) => void;
+  pdfPageBreak?: boolean;
+  onPdfPageBreakChange?: (v: boolean) => void;
+  pdfRepeatHeaders?: boolean;
+  onPdfRepeatHeadersChange?: (v: boolean) => void;
+  /** Whether any visible columns support aggregation (controls Aggregates section visibility) */
+  hasAggregateColumns?: boolean;
+  aggregateMetrics?: string[];
+  onAggregateMetricsChange?: (metrics: string[]) => void;
 }
 
 export function ColumnCustomiserDialog({
@@ -79,6 +97,13 @@ export function ColumnCustomiserDialog({
   allColIds,
   groupBy,
   onGroupByChange,
+  pdfPageBreak,
+  onPdfPageBreakChange,
+  pdfRepeatHeaders,
+  onPdfRepeatHeadersChange,
+  hasAggregateColumns,
+  aggregateMetrics,
+  onAggregateMetricsChange,
 }: DialogProps) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
@@ -216,7 +241,7 @@ export function ColumnCustomiserDialog({
           {showGroupBy && (
             <div>
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                PDF Options
+                Options
               </p>
 
               <div className="space-y-1">
@@ -240,6 +265,62 @@ export function ColumnCustomiserDialog({
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+
+              {hasAggregateColumns && onAggregateMetricsChange && (
+                <div className="mt-4 space-y-2">
+                  <p className="text-sm font-medium">Aggregates</p>
+                  <p className="text-xs text-muted-foreground">
+                    Summary rows shown below each group and at the end of the report.
+                  </p>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
+                    {AGG_METRICS.map(({ key, label }) => {
+                      const checked = aggregateMetrics ? aggregateMetrics.includes(key) : true;
+                      return (
+                        <label key={key} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              const current = aggregateMetrics ?? ALL_AGG_KEYS;
+                              const next = e.target.checked
+                                ? [...current, key]
+                                : current.filter((k) => k !== key);
+                              onAggregateMetricsChange(next);
+                            }}
+                            className="h-4 w-4 accent-primary"
+                          />
+                          {label}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-4 space-y-2">
+                <p className="text-sm font-medium">PDF Layout</p>
+                <div className="space-y-1.5">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={pdfRepeatHeaders ?? false}
+                      onChange={(e) => onPdfRepeatHeadersChange?.(e.target.checked)}
+                      className="h-4 w-4 accent-primary"
+                    />
+                    Repeat column headers on each page
+                  </label>
+                  <label className={cn("flex items-center gap-2 text-sm", !groupBy ? "opacity-50 cursor-not-allowed" : "cursor-pointer")}>
+                    <input
+                      type="checkbox"
+                      checked={pdfPageBreak ?? false}
+                      onChange={(e) => onPdfPageBreakChange?.(e.target.checked)}
+                      disabled={!groupBy}
+                      className="h-4 w-4 accent-primary"
+                    />
+                    Page break between groups
+                  </label>
+                </div>
               </div>
             </div>
           )}

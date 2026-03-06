@@ -77,7 +77,7 @@ export default async function CustomReportViewPage({
   const allDefs = (rawCustomFieldDefs ?? []) as { id: string; label: string; field_key: string; field_type: string; options: string[] | null; required: boolean; sort_order: number; max_decimal_places: number | null }[];
   const visibleDefs = canSeeCurrency ? allDefs : allDefs.filter((d) => d.field_type !== "currency");
 
-  const savedPrefs = customReport.prefs as { columns?: { id: string; visible: boolean }[]; filters?: Record<string, unknown>; groupBy?: string };
+  const savedPrefs = customReport.prefs as { columns?: { id: string; visible: boolean }[]; filters?: Record<string, unknown>; groupBy?: string; pdfPageBreak?: boolean; pdfRepeatHeaders?: boolean; aggregateMetrics?: string[] };
   const isCreator = customReport.created_by === membership.id;
   const isFavourited = !!favouriteRow;
 

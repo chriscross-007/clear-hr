@@ -11,9 +11,17 @@ export interface ActiveFilter {
   value: string;
 }
 
+export interface PdfColumn {
+  id: string;
+  label: string;
+  aggregateFormat?: "currency" | "number";
+  aggregateCurrencySymbol?: string;
+  aggregateDecimals?: number | null;
+}
+
 interface EmployeePDFProps {
   rows: Record<string, string>[];
-  columns: { id: string; label: string }[];
+  columns: PdfColumn[];
   orgName: string;
   title: string;
   orientation: "portrait" | "landscape";
@@ -22,6 +30,12 @@ interface EmployeePDFProps {
   groupBy?: string;
   /** Display label for the group-by column (e.g. "Team") */
   groupByLabel?: string;
+  /** Insert a page break before each group (except the first) */
+  pdfPageBreak?: boolean;
+  /** Repeat the column header row at the top of each page */
+  pdfRepeatHeaders?: boolean;
+  /** Which aggregate metrics to show (sum, avg, count, min, max). Defaults to all. */
+  aggregateMetrics?: string[];
 }
 
 const COLUMN_WEIGHTS: Record<string, number> = {
@@ -105,7 +119,7 @@ const styles = StyleSheet.create({
   },
   groupHeaderText: {
     fontFamily: "Helvetica-Bold",
-    fontSize: 8,
+    fontSize: 11,
     color: "#334",
   },
   cellView: {
@@ -119,6 +133,33 @@ const styles = StyleSheet.create({
   },
   cell: {
     fontSize: 8,
+  },
+  aggRow: {
+    flexDirection: "row",
+    backgroundColor: "#f0f0f0",
+    borderTopWidth: 1.5,
+    borderTopColor: "#bbb",
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#ccc",
+    minHeight: 18,
+  },
+  aggGrandRow: {
+    flexDirection: "row",
+    backgroundColor: "#e8e8e8",
+    borderTopWidth: 2,
+    borderTopColor: "#888",
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#bbb",
+    minHeight: 18,
+  },
+  aggLabel: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 7,
+    color: "#555",
+  },
+  aggValue: {
+    fontSize: 7,
+    color: "#444",
   },
   footer: {
     position: "absolute",
@@ -146,7 +187,11 @@ export function EmployeePDF({
   filters,
   groupBy,
   groupByLabel,
+  pdfPageBreak,
+  pdfRepeatHeaders,
+  aggregateMetrics,
 }: EmployeePDFProps) {
+  const activeMetrics = aggregateMetrics ?? ["sum", "avg", "count", "min", "max"];
   function colFlex(id: string) {
     return COLUMN_WEIGHTS[id] ?? 10;
   }
@@ -160,10 +205,66 @@ export function EmployeePDF({
     hour12: false,
   });
 
-  // Build a flat list of items to render: group headers interleaved with data rows
+  // ---------------------------------------------------------------------------
+  // Aggregate computation
+  // ---------------------------------------------------------------------------
+  type AggCell = { sum: number; avg: number; count: number; min: number; max: number };
+  const aggCols = columns.filter((c) => c.aggregateFormat);
+  const hasAggregates = aggCols.length > 0;
+
+  function fmtAgg(value: number, col: PdfColumn): string {
+    const fmt = col.aggregateFormat;
+    const sym = col.aggregateCurrencySymbol ?? "£";
+    const dp = col.aggregateDecimals;
+    if (fmt === "currency") return `${sym}${value.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (dp === 0) return String(Math.round(value));
+    if (dp !== null && dp !== undefined) return value.toFixed(dp);
+    return parseFloat(value.toFixed(4)).toString();
+  }
+
+  function computePdfAggs(subset: Record<string, string>[]): Map<string, AggCell> {
+    const result = new Map<string, AggCell>();
+    for (const col of aggCols) {
+      const rawKey = `_raw_${col.id}`;
+      const values = subset
+        .map((r) => { const raw = r[rawKey]; if (!raw) return null; const n = Number(raw); return isNaN(n) ? null : n; })
+        .filter((v): v is number => v !== null);
+      if (values.length === 0) continue;
+      const sum = values.reduce((a, b) => a + b, 0);
+      result.set(col.id, { sum, avg: sum / values.length, count: values.length, min: Math.min(...values), max: Math.max(...values) });
+    }
+    return result;
+  }
+
+  // Pre-compute group aggregates and grand total
+  const groupAggs = new Map<string, Map<string, AggCell>>();
+  const totalAggs = hasAggregates ? computePdfAggs(rows) : new Map<string, AggCell>();
+  if (hasAggregates && groupBy) {
+    const rowsByGroup = new Map<string, Record<string, string>[]>();
+    for (const row of rows) {
+      const gv = row[groupBy] ?? "—";
+      if (!rowsByGroup.has(gv)) rowsByGroup.set(gv, []);
+      rowsByGroup.get(gv)!.push(row);
+    }
+    for (const [gv, gRows] of rowsByGroup) groupAggs.set(gv, computePdfAggs(gRows));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Build flat render list: group headers, rows, subtotals, grand total
+  // ---------------------------------------------------------------------------
   type RenderItem =
-    | { kind: "group"; value: string }
-    | { kind: "row"; row: Record<string, string>; altIndex: number };
+    | { kind: "group"; value: string; count: number; isFirst: boolean }
+    | { kind: "row"; row: Record<string, string>; altIndex: number }
+    | { kind: "aggregate"; label: string; cells: Map<string, AggCell>; isGrand: boolean };
+
+  // Pre-compute per-group row counts
+  const groupCounts = new Map<string, number>();
+  if (groupBy) {
+    for (const row of rows) {
+      const v = row[groupBy] ?? "—";
+      groupCounts.set(v, (groupCounts.get(v) ?? 0) + 1);
+    }
+  }
 
   const items: RenderItem[] = [];
   let lastGroupValue: string | null = null;
@@ -173,12 +274,32 @@ export function EmployeePDF({
     if (groupBy) {
       const groupValue = row[groupBy] ?? "—";
       if (groupValue !== lastGroupValue) {
-        items.push({ kind: "group", value: groupValue });
+        // Push subtotal for previous group
+        if (lastGroupValue !== null && hasAggregates && activeMetrics.length > 0) {
+          const prevAggs = groupAggs.get(lastGroupValue);
+          if (prevAggs && prevAggs.size > 0) {
+            items.push({ kind: "aggregate", label: "Subtotal", cells: prevAggs, isGrand: false });
+          }
+        }
+        items.push({ kind: "group", value: groupValue, count: groupCounts.get(groupValue) ?? 0, isFirst: lastGroupValue === null });
         lastGroupValue = groupValue;
         altIndex = 0;
       }
     }
     items.push({ kind: "row", row, altIndex: altIndex++ });
+  }
+
+  // Subtotal for last group
+  if (groupBy && lastGroupValue !== null && hasAggregates && activeMetrics.length > 0) {
+    const lastAggs = groupAggs.get(lastGroupValue);
+    if (lastAggs && lastAggs.size > 0) {
+      items.push({ kind: "aggregate", label: "Subtotal", cells: lastAggs, isGrand: false });
+    }
+  }
+
+  // Grand total
+  if (hasAggregates && totalAggs.size > 0 && activeMetrics.length > 0) {
+    items.push({ kind: "aggregate", label: "Grand Total", cells: totalAggs, isGrand: true });
   }
 
   return (
@@ -199,7 +320,7 @@ export function EmployeePDF({
         )}
 
         <View style={styles.table}>
-          <View style={styles.tableHeader}>
+          <View style={styles.tableHeader} fixed={pdfRepeatHeaders}>
             {columns.map((col) => (
               <View key={col.id} style={[styles.cellView, { flex: colFlex(col.id) }]}>
                 <Text style={styles.headerCell}>{col.label}</Text>
@@ -211,8 +332,33 @@ export function EmployeePDF({
             if (item.kind === "group") {
               const prefix = groupByLabel ? `${groupByLabel}: ` : "";
               return (
-                <View key={`group-${i}`} style={styles.groupHeader} wrap={false}>
-                  <Text style={styles.groupHeaderText}>{prefix}{item.value}</Text>
+                <View key={`group-${i}`} style={styles.groupHeader} wrap={false} break={pdfPageBreak && !item.isFirst}>
+                  <Text style={styles.groupHeaderText}>{prefix}{item.value} ({item.count})</Text>
+                </View>
+              );
+            }
+            if (item.kind === "aggregate") {
+              return (
+                <View key={`agg-${i}`} style={item.isGrand ? styles.aggGrandRow : styles.aggRow} wrap={false}>
+                  {columns.map((col, colIdx) => {
+                    const a = item.cells.get(col.id);
+                    if (!col.aggregateFormat || !a) {
+                      return (
+                        <View key={col.id} style={[styles.cellView, { flex: colFlex(col.id) }]}>
+                          {colIdx === 0 && <Text style={styles.aggLabel}>{item.label}</Text>}
+                        </View>
+                      );
+                    }
+                    return (
+                      <View key={col.id} style={[styles.cellView, { flex: colFlex(col.id) }]}>
+                        {activeMetrics.includes("sum") && <Text style={styles.aggLabel}>Sum: {fmtAgg(a.sum, col)}</Text>}
+                        {activeMetrics.includes("avg") && <Text style={styles.aggValue}>Avg: {fmtAgg(a.avg, col)}</Text>}
+                        {activeMetrics.includes("count") && <Text style={styles.aggValue}>Count: {a.count}</Text>}
+                        {activeMetrics.includes("min") && <Text style={styles.aggValue}>Min: {fmtAgg(a.min, col)}</Text>}
+                        {activeMetrics.includes("max") && <Text style={styles.aggValue}>Max: {fmtAgg(a.max, col)}</Text>}
+                      </View>
+                    );
+                  })}
                 </View>
               );
             }
