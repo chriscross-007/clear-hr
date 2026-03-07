@@ -1,3 +1,4 @@
+import React from "react";
 import { AlertTriangle, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -143,14 +144,14 @@ export function TimesheetGrid({ weekStart, workPeriods, onClockingClick }: Times
             <th className="sticky left-0 z-10 bg-muted/30" />
             <th />
             {Array.from({ length: numPairs }, (_, i) => (
-              <>
-                <th key={`in-${i}`} className="px-2 py-1 text-center font-normal text-xs border-l border-border/50">
+              <React.Fragment key={i}>
+                <th className="px-2 py-1 text-center font-normal text-xs border-l border-border/50">
                   IN
                 </th>
-                <th key={`out-${i}`} className="px-2 py-1 text-center font-normal text-xs">
+                <th className="px-2 py-1 text-center font-normal text-xs">
                   OUT
                 </th>
-              </>
+              </React.Fragment>
             ))}
             <th className="border-l border-border/50" />
             <th />
@@ -227,22 +228,22 @@ export function TimesheetGrid({ weekStart, workPeriods, onClockingClick }: Times
                   {Array.from({ length: numPairs }, (_, pairIdx) => {
                     const pair = pairs[pairIdx] ?? { in: null, out: null };
                     return (
-                      <>
-                        <td key={`in-${pairIdx}`} className="border-l border-border/50 p-0">
+                      <React.Fragment key={pairIdx}>
+                        <td className="border-l border-border/50 p-0">
                           <ClockingCell
                             clocking={pair.in}
                             label="IN"
                             onClick={onClockingClick}
                           />
                         </td>
-                        <td key={`out-${pairIdx}`} className="p-0">
+                        <td className="p-0">
                           <ClockingCell
                             clocking={pair.out}
                             label="OUT"
                             onClick={onClockingClick}
                           />
                         </td>
-                      </>
+                      </React.Fragment>
                     );
                   })}
 
