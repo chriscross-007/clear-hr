@@ -2,8 +2,16 @@
 
 import type { ColumnDef, Column, RowData } from "@tanstack/react-table";
 import type { ReactNode } from "react";
-import { ArrowUp, ArrowDown, ArrowUpDown, Trash2 } from "lucide-react";
+import { ArrowUp, ArrowDown, ArrowUpDown, Trash2, MoreHorizontal, Clock, CalendarDays, LayoutDashboard, Settings } from "lucide-react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { capitalize } from "@/lib/label-utils";
 import type { Profile } from "./profile-actions";
 import type { FieldDef } from "./custom-field-actions";
@@ -613,30 +621,65 @@ export function buildEmployeeColumns(opts: {
           }
         : {}),
     })),
-    ...(canAdd
-      ? [
-          {
-            id: "actions",
-            enableSorting: false,
-            enableColumnFilter: false,
-            header: () => null,
-            cell: ({ row }: { row: { original: Member } }) =>
-              row.original.role !== "owner" ? (
-                <div className="flex justify-end">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete?.(row.original);
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              ) : null,
-          } satisfies ColumnDef<Member>,
-        ]
-      : []),
+    {
+      id: "actions",
+      enableSorting: false,
+      enableColumnFilter: false,
+      header: () => null,
+      cell: ({ row }: { row: { original: Member } }) => {
+        const memberId = row.original.member_id;
+        const isOwner = row.original.role === "owner";
+        return (
+          <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon">
+                  <MoreHorizontal className="h-4 w-4" />
+                  <span className="sr-only">Open menu</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <Link href={`/timesheets/${memberId}`}>
+                    <Clock className="mr-2 h-4 w-4" />
+                    Timesheet
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href={`/employees/${memberId}/dashboard`}>
+                    <LayoutDashboard className="mr-2 h-4 w-4" />
+                    Dashboard
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href={`/employees/${memberId}/calendar`}>
+                    <CalendarDays className="mr-2 h-4 w-4" />
+                    Calendar
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href={`/employees/${memberId}/settings`}>
+                    <Settings className="mr-2 h-4 w-4" />
+                    Settings
+                  </Link>
+                </DropdownMenuItem>
+                {canAdd && !isOwner && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={() => onDelete?.(row.original)}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        );
+      },
+    } satisfies ColumnDef<Member>,
   ];
 }
