@@ -65,18 +65,27 @@ export default async function DashboardLayout({
     .map((n) => n!.charAt(0).toUpperCase())
     .join("") || user.email?.charAt(0).toUpperCase() || "U";
 
-  // Fetch reports sidebar data for owners/admins on plans with reports
+  // Fetch sidebar data for owners/admins
   const isOwnerOrAdmin = membership.role === "owner" || membership.role === "admin";
   const showReports = hasPlanFeature(org?.plan ?? "lite", "reports");
   let sidebarFavouriteIds: string[] = [];
   let sidebarCustomReports: { id: string; name: string }[] = [];
-  if (showReports && isOwnerOrAdmin) {
-    const [{ data: favData }, { data: customData }] = await Promise.all([
-      supabase.from("report_favourites").select("report_id").eq("user_id", user.id),
-      supabase.from("custom_reports").select("id, name").eq("organisation_id", membership.organisation_id).order("name"),
-    ]);
-    sidebarFavouriteIds = (favData ?? []).map((f: { report_id: string }) => f.report_id);
-    sidebarCustomReports = (customData ?? []) as { id: string; name: string }[];
+  let sidebarShiftDefs: { id: string; name: string }[] = [];
+  if (isOwnerOrAdmin) {
+    const shiftDefsPromise = supabase.from("shift_definitions").select("id, name").eq("organisation_id", membership.organisation_id).eq("active", true).order("sort_order").order("name");
+    if (showReports) {
+      const [{ data: shiftsData }, { data: favData }, { data: customData }] = await Promise.all([
+        shiftDefsPromise,
+        supabase.from("report_favourites").select("report_id").eq("user_id", user.id),
+        supabase.from("custom_reports").select("id, name").eq("organisation_id", membership.organisation_id).order("name"),
+      ]);
+      sidebarShiftDefs    = (shiftsData ?? []) as { id: string; name: string }[];
+      sidebarFavouriteIds = (favData ?? []).map((f: { report_id: string }) => f.report_id);
+      sidebarCustomReports = (customData ?? []) as { id: string; name: string }[];
+    } else {
+      const { data: shiftsData } = await shiftDefsPromise;
+      sidebarShiftDefs = (shiftsData ?? []) as { id: string; name: string }[];
+    }
   }
 
   // Trial banner logic
@@ -159,6 +168,7 @@ export default async function DashboardLayout({
             currencySymbol={org?.currency_symbol ?? "£"}
             initialFavouriteIds={sidebarFavouriteIds}
             initialCustomReports={sidebarCustomReports}
+            initialShiftDefs={sidebarShiftDefs}
           />
           <main className="flex-1">{children}</main>
         </div>

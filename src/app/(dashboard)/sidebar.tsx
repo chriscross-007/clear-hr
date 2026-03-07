@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Users, Building2, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar } from "lucide-react";
+import { Users, Building2, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { hasPlanFeature } from "@/lib/plan-config";
@@ -21,6 +21,7 @@ interface SidebarProps {
   currencySymbol: string;
   initialFavouriteIds?: string[];
   initialCustomReports?: { id: string; name: string }[];
+  initialShiftDefs?: { id: string; name: string }[];
 }
 
 export function Sidebar({
@@ -34,9 +35,11 @@ export function Sidebar({
   currencySymbol,
   initialFavouriteIds = [],
   initialCustomReports = [],
+  initialShiftDefs = [],
 }: SidebarProps) {
   const pathname = usePathname();
   const [showOrgEdit, setShowOrgEdit] = useState(false);
+  const [shiftsOpen, setShiftsOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
   const [standardOpen, setStandardOpen] = useState(false);
   const [reportGroupsOpen, setReportGroupsOpen] = useState<Record<string, boolean>>({});
@@ -44,6 +47,7 @@ export function Sidebar({
   const [customOpen, setCustomOpen] = useState(false);
 
   const showEmployees = role !== "admin" || accessMembers === "read" || accessMembers === "write";
+  const showShifts = role === "owner" || role === "admin";
   const showOrg = role === "owner" || canDefineCustomFields;
   const showBilling = role === "owner";
   const showAudit = role === "owner" || role === "admin";
@@ -93,6 +97,33 @@ export function Sidebar({
               <Users className="h-4 w-4 shrink-0" />
               {capitalize(pluralize(memberLabel))}
             </Link>
+          )}
+          {showShifts && (
+            <>
+              <button
+                onClick={() => setShiftsOpen((v) => !v)}
+                className="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent text-left w-full"
+              >
+                <Clock className="h-4 w-4 shrink-0" />
+                Shifts
+                <ChevronDown className={cn("ml-auto h-3.5 w-3.5 transition-transform", shiftsOpen && "rotate-180")} />
+              </button>
+              {shiftsOpen && (
+                <div className="flex flex-col gap-0.5 pl-4">
+                  <Link href="/shifts" className={subItemClass("/shifts")}>
+                    All Shifts
+                  </Link>
+                  {initialShiftDefs.map((s) => (
+                    <Link key={s.id} href={`/shifts/${s.id}`} className={subItemClass(`/shifts/${s.id}`)}>
+                      {s.name}
+                    </Link>
+                  ))}
+                  <Link href="/shifts/new" className={subItemClass("/shifts/new")}>
+                    <span className="text-muted-foreground">+ New Shift</span>
+                  </Link>
+                </div>
+              )}
+            </>
           )}
           {showOrg && (
             <button
