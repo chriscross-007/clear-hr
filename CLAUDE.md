@@ -180,6 +180,31 @@ Do NOT modify auth code to "fix" cache issues.
 - **Row editing:** Never use a pencil/edit icon button on list rows. Make the entire row clickable to open edit mode (`cursor-pointer hover:bg-muted/50 onClick={() => startEdit(...)}`). Only action buttons that are destructive (delete) or independent (drag handle) should remain as separate icons with `e.stopPropagation()`.
 - **Date filters:** Date and datetime columns use a preset dropdown ordered Last/This/Next per period (Last Week, This Week, Next Week, Last Month, This Month, Next Month, Last Year, This Year, Next Year, Custom range...) rather than raw date pickers. "Custom range..." reveals From/To date inputs. Filter value shape: `{ preset?: string; from?: string; to?: string }`. The `getDateRange(preset)` helper in `employees-client.tsx` resolves presets to `{ from, to }` ISO date strings. Applies to `last_log_in` and all `date`-type custom field columns.
 
+## Data Security — Non-Negotiable Rules
+
+ClearHR handles sensitive personal and employment data. Security is not optional. **When in doubt about any security decision, stop and ask the user before proceeding.**
+
+### The two-layer security model
+1. **RLS (Row Level Security)** — the real security boundary. Enforced at the database level. Cannot be bypassed by application code bugs. Every table that holds org data must have RLS policies that enforce org-scoping.
+2. **`export const dynamic = 'force-dynamic'`** — must be present on every `page.tsx` that queries the Supabase database. Prevents Next.js from serving a cached render from a previous session (e.g. after an account switch), which could expose one org's data to another org's user.
+
+### Rules
+- **Every page that reads data from the Supabase DB must have `export const dynamic = 'force-dynamic'` at the top.** No exceptions, regardless of where in the folder structure the page lives.
+- **Never expose data across organisation boundaries.** All queries must be scoped to the caller's `organisation_id`. Use the `get_org_members()` RPC (which enforces this) rather than direct table queries where possible.
+- **Never trust client-supplied org IDs.** Always derive `organisation_id` from the authenticated session (the caller's `members` row), not from form data or URL params.
+- **Service role client bypasses RLS** — only use it in server actions, always verify caller permissions first before using it to modify data.
+- **Normalise emails to lowercase** before storing in the database (`email.trim().toLowerCase()`). Supabase auth normalises to lowercase; mismatches break trigger matching and cause data integrity issues.
+- **Avoid OWASP Top 10 vulnerabilities** — SQL injection, XSS, insecure direct object references, broken access control, etc. Prefer parameterised queries (supabase-js handles this) and validate inputs server-side.
+- **Do not add new public (unauthenticated) API routes or server actions** without explicit discussion. All data-reading actions must verify the caller's session.
+
+### When to ask
+If a new feature requires any of the following, stop and ask before implementing:
+- A new RPC or DB function with `SECURITY DEFINER`
+- Exposing data to a role that doesn't currently have access to it
+- Any cross-org data access (e.g. SuperUser features)
+- Removing or relaxing an existing RLS policy
+- A new unauthenticated endpoint
+
 ## Commands
 - `npm run dev` — Start dev server
 - `npm run build` — Production build

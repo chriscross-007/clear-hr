@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Star, Save, Plus } from "lucide-react";
+import { saveGridPrefs } from "@/lib/grid-prefs-actions";
+import type { GridPrefs } from "@/lib/grid-prefs";
 import { DataGrid } from "@/components/data-grid/data-grid";
 import {
   buildEmployeeColumns,
@@ -59,6 +61,7 @@ interface ReportClientProps {
   callerMemberId: string;
   existingCustomReports: { id: string; name: string; based_on: string; shared: boolean; created_by: string }[];
   orgName: string;
+  savedFilters?: Record<string, unknown>;
 }
 
 export function ReportClient({
@@ -79,6 +82,7 @@ export function ReportClient({
   isFavourited: initialFavourited,
   canCreateCustom,
   orgName,
+  savedFilters,
 }: ReportClientProps) {
   const { memberLabel } = useMemberLabel();
   const router = useRouter();
@@ -89,6 +93,8 @@ export function ReportClient({
   const [saveAsShared, setSaveAsShared] = useState<"private" | "shared">("private");
   const [saveAsLoading, setSaveAsLoading] = useState(false);
   const [saveAsError, setSaveAsError] = useState<string | null>(null);
+  const [saveLoading, setSaveLoading] = useState(false);
+  const currentPrefsRef = useRef<GridPrefs | null>(null);
 
   const customFieldColIds = customFieldDefs.map((d) => `cf_${d.field_key}`);
   // For "custom-fields" report, default to showing all custom field columns
@@ -102,8 +108,9 @@ export function ReportClient({
     ...Object.fromEntries(customFieldDefs.map((d) => [`cf_${d.field_key}`, d.label])),
   };
 
-  const initialFilters = report.defaultFilters
-    ? Object.entries(report.defaultFilters).map(([id, value]) => ({ id, value }))
+  const filtersSource = savedFilters ?? report.defaultFilters;
+  const initialFilters = filtersSource
+    ? Object.entries(filtersSource).map(([id, value]) => ({ id, value }))
     : [];
 
   const columns = buildEmployeeColumns({
@@ -175,6 +182,14 @@ export function ReportClient({
     }
   }
 
+  async function handleSave() {
+    const snapshot = currentPrefsRef.current;
+    if (!snapshot) return;
+    setSaveLoading(true);
+    await saveGridPrefs(gridId, snapshot);
+    setSaveLoading(false);
+  }
+
   async function handleSaveAs() {
     if (!saveAsName.trim()) return;
     setSaveAsLoading(true);
@@ -183,6 +198,7 @@ export function ReportClient({
       name: saveAsName.trim(),
       based_on: report.id,
       shared: saveAsShared === "shared",
+      prefs: currentPrefsRef.current ?? undefined,
     });
     setSaveAsLoading(false);
     if (!result.success) {
@@ -206,6 +222,15 @@ export function ReportClient({
         <Star className={`h-4 w-4 mr-1.5 ${favourited ? "fill-current" : ""}`} />
         {favourited ? "Favourited" : "Favourite"}
       </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={handleSave}
+        disabled={saveLoading}
+      >
+        <Save className="h-4 w-4 mr-1.5" />
+        {saveLoading ? "Saving..." : "Save"}
+      </Button>
       {canCreateCustom && (
         <Button
           variant="outline"
@@ -215,7 +240,7 @@ export function ReportClient({
             setShowSaveAsDialog(true);
           }}
         >
-          <Save className="h-4 w-4 mr-1.5" />
+          <Plus className="h-4 w-4 mr-1.5" />
           Save As...
         </Button>
       )}
@@ -248,6 +273,7 @@ export function ReportClient({
         emptyMessage={`No ${pluralize(memberLabel)} found.`}
         initialFilters={initialFilters}
         onExportPdf={handleExportPdf}
+        onPrefsChange={(snap) => { currentPrefsRef.current = snap; }}
       />
 
       {/* Save As dialog */}

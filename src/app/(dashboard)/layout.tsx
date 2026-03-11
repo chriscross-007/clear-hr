@@ -21,7 +21,7 @@ export default async function DashboardLayout({
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role, permissions, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees, require_mfa, currency_symbol), admin_profiles(name), employee_profiles(name)")
+    .select("organisation_id, role, permissions, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes), admin_profiles(name), employee_profiles(name)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -37,6 +37,9 @@ export default async function DashboardLayout({
     max_employees: number;
     require_mfa: boolean;
     currency_symbol: string;
+    ts_max_shift_hours: number;
+    ts_max_break_minutes: number;
+    ts_shift_start_variance_minutes: number;
   };
   const memberLabel = org?.member_label || "member";
 
@@ -166,6 +169,9 @@ export default async function DashboardLayout({
             requireMfa={org?.require_mfa ?? false}
             canDefineCustomFields={canDefineCustomFields}
             currencySymbol={org?.currency_symbol ?? "£"}
+            tsMaxShiftHours={org?.ts_max_shift_hours ?? 14}
+            tsMaxBreakMinutes={org?.ts_max_break_minutes ?? 60}
+            tsShiftStartVarianceMinutes={org?.ts_shift_start_variance_minutes ?? 30}
             initialFavouriteIds={sidebarFavouriteIds}
             initialCustomReports={sidebarCustomReports}
             initialShiftDefs={sidebarShiftDefs}

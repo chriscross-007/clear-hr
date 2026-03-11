@@ -8,6 +8,9 @@ export async function updateOrganisation(data: {
   memberLabel: string;
   requireMfa?: boolean;
   currencySymbol?: string;
+  tsMaxShiftHours?: number;
+  tsMaxBreakMinutes?: number;
+  tsShiftStartVarianceMinutes?: number;
 }) {
   const supabase = await createClient();
   const {
@@ -31,11 +34,11 @@ export async function updateOrganisation(data: {
   // Fetch before-state for audit diff
   const { data: beforeOrg } = await supabase
     .from("organisations")
-    .select("name, member_label, require_mfa, currency_symbol")
+    .select("name, member_label, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes")
     .eq("id", membership.organisation_id)
     .single();
 
-  const updatePayload: Record<string, string | boolean> = {
+  const updatePayload: Record<string, string | boolean | number> = {
     name: data.name,
     member_label: data.memberLabel || "member",
   };
@@ -45,6 +48,15 @@ export async function updateOrganisation(data: {
   }
   if (typeof data.currencySymbol === "string" && data.currencySymbol.trim()) {
     updatePayload.currency_symbol = data.currencySymbol.trim();
+  }
+  if (typeof data.tsMaxShiftHours === "number" && data.tsMaxShiftHours > 0) {
+    updatePayload.ts_max_shift_hours = data.tsMaxShiftHours;
+  }
+  if (typeof data.tsMaxBreakMinutes === "number" && data.tsMaxBreakMinutes > 0) {
+    updatePayload.ts_max_break_minutes = data.tsMaxBreakMinutes;
+  }
+  if (typeof data.tsShiftStartVarianceMinutes === "number" && data.tsShiftStartVarianceMinutes >= 0) {
+    updatePayload.ts_shift_start_variance_minutes = data.tsShiftStartVarianceMinutes;
   }
 
   const { error } = await supabase
@@ -61,12 +73,18 @@ export async function updateOrganisation(data: {
         member_label: beforeOrg.member_label,
         require_mfa: beforeOrg.require_mfa,
         currency_symbol: beforeOrg.currency_symbol,
+        ts_max_shift_hours: beforeOrg.ts_max_shift_hours,
+        ts_max_break_minutes: beforeOrg.ts_max_break_minutes,
+        ts_shift_start_variance_minutes: beforeOrg.ts_shift_start_variance_minutes,
       },
       {
         name: data.name,
         member_label: data.memberLabel || "member",
         require_mfa: data.requireMfa ?? beforeOrg.require_mfa,
         currency_symbol: (typeof data.currencySymbol === "string" && data.currencySymbol.trim()) ? data.currencySymbol.trim() : beforeOrg.currency_symbol,
+        ts_max_shift_hours: data.tsMaxShiftHours ?? beforeOrg.ts_max_shift_hours,
+        ts_max_break_minutes: data.tsMaxBreakMinutes ?? beforeOrg.ts_max_break_minutes,
+        ts_shift_start_variance_minutes: data.tsShiftStartVarianceMinutes ?? beforeOrg.ts_shift_start_variance_minutes,
       }
     );
 

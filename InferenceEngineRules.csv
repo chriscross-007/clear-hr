@@ -1,0 +1,33 @@
+#,Raw value,Previous clocking Inferred Value,Inside an Autoallocate Start band,Next clocking within MaxBreakLength,Previous bStart within MaxShightLength ,Previous clocking within MaxBreakLength ,Inferred value
+,,,,,,,
+IN-1,IN,Not bStart,y,,,,bStart
+IN-2,IN,,,,n,,bStart
+IN-3,IN,BreakOut,,,y,,BreakIn
+IN-4,IN,Not BreakOut,,,y,,IN Ambiguous
+OUT-1,OUT,,,,n,,OUT Ambiguous
+OUT-2,OUT,bStart or BreakIn,,y,,,BreakOut
+OUT-3,OUT,bStart or BreakIn,,n,,,bEnd
+OUT-4,OUT,BreakOut,,,n,,OUT Ambiguous
+OUT-5,OUT,BreakOut,,n,y,,bEnd
+OUT-6,OUT,BreakOut,,y,y,,BreakOUT
+OUT-7,OUT,INambiguous,,,,,INambiguous
+OUT-8,OUT,OUTambiguous,,,,,OUTambiguous
+BreakIN-1,BreakIN,,,,y,,BreakIN
+BreakIN-2,BreakIN,,,,n,,bStart
+BreakOUT-1,BreakOUT,,,,y,,BreakOUT
+BreakOUT-2,BreakOUT,,,,n,,OUT Ambiguous
+null-1,null,,,,n,,bStart
+null-2,null,BreakOut ,,,,n,bStart
+null-3,null,Not bStart,y,,,,bStart
+null-4,null,BreakOut,,,y,y,BreakIn
+null-5,null,bStart or BreakIN ,,y,y,,BreakOut
+null-6,null,bStart,,n,y,,bEnd
+null-7,null,BreakIN,n,n,y,,bEnd
+null-8,null,BreakIN,n,y,y,,BreakOUT
+null-9,null,INambiguous,n,,y,,OUTAmbiguous
+null-10,null,OUTambiguous,n,,y,,INAmbiguous
+,,,,,,,
+,,,,,,,
+,,,,,,,
+,,,,,,,
+,,,,,,,

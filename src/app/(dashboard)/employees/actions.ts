@@ -120,7 +120,7 @@ export async function addEmployee(formData: {
       .from("members")
       .insert({
         organisation_id: membership.organisation_id,
-        email: formData.email,
+        email: formData.email.trim().toLowerCase(),
         first_name: formData.firstName,
         last_name: formData.lastName,
         role: "employee",

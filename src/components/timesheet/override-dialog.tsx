@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Lock } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -21,20 +20,23 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { overrideClockingType } from "@/app/(dashboard)/timesheets/actions";
-import { fmtTime } from "./timesheet-types";
+import { fmtTime, effectiveType } from "./timesheet-types";
 import type { ClockingData } from "./timesheet-types";
 
-const INFERRED_TYPES = [
-  { value: "IN",        label: "IN — Work period entry or break return" },
-  { value: "OUT",       label: "OUT — Work period exit or break start" },
-  { value: "CC",        label: "CC — Cost centre change" },
-  { value: "bStart",    label: "bStart — Cost centre clocking that opens the period" },
-  { value: "AMBIGUOUS", label: "AMBIGUOUS — Cannot determine (flag for review)" },
+const OVERRIDE_TYPES = [
+  { value: "",            label: "— Use inferred (clear override) —" },
+  { value: "bStart",      label: "bStart — Beginning of shift" },
+  { value: "bEnd",        label: "bEnd — End of shift" },
+  { value: "BreakOut",    label: "BreakOut — Start of break" },
+  { value: "BreakIn",     label: "BreakIn — Return from break" },
+  { value: "INambiguous", label: "INambiguous — Ambiguous IN (flag for review)" },
+  { value: "OUTambiguous",label: "OUTambiguous — Ambiguous OUT (flag for review)" },
+  { value: "CC",          label: "CC — Cost centre allocation" },
 ];
 
 interface ClockingOverrideDialogProps {
   clocking: ClockingData;
-  onClose: () => void;
+  onClose:  () => void;
   onSuccess: () => void;
 }
 
@@ -43,19 +45,24 @@ export function ClockingOverrideDialog({
   onClose,
   onSuccess,
 }: ClockingOverrideDialogProps) {
-  const [newType, setNewType] = useState(clocking.inferredType ?? "IN");
-  const [reason, setReason] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const currentOverride = clocking.overrideType ?? "";
+  const [newType, setNewType]   = useState(currentOverride);
+  const [reason, setReason]     = useState("");
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!reason.trim()) { setError("A reason is required."); return; }
-    if (newType === clocking.inferredType) { setError("Type is unchanged — select a different type or close."); return; }
+    if (newType === currentOverride) {
+      setError("No change — select a different type or close.");
+      return;
+    }
 
     setLoading(true);
     setError(null);
-    const result = await overrideClockingType(clocking.id, newType, reason.trim());
+    // newType="" means clear the override (pass null to action)
+    const result = await overrideClockingType(clocking.id, newType || null, reason.trim());
     setLoading(false);
 
     if (result.success) {
@@ -70,19 +77,15 @@ export function ClockingOverrideDialog({
     weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC",
   });
   const timeLabel = fmtTime(clocking.clockedAt);
+  const eff = effectiveType(clocking);
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Override Clocking Type</DialogTitle>
+          <DialogTitle>Edit Clocking Type</DialogTitle>
           <DialogDescription>
             {dateLabel} at {timeLabel}
-            {clocking.typeLocked && (
-              <span className="ml-2 inline-flex items-center gap-1 text-xs text-amber-600">
-                <Lock className="h-3 w-3" /> Previously locked by manager
-              </span>
-            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -94,26 +97,39 @@ export function ClockingOverrideDialog({
               <span className="font-medium">{clocking.rawType ?? "bare swipe"}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Current inferred type</span>
+              <span className="text-muted-foreground">Engine inferred type</span>
               <span className="font-medium">{clocking.inferredType ?? "—"}</span>
+            </div>
+            {clocking.overrideType && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Current override</span>
+                <span className="font-medium text-blue-600 dark:text-blue-400">{clocking.overrideType}</span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Effective type</span>
+              <span className="font-semibold">{eff ?? "—"}</span>
             </div>
           </div>
 
-          {/* New type selector */}
+          {/* Type selector */}
           <div className="space-y-1.5">
-            <Label htmlFor="new-type">New type</Label>
+            <Label htmlFor="new-type">Set override type</Label>
             <Select value={newType} onValueChange={setNewType}>
               <SelectTrigger id="new-type">
-                <SelectValue />
+                <SelectValue placeholder="— Use inferred (clear override) —" />
               </SelectTrigger>
               <SelectContent>
-                {INFERRED_TYPES.map((t) => (
+                {OVERRIDE_TYPES.map((t) => (
                   <SelectItem key={t.value} value={t.value}>
                     {t.label}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground">
+              Selecting "Use inferred" clears any existing override and lets the engine decide.
+            </p>
           </div>
 
           {/* Reason */}
@@ -130,20 +146,18 @@ export function ClockingOverrideDialog({
               maxLength={500}
             />
             <p className="text-xs text-muted-foreground">
-              This is recorded in the audit log and cannot be removed.
+              Recorded in the audit log and cannot be removed.
             </p>
           </div>
 
-          {error && (
-            <p className="text-sm text-destructive">{error}</p>
-          )}
+          {error && <p className="text-sm text-destructive">{error}</p>}
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
               Cancel
             </Button>
             <Button type="submit" disabled={loading}>
-              {loading ? "Saving…" : "Save Override"}
+              {loading ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>
         </form>

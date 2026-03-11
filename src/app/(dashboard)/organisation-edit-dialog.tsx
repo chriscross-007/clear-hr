@@ -42,6 +42,9 @@ interface OrganisationEditDialogProps {
   role: string;
   canDefineCustomFields: boolean;
   currencySymbol: string;
+  tsMaxShiftHours: number;
+  tsMaxBreakMinutes: number;
+  tsShiftStartVarianceMinutes: number;
 }
 
 export function OrganisationEditDialog({
@@ -54,6 +57,9 @@ export function OrganisationEditDialog({
   role,
   canDefineCustomFields,
   currencySymbol: initialCurrencySymbol,
+  tsMaxShiftHours: initialTsMaxShiftHours,
+  tsMaxBreakMinutes: initialTsMaxBreakMinutes,
+  tsShiftStartVarianceMinutes: initialTsShiftStartVarianceMinutes,
 }: OrganisationEditDialogProps) {
   const [name, setName] = useState(orgName);
   const [label, setLabel] = useState(memberLabel);
@@ -68,6 +74,9 @@ export function OrganisationEditDialog({
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
   const [editingTeamName, setEditingTeamName] = useState("");
   const [mfaRequired, setMfaRequired] = useState(requireMfa);
+  const [tsMaxShiftHours, setTsMaxShiftHours] = useState(initialTsMaxShiftHours);
+  const [tsMaxBreakMinutes, setTsMaxBreakMinutes] = useState(initialTsMaxBreakMinutes);
+  const [tsShiftStartVarianceMinutes, setTsShiftStartVarianceMinutes] = useState(initialTsShiftStartVarianceMinutes);
   const [adminProfiles, setAdminProfiles] = useState<Profile[]>([]);
   const [employeeProfiles, setEmployeeProfiles] = useState<Profile[]>([]);
   const [userRightsType, setUserRightsType] = useState<"admin" | "employee">("admin");
@@ -82,6 +91,9 @@ export function OrganisationEditDialog({
     label !== memberLabel ||
     currencySymbol !== initialCurrencySymbol ||
     mfaRequired !== requireMfa ||
+    tsMaxShiftHours !== initialTsMaxShiftHours ||
+    tsMaxBreakMinutes !== initialTsMaxBreakMinutes ||
+    tsShiftStartVarianceMinutes !== initialTsShiftStartVarianceMinutes ||
     fieldDefsModified ||
     teams.some((t) => {
       const orig = originalTeams.find((o) => o.id === t.id);
@@ -99,6 +111,9 @@ export function OrganisationEditDialog({
       setEditingTeamName("");
       setMfaRequired(requireMfa);
       setCurrencySymbol(initialCurrencySymbol);
+      setTsMaxShiftHours(initialTsMaxShiftHours);
+      setTsMaxBreakMinutes(initialTsMaxBreakMinutes);
+      setTsShiftStartVarianceMinutes(initialTsShiftStartVarianceMinutes);
       setFieldDefsModified(false);
       // Load teams
       getTeams().then((result) => {
@@ -119,7 +134,7 @@ export function OrganisationEditDialog({
         getCustomFieldDefs().then(setFieldDefs);
       }
     }
-  }, [open, orgName, memberLabel, requireMfa, showCustomFields, initialCurrencySymbol]);
+  }, [open, orgName, memberLabel, requireMfa, showCustomFields, initialCurrencySymbol, initialTsMaxShiftHours, initialTsMaxBreakMinutes, initialTsShiftStartVarianceMinutes]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -148,6 +163,9 @@ export function OrganisationEditDialog({
       memberLabel: label,
       requireMfa: mfaRequired,
       currencySymbol,
+      tsMaxShiftHours,
+      tsMaxBreakMinutes,
+      tsShiftStartVarianceMinutes,
     });
 
     if (!result.success) {
@@ -231,6 +249,7 @@ export function OrganisationEditDialog({
               {isOwner && <TabsTrigger value="general">General</TabsTrigger>}
               {isOwner && <TabsTrigger value="teams">Teams</TabsTrigger>}
               {isOwner && <TabsTrigger value="user-rights">User Rights</TabsTrigger>}
+              {isOwner && <TabsTrigger value="timesheet">Timesheet</TabsTrigger>}
               {showCustomFields && <TabsTrigger value="custom-fields">Custom Fields</TabsTrigger>}
               {isOwner && <TabsTrigger value="backups">Backups</TabsTrigger>}
             </TabsList>
@@ -431,6 +450,78 @@ export function OrganisationEditDialog({
                     onProfilesChange={setEmployeeProfiles}
                   />
                 )}
+              </TabsContent>
+            )}
+
+            {/* Timesheet tab */}
+            {isOwner && (
+              <TabsContent value="timesheet" className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="ts-max-shift-hours">Maximum Shift Length (hours)</Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="max-w-xs">
+                        <p>The longest a single shift can be. Clockings beyond this duration from a shift start are treated as a new shift.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Input
+                    id="ts-max-shift-hours"
+                    type="number"
+                    min={1}
+                    max={24}
+                    step={1}
+                    value={tsMaxShiftHours}
+                    onChange={(e) => setTsMaxShiftHours(Number(e.target.value))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="ts-max-break-minutes">Maximum Break Length (minutes)</Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="max-w-xs">
+                        <p>The maximum gap between clockings that can be treated as a break. Longer gaps indicate the end of a shift.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Input
+                    id="ts-max-break-minutes"
+                    type="number"
+                    min={1}
+                    max={480}
+                    step={1}
+                    value={tsMaxBreakMinutes}
+                    onChange={(e) => setTsMaxBreakMinutes(Number(e.target.value))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="ts-shift-start-variance">Shift Start Variance (minutes)</Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="max-w-xs">
+                        <p>How many minutes either side of a scheduled shift start a clocking can be treated as a shift start.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Input
+                    id="ts-shift-start-variance"
+                    type="number"
+                    min={0}
+                    max={120}
+                    step={1}
+                    value={tsShiftStartVarianceMinutes}
+                    onChange={(e) => setTsShiftStartVarianceMinutes(Number(e.target.value))}
+                  />
+                </div>
               </TabsContent>
             )}
 

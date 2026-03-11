@@ -56,10 +56,21 @@ export default async function TimesheetPage({
 
   const { weekStart, weekEnd } = getWeekBounds(week);
 
+  // Fetch active shift definitions for the org (for the shift picker)
+  const { data: rawShiftDefs } = await supabase
+    .from("shift_definitions")
+    .select("id, name")
+    .eq("organisation_id", caller.organisation_id)
+    .eq("active", true)
+    .order("sort_order")
+    .order("name");
+
+  const shiftDefs = (rawShiftDefs ?? []) as { id: string; name: string }[];
+
   // Fetch work periods for the week
   const { data: rawPeriods } = await supabase
     .from("work_periods")
-    .select("id, period_start, period_end, timesheet_date, has_conflicts, inference_run_at, scheduled_shift_id")
+    .select("id, period_start, period_end, timesheet_date, has_conflicts, inference_run_at")
     .eq("member_id", memberId)
     .eq("organisation_id", caller.organisation_id)
     .gte("timesheet_date", weekStart)
@@ -73,7 +84,7 @@ export default async function TimesheetPage({
   const { data: rawClockings } = periodIds.length > 0
     ? await supabase
         .from("clockings")
-        .select("id, work_period_id, clocked_at, raw_type, inferred_type, is_bstart, type_locked, cost_centre_id")
+        .select("id, work_period_id, clocked_at, raw_type, inferred_type, override_type, is_bstart, cost_centre_id")
         .in("work_period_id", periodIds)
         .eq("is_deleted", false)
         .order("clocked_at")
@@ -81,30 +92,34 @@ export default async function TimesheetPage({
 
   const allClockings = rawClockings ?? [];
 
-  // Fetch scheduled shift names for the periods that have one
-  const shiftIds = periods
-    .filter((p) => p.scheduled_shift_id)
-    .map((p) => p.scheduled_shift_id as string);
-
-  const { data: rawScheduledShifts } = shiftIds.length > 0
-    ? await supabase
-        .from("scheduled_shifts")
-        .select("id, shift_definitions(name, planned_start, planned_end)")
-        .in("id", shiftIds)
-    : { data: [] };
+  // Fetch all scheduled_shifts for this member for the week (keyed by date)
+  const { data: rawScheduledShifts } = await supabase
+    .from("scheduled_shifts")
+    .select("id, shift_definition_id, is_off_day, schedule_date, shift_definitions(name, planned_start, planned_end)")
+    .eq("member_id", memberId)
+    .eq("organisation_id", caller.organisation_id)
+    .gte("schedule_date", weekStart)
+    .lte("schedule_date", weekEnd);
 
   type RawScheduledShift = {
     id: string;
+    shift_definition_id: string | null;
+    is_off_day: boolean;
+    schedule_date: string;
     shift_definitions: { name: string; planned_start: string | null; planned_end: string | null } | null;
   };
-  const shiftMap = Object.fromEntries(
-    (rawScheduledShifts as unknown as RawScheduledShift[] ?? []).map((ss) => [
-      ss.id,
-      ss.shift_definitions
-        ? { name: ss.shift_definitions.name, plannedStart: ss.shift_definitions.planned_start, plannedEnd: ss.shift_definitions.planned_end }
-        : null,
-    ])
-  );
+  // Map by date (YYYY-MM-DD) — one shift per day
+  const shiftByDate: Record<string, { scheduledShiftId: string; shiftDefinitionId: string | null; name: string | null; plannedStart: string | null; plannedEnd: string | null; isOffDay: boolean }> = {};
+  for (const ss of (rawScheduledShifts as unknown as RawScheduledShift[] ?? [])) {
+    shiftByDate[ss.schedule_date] = {
+      scheduledShiftId:  ss.id,
+      shiftDefinitionId: ss.shift_definition_id,
+      name:              ss.shift_definitions?.name ?? null,
+      plannedStart:      ss.shift_definitions?.planned_start ?? null,
+      plannedEnd:        ss.shift_definitions?.planned_end ?? null,
+      isOffDay:          ss.is_off_day,
+    };
+  }
 
   // Attach clockings and shift info to each period
   const workPeriods = periods.map((p) => ({
@@ -114,21 +129,41 @@ export default async function TimesheetPage({
     timesheetDate:  p.timesheet_date,
     hasConflicts:   p.has_conflicts,
     inferenceRunAt: p.inference_run_at,
-    scheduledShift: p.scheduled_shift_id ? (shiftMap[p.scheduled_shift_id] ?? null) : null,
+    scheduledShift: shiftByDate[p.timesheet_date] ?? null,
     clockings: allClockings
       .filter((c) => c.work_period_id === p.id)
       .map((c) => ({
-        id:            c.id,
-        clockedAt:     c.clocked_at,
-        rawType:       c.raw_type,
-        inferredType:  c.inferred_type,
-        isBstart:      c.is_bstart,
-        typeLocked:    c.type_locked,
-        costCentreId:  c.cost_centre_id,
+        id:           c.id,
+        clockedAt:    c.clocked_at,
+        rawType:      c.raw_type,
+        inferredType: c.inferred_type,
+        overrideType: c.override_type,
+        isBstart:     c.is_bstart,
+        costCentreId: c.cost_centre_id,
       })),
   }));
 
   const memberName = member.known_as ?? member.first_name;
+
+  // Debug: all clockings for this member for the week (regardless of work period)
+  const { data: rawDebugClockings } = await supabase
+    .from("clockings")
+    .select("id, clocked_at, raw_type, inferred_type, override_type, work_period_id, is_deleted")
+    .eq("member_id", memberId)
+    .eq("organisation_id", caller.organisation_id)
+    .gte("clocked_at", `${weekStart}T00:00:00Z`)
+    .lte("clocked_at", `${weekEnd}T23:59:59Z`)
+    .order("clocked_at");
+
+  const debugClockings = (rawDebugClockings ?? []).map((c) => ({
+    id:           c.id,
+    clockedAt:    c.clocked_at,
+    rawType:      c.raw_type as string | null,
+    inferredType: c.inferred_type as string | null,
+    overrideType: c.override_type as string | null,
+    workPeriodId: c.work_period_id as string | null,
+    isDeleted:    c.is_deleted as boolean,
+  }));
 
   return (
     <TimesheetClient
@@ -138,6 +173,9 @@ export default async function TimesheetPage({
       weekEnd={weekEnd}
       workPeriods={workPeriods}
       callerRole={caller.role}
+      shiftDefs={shiftDefs}
+      shiftByDate={shiftByDate}
+      debugClockings={debugClockings}
     />
   );
 }

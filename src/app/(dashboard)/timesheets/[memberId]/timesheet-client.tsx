@@ -7,8 +7,9 @@ import { ChevronLeft, ChevronRight, RefreshCw, AlertTriangle } from "lucide-reac
 import { Button } from "@/components/ui/button";
 import { TimesheetGrid } from "@/components/timesheet/timesheet-grid";
 import { ClockingOverrideDialog } from "@/components/timesheet/override-dialog";
-import { triggerInference } from "@/app/(dashboard)/timesheets/actions";
+import { triggerInference, setDayShift } from "@/app/(dashboard)/timesheets/actions";
 import type { ClockingData, WorkPeriodData } from "@/components/timesheet/timesheet-types";
+import { ClockingsDebug, type DebugClocking } from "./clockings-debug";
 
 interface TimesheetClientProps {
   memberId: string;
@@ -17,6 +18,9 @@ interface TimesheetClientProps {
   weekEnd:   string;
   workPeriods: WorkPeriodData[];
   callerRole: string;
+  shiftDefs: { id: string; name: string }[];
+  shiftByDate: Record<string, { shiftDefinitionId: string | null; name: string | null; isOffDay: boolean }>;
+  debugClockings: DebugClocking[];
 }
 
 function offsetWeek(dateStr: string, offsetWeeks: number): string {
@@ -39,13 +43,23 @@ export function TimesheetClient({
   weekEnd,
   workPeriods,
   callerRole,
+  shiftDefs,
+  shiftByDate,
+  debugClockings,
 }: TimesheetClientProps) {
   const router = useRouter();
   const [selectedClocking, setSelectedClocking] = useState<ClockingData | null>(null);
   const [isReinferring, startReinference] = useTransition();
-  const [reinferResult, setReinferResult] = useState<string | null>(null);
+  const [reinferResult, setReinferResult] = useState<{ msg: string; ok: boolean } | null>(null);
 
   const canEdit = callerRole === "owner" || callerRole === "admin";
+
+  async function handleShiftChange(date: string, shiftDefinitionId: string | null) {
+    const result = await setDayShift(memberId, date, shiftDefinitionId);
+    if (result.success) {
+      router.refresh();
+    }
+  }
 
   const prevWeek = offsetWeek(weekStart, -1);
   const nextWeek = offsetWeek(weekStart, 1);
@@ -55,12 +69,13 @@ export function TimesheetClient({
     startReinference(async () => {
       const result = await triggerInference(memberId, weekStart, weekEnd);
       if (result.success) {
-        setReinferResult(
-          `Done — ${result.periodsCreated} created, ${result.periodsUpdated} updated${result.conflicts > 0 ? `, ${result.conflicts} conflict(s)` : ""}`
-        );
+        setReinferResult({
+          ok: true,
+          msg: `Done — ${result.periodsCreated} created, ${result.periodsUpdated} updated${result.conflicts > 0 ? `, ${result.conflicts} conflict(s)` : ""}`,
+        });
         router.refresh();
       } else {
-        setReinferResult(`Error: ${result.error}`);
+        setReinferResult({ ok: false, msg: result.error ?? "Inference failed" });
       }
     });
   }
@@ -115,14 +130,30 @@ export function TimesheetClient({
       </div>
 
       {reinferResult && (
-        <p className="mb-3 text-sm text-muted-foreground">{reinferResult}</p>
+        <p className={`mb-3 text-sm ${reinferResult.ok ? "text-muted-foreground" : "text-destructive font-medium"}`}>
+          {reinferResult.msg}
+        </p>
       )}
 
       {/* Grid */}
       <TimesheetGrid
         weekStart={weekStart}
         workPeriods={workPeriods}
+        shiftByDate={shiftByDate}
         onClockingClick={canEdit ? setSelectedClocking : undefined}
+        shiftDefs={shiftDefs}
+        onShiftChange={canEdit ? handleShiftChange : undefined}
+      />
+
+      {/* Debug: clockings CRUD */}
+      <ClockingsDebug
+        memberId={memberId}
+        weekStart={weekStart}
+        clockings={debugClockings}
+        onRefresh={async () => {
+          await triggerInference(memberId, weekStart, weekEnd);
+          router.refresh();
+        }}
       />
 
       {/* Override dialog */}

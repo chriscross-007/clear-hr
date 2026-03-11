@@ -1,28 +1,44 @@
-import React from "react";
-import { AlertTriangle, Lock } from "lucide-react";
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   type ClockingData,
   type WorkPeriodData,
   type ClockingPair,
+  effectiveType,
   computePairs,
   computeGrossHours,
   fmtTime,
   fmtHours,
 } from "./timesheet-types";
 
+type DayShift = { shiftDefinitionId: string | null; name: string | null; isOffDay: boolean };
+
 interface TimesheetGridProps {
   weekStart: string; // "YYYY-MM-DD" (Monday)
   workPeriods: WorkPeriodData[];
+  shiftByDate?: Record<string, DayShift>;
   onClockingClick?: (clocking: ClockingData) => void;
+  shiftDefs?: { id: string; name: string }[];
+  onShiftChange?: (date: string, shiftDefinitionId: string | null) => void;
 }
 
 const INFERRED_TYPE_LABELS: Record<string, string> = {
-  IN:        "IN",
-  OUT:       "OUT",
-  CC:        "CC",
-  bStart:    "bStart",
-  AMBIGUOUS: "?",
+  bStart:       "bStart",
+  bEnd:         "bEnd",
+  BreakOut:     "Brk Out",
+  BreakIn:      "Brk In",
+  INambiguous:  "IN?",
+  OUTambiguous: "OUT?",
+  CC:           "CC",
+  // legacy labels (may still be in DB until re-inference)
+  IN:           "IN",
+  OUT:          "OUT",
+  BRK_OUT:      "Brk Out",
+  BRK_IN:       "Brk In",
+  AMBIGUOUS:    "?",
 };
 
 const WEEK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -50,59 +66,114 @@ function maxPairs(workPeriods: WorkPeriodData[]): number {
 }
 
 interface ClockingCellProps {
-  clocking: ClockingData | null;
-  label: string; // "IN" or "OUT"
-  onClick?: (c: ClockingData) => void;
+  clocking:  ClockingData | null;
+  label:     string; // "IN" or "OUT"
+  onClick?:  (c: ClockingData) => void;
+  className?: string;
 }
 
-function ClockingCell({ clocking, label, onClick }: ClockingCellProps) {
+function ClockingCell({ clocking, label, onClick, className }: ClockingCellProps) {
   if (!clocking) {
     return (
-      <td className="px-2 py-2 text-center text-muted-foreground/40 tabular-nums text-sm">
+      <td className={cn("px-2 py-2 text-center text-muted-foreground/40 tabular-nums text-sm", className)}>
         —
       </td>
     );
   }
 
-  const isAmbiguous = clocking.inferredType === "AMBIGUOUS";
-  const isBstart    = clocking.inferredType === "bStart";
-  const isLocked    = clocking.typeLocked;
-  const canClick    = !!onClick;
+  const eff          = effectiveType(clocking);
+  const isOverridden = clocking.overrideType != null;
+  const isAmbiguous  = eff === "INambiguous" || eff === "OUTambiguous";
+  const canClick     = !!onClick;
+  const displayLabel = INFERRED_TYPE_LABELS[eff ?? ""] ?? eff ?? "?";
 
   return (
     <td
       className={cn(
         "px-2 py-2 text-center tabular-nums text-sm whitespace-nowrap",
         canClick && "cursor-pointer hover:bg-accent/60 transition-colors",
-        isAmbiguous && "bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400",
-        isBstart && !isAmbiguous && "text-blue-700 dark:text-blue-400",
+        isAmbiguous  && "bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400",
+        isOverridden && !isAmbiguous && "text-blue-600 dark:text-blue-400",
+        className,
       )}
       onClick={() => onClick?.(clocking)}
       title={[
         `Raw: ${clocking.rawType ?? "swipe"}`,
-        `Inferred: ${INFERRED_TYPE_LABELS[clocking.inferredType ?? ""] ?? "?"}`,
-        isLocked ? "Locked by manager" : "",
+        `Inferred: ${INFERRED_TYPE_LABELS[clocking.inferredType ?? ""] ?? clocking.inferredType ?? "—"}`,
+        isOverridden ? `Edited → ${displayLabel}` : "",
       ]
         .filter(Boolean)
         .join(" · ")}
     >
       <span className="flex items-center justify-center gap-1">
         {fmtTime(clocking.clockedAt)}
-        {isLocked && <Lock className="h-2.5 w-2.5 text-muted-foreground/60" />}
         {isAmbiguous && <AlertTriangle className="h-2.5 w-2.5" />}
       </span>
-      {isBstart && (
-        <span className="block text-[10px] text-blue-500 leading-none">bStart</span>
+      {isOverridden && (
+        <span className="block text-[10px] text-blue-500 leading-none">{displayLabel}</span>
+      )}
+      {!isOverridden && eff === "bStart" && (
+        <span className="block text-[10px] text-muted-foreground/50 leading-none">start</span>
       )}
     </td>
   );
 }
 
-export function TimesheetGrid({ weekStart, workPeriods, onClockingClick }: TimesheetGridProps) {
-  const days = getDayDates(weekStart);
+function shiftDefToSelectValue(shiftDef: { shiftDefinitionId: string | null; isOffDay: boolean } | null): string {
+  if (!shiftDef) return "";
+  if (shiftDef.isOffDay) return "__off__";
+  return shiftDef.shiftDefinitionId ?? "";
+}
+
+function ShiftCell({
+  date,
+  shiftDef,
+  shiftDefs,
+  onShiftChange,
+}: {
+  date: string;
+  shiftDef: { shiftDefinitionId: string | null; name: string | null; isOffDay: boolean } | null;
+  shiftDefs: { id: string; name: string }[];
+  onShiftChange?: (date: string, shiftDefinitionId: string | null) => void;
+}) {
+  const serverValue = shiftDefToSelectValue(shiftDef);
+  const [value, setValue] = useState(serverValue);
+
+  useEffect(() => { setValue(serverValue); }, [serverValue]);
+
+  if (onShiftChange) {
+    return (
+      <select
+        value={value}
+        onChange={(e) => {
+          setValue(e.target.value);
+          onShiftChange(date, e.target.value || null);
+        }}
+        className="w-full text-xs rounded border border-border bg-background px-1.5 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+      >
+        <option value="">— Open —</option>
+        <option value="__off__">Not scheduled</option>
+        {shiftDefs.map((s) => (
+          <option key={s.id} value={s.id}>{s.name}</option>
+        ))}
+      </select>
+    );
+  }
+
+  if (shiftDef?.isOffDay) {
+    return <span className="text-xs text-muted-foreground/60 italic">Not scheduled</span>;
+  }
+  return (
+    <span className="text-xs text-muted-foreground">
+      {shiftDef?.name ?? <span className="text-muted-foreground/40">Open</span>}
+    </span>
+  );
+}
+
+export function TimesheetGrid({ weekStart, workPeriods, shiftByDate = {}, onClockingClick, shiftDefs = [], onShiftChange }: TimesheetGridProps) {
+  const days     = getDayDates(weekStart);
   const numPairs = maxPairs(workPeriods);
 
-  // Group work periods by timesheet_date
   const byDate = new Map<string, WorkPeriodData[]>();
   for (const period of workPeriods) {
     const arr = byDate.get(period.timesheetDate) ?? [];
@@ -110,14 +181,12 @@ export function TimesheetGrid({ weekStart, workPeriods, onClockingClick }: Times
     byDate.set(period.timesheetDate, arr);
   }
 
-  // Grand total hours across all periods
   const totalHours = workPeriods.reduce((sum, p) => sum + computeGrossHours(computePairs(p.clockings)), 0);
 
   return (
     <div className="overflow-x-auto rounded-md border border-border">
       <table className="w-full text-sm border-collapse min-w-[600px]">
         <thead>
-          {/* Main header */}
           <tr className="bg-muted/50 border-b border-border">
             <th className="sticky left-0 z-10 bg-muted/50 px-3 py-2 text-left font-semibold text-xs uppercase tracking-wide whitespace-nowrap">
               Date
@@ -139,18 +208,13 @@ export function TimesheetGrid({ weekStart, workPeriods, onClockingClick }: Times
             </th>
             <th className="px-2 py-2 w-6" aria-label="Conflicts" />
           </tr>
-          {/* Sub-header: IN / OUT labels */}
           <tr className="bg-muted/30 border-b border-border text-muted-foreground">
             <th className="sticky left-0 z-10 bg-muted/30" />
             <th />
             {Array.from({ length: numPairs }, (_, i) => (
               <React.Fragment key={i}>
-                <th className="px-2 py-1 text-center font-normal text-xs border-l border-border/50">
-                  IN
-                </th>
-                <th className="px-2 py-1 text-center font-normal text-xs">
-                  OUT
-                </th>
+                <th className="px-2 py-1 text-center font-normal text-xs border-l border-border/50">IN</th>
+                <th className="px-2 py-1 text-center font-normal text-xs">OUT</th>
               </React.Fragment>
             ))}
             <th className="border-l border-border/50" />
@@ -160,25 +224,23 @@ export function TimesheetGrid({ weekStart, workPeriods, onClockingClick }: Times
 
         <tbody>
           {days.map((dateStr, dayIdx) => {
-            const periods = byDate.get(dateStr) ?? [];
+            const periods   = byDate.get(dateStr) ?? [];
             const isWeekend = dayIdx >= 5;
 
             if (periods.length === 0) {
-              // Empty day row
               return (
                 <tr
                   key={dateStr}
-                  className={cn(
-                    "border-b border-border/50",
-                    isWeekend && "bg-muted/20"
-                  )}
+                  className={cn("border-b border-border/50", isWeekend && "bg-muted/20")}
                 >
                   <td className="sticky left-0 z-10 bg-inherit px-3 py-2 font-medium whitespace-nowrap">
                     <span className="text-muted-foreground/60">
                       {formatDayLabel(dateStr, WEEK_DAYS[dayIdx])}
                     </span>
                   </td>
-                  <td className="px-3 py-2 text-muted-foreground/40 text-xs">—</td>
+                  <td className="px-2 py-1.5">
+                    <ShiftCell date={dateStr} shiftDef={shiftByDate[dateStr] ?? null} shiftDefs={shiftDefs} onShiftChange={onShiftChange} />
+                  </td>
                   {Array.from({ length: numPairs * 2 }, (_, i) => (
                     <td key={i} className={cn("px-2 py-2", i % 2 === 0 && "border-l border-border/50")} />
                   ))}
@@ -188,12 +250,11 @@ export function TimesheetGrid({ weekStart, workPeriods, onClockingClick }: Times
               );
             }
 
-            // One or more work periods on this day
             return periods.map((period, periodIdx) => {
               const pairs: ClockingPair[] = computePairs(period.clockings);
               const grossHours = computeGrossHours(pairs);
               const ccClockings = period.clockings.filter(
-                (c) => c.inferredType === "CC" || c.inferredType === "bStart"
+                (c) => effectiveType(c) === "CC"
               );
 
               return (
@@ -206,7 +267,6 @@ export function TimesheetGrid({ weekStart, workPeriods, onClockingClick }: Times
                     periodIdx > 0 && "border-t-0"
                   )}
                 >
-                  {/* Date — only show on first period of the day */}
                   <td className="sticky left-0 z-10 bg-inherit px-3 py-2 font-medium whitespace-nowrap align-top">
                     {periodIdx === 0 ? (
                       <span className={cn(isWeekend && "text-muted-foreground")}>
@@ -217,50 +277,45 @@ export function TimesheetGrid({ weekStart, workPeriods, onClockingClick }: Times
                     )}
                   </td>
 
-                  {/* Shift name */}
-                  <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap max-w-32 truncate align-top">
-                    {period.scheduledShift?.name ?? (
-                      <span className="text-muted-foreground/40">Open</span>
-                    )}
+                  <td className="px-2 py-1.5 align-top">
+                    {periodIdx === 0 ? (
+                      <ShiftCell
+                        date={dateStr}
+                        shiftDef={period.scheduledShift}
+                        shiftDefs={shiftDefs}
+                        onShiftChange={onShiftChange}
+                      />
+                    ) : null}
                   </td>
 
-                  {/* Clocking pairs */}
                   {Array.from({ length: numPairs }, (_, pairIdx) => {
                     const pair = pairs[pairIdx] ?? { in: null, out: null };
                     return (
                       <React.Fragment key={pairIdx}>
-                        <td className="border-l border-border/50 p-0">
-                          <ClockingCell
-                            clocking={pair.in}
-                            label="IN"
-                            onClick={onClockingClick}
-                          />
-                        </td>
-                        <td className="p-0">
-                          <ClockingCell
-                            clocking={pair.out}
-                            label="OUT"
-                            onClick={onClockingClick}
-                          />
-                        </td>
+                        <ClockingCell
+                          clocking={pair.in}
+                          label="IN"
+                          onClick={onClockingClick}
+                          className="border-l border-border/50"
+                        />
+                        <ClockingCell
+                          clocking={pair.out}
+                          label="OUT"
+                          onClick={onClockingClick}
+                        />
                       </React.Fragment>
                     );
                   })}
 
-                  {/* Hours */}
                   <td className="px-3 py-2 text-right font-medium tabular-nums border-l border-border/50 whitespace-nowrap align-top">
                     {fmtHours(grossHours)}
                     {ccClockings.length > 0 && (
-                      <span
-                        className="ml-1 text-[10px] text-blue-500"
-                        title={`${ccClockings.length} CC clocking(s)`}
-                      >
+                      <span className="ml-1 text-[10px] text-blue-500" title={`${ccClockings.length} CC clocking(s)`}>
                         CC
                       </span>
                     )}
                   </td>
 
-                  {/* Conflict indicator */}
                   <td className="px-1 py-2 text-center align-top">
                     {period.hasConflicts && (
                       <span title="This period has ambiguous or conflicting clockings">
@@ -274,7 +329,6 @@ export function TimesheetGrid({ weekStart, workPeriods, onClockingClick }: Times
           })}
         </tbody>
 
-        {/* Summary footer */}
         <tfoot>
           <tr className="border-t-2 border-border bg-muted/40 font-semibold">
             <td className="sticky left-0 z-10 bg-muted/40 px-3 py-2 text-xs uppercase tracking-wide">

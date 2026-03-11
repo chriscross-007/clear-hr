@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Share2, Lock, Trash2, Star } from "lucide-react";
+import { Share2, Lock, Trash2, Star, Save, Plus } from "lucide-react";
 import { DataGrid } from "@/components/data-grid/data-grid";
 import {
   buildEmployeeColumns,
@@ -13,11 +13,29 @@ import {
   EMPLOYEE_COL_LABELS,
 } from "@/app/(dashboard)/employees/employee-columns";
 import type { ColPref } from "@/lib/grid-prefs-actions";
+import type { GridPrefs } from "@/lib/grid-prefs";
 import type { Profile } from "@/app/(dashboard)/employees/profile-actions";
 import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
 import type { StandardReport } from "../../definitions";
-import { updateCustomReport, deleteCustomReport, toggleFavourite } from "../../actions";
+import { updateCustomReport, deleteCustomReport, toggleFavourite, createCustomReport } from "../../actions";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -75,6 +93,13 @@ export function CustomReportViewClient({
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [favourited, setFavourited] = useState(initialFavourited);
   const [isPending, startTransition] = useTransition();
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [showSaveAsDialog, setShowSaveAsDialog] = useState(false);
+  const [saveAsName, setSaveAsName] = useState("");
+  const [saveAsShared, setSaveAsShared] = useState<"private" | "shared">("private");
+  const [saveAsLoading, setSaveAsLoading] = useState(false);
+  const [saveAsError, setSaveAsError] = useState<string | null>(null);
+  const currentPrefsRef = useRef<GridPrefs | null>(null);
 
   const customFieldColIds = customFieldDefs.map((d) => `cf_${d.field_key}`);
   const effectiveDefaultCols = customReport.prefs.columns
@@ -162,6 +187,34 @@ export function CustomReportViewClient({
     });
   }
 
+  async function handleSave() {
+    const snapshot = currentPrefsRef.current;
+    if (!snapshot) return;
+    setSaveLoading(true);
+    await updateCustomReport(customReport.id, { prefs: snapshot });
+    setSaveLoading(false);
+  }
+
+  async function handleSaveAs() {
+    if (!saveAsName.trim()) return;
+    setSaveAsLoading(true);
+    setSaveAsError(null);
+    const result = await createCustomReport({
+      name: saveAsName.trim(),
+      based_on: customReport.based_on,
+      shared: saveAsShared === "shared",
+      prefs: currentPrefsRef.current ?? undefined,
+    });
+    setSaveAsLoading(false);
+    if (!result.success) {
+      setSaveAsError(result.error ?? "Failed to create report");
+    } else {
+      setShowSaveAsDialog(false);
+      setSaveAsName("");
+      router.refresh();
+    }
+  }
+
   async function handleToggleShare() {
     setShareLoading(true);
     const result = await updateCustomReport(customReport.id, { shared: !shared });
@@ -190,6 +243,28 @@ export function CustomReportViewClient({
       >
         <Star className={`h-4 w-4 mr-1.5 ${favourited ? "fill-current" : ""}`} />
         {favourited ? "Favourited" : "Favourite"}
+      </Button>
+      {isCreator && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleSave}
+          disabled={saveLoading}
+        >
+          <Save className="h-4 w-4 mr-1.5" />
+          {saveLoading ? "Saving..." : "Save"}
+        </Button>
+      )}
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          setSaveAsName(`${customReport.name} (copy)`);
+          setShowSaveAsDialog(true);
+        }}
+      >
+        <Plus className="h-4 w-4 mr-1.5" />
+        Save As...
       </Button>
       {isCreator && (
         <>
@@ -244,7 +319,58 @@ export function CustomReportViewClient({
         emptyMessage={`No ${pluralize(memberLabel)} found.`}
         initialFilters={initialFilters}
         onExportPdf={handleExportPdf}
+        onPrefsChange={(snap) => { currentPrefsRef.current = snap; }}
       />
+
+      {/* Save As dialog */}
+      <Dialog open={showSaveAsDialog} onOpenChange={setShowSaveAsDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save as Custom Report</DialogTitle>
+            <DialogDescription>
+              Create a new custom report based on &ldquo;{customReport.name}&rdquo;.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {saveAsError && (
+              <p className="text-sm text-destructive">{saveAsError}</p>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="save-as-name">Report name</Label>
+              <Input
+                id="save-as-name"
+                value={saveAsName}
+                onChange={(e) => setSaveAsName(e.target.value)}
+                placeholder="Enter a name..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Visibility</Label>
+              <Select
+                value={saveAsShared}
+                onValueChange={(v) => setSaveAsShared(v as "private" | "shared")}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="private">Private (only me)</SelectItem>
+                  <SelectItem value="shared">Shared (all admins)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSaveAsDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveAs} disabled={saveAsLoading || !saveAsName.trim()}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              {saveAsLoading ? "Creating..." : "Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>

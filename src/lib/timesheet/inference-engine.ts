@@ -1,23 +1,23 @@
 /**
- * Timesheet Inference Engine
+ * Timesheet Inference Engine (v2)
  *
- * Groups raw clockings into work periods and infers each clocking's type
- * (IN / OUT / CC / bStart / AMBIGUOUS).
+ * Processes raw clockings for one member over a date range using a single
+ * forward pass. Each clocking's inferred type is determined by a rule table
+ * (see inference-rules.md) based on:
  *
- * Rules:
- *  - Clockings are grouped by time gap (> ts_gap_threshold_hours = new period).
- *  - The first clocking of a period is always the bStart.
- *      · If its raw_type is 'CC', inferred_type = 'bStart' (CC that opens the period).
- *      · Otherwise, inferred_type = 'IN'.
- *  - If a scheduled shift is matched, break and shift-end clockings are assigned
- *    to the nearest candidate by time proximity.
- *  - Open shifts / no schedule: bare swipes alternate IN/OUT after bStart.
- *  - Clockings with type_locked = true are never overwritten; the engine treats
- *    their current inferred_type as ground truth when inferring neighbours.
- *  - clocked_at is IMMUTABLE — this engine never modifies it.
+ *   D — open bStart within MaxShiftLength hours
+ *   B — inside ShiftStartVariance band around planned shift start
+ *   C — next clocking within MaxBreakLength minutes
+ *   E — previous clocking within MaxBreakLength minutes
  *
- * Timezone note: all time comparisons are done in UTC. Add an org-level
- * timezone field when local-time rules are needed.
+ * Rules are applied top-to-bottom; the first match wins.
+ *
+ * If a clocking has override_type set by a manager, it is used as-is and
+ * inference is skipped for that clocking (but it still influences D/prev for
+ * subsequent clockings).
+ *
+ * Work periods are derived from bStart/bEnd pairs after the forward pass.
+ * clocked_at is IMMUTABLE — this engine never modifies it.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -25,50 +25,34 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // ── Internal types ────────────────────────────────────────────────────────────
 
 interface OrgConfig {
-  ts_gap_threshold_hours: number;
-  ts_max_shift_hours: number;
-  ts_allocate_to: "start" | "end";
+  ts_max_shift_hours:              number;
+  ts_max_break_minutes:            number;
+  ts_shift_start_variance_minutes: number;
+  ts_allocate_to:                  "start" | "end";
 }
 
 interface Clocking {
-  id: string;
-  clocked_at: string;        // ISO timestamptz — NEVER modified
-  raw_type: string | null;   // supplied by terminal: 'IN' | 'OUT' | 'CC' | null
-  inferred_type: string | null;
-  is_bstart: boolean;
-  type_locked: boolean;      // if true, engine skips inferred_type update
+  id:             string;
+  clocked_at:     string;        // ISO timestamptz — NEVER modified
+  raw_type:       string | null; // 'IN' | 'OUT' | 'BreakIN' | 'BreakOUT' | 'CC' | null
+  inferred_type:  string | null;
+  override_type:  string | null; // manager override; when set, skips inference
+  is_bstart:      boolean;
   cost_centre_id: string | null;
   work_period_id: string | null;
 }
 
-interface BreakDef {
-  start: string;        // "HH:MM"
-  end: string;          // "HH:MM"
-  duration_mins: number;
+interface ShiftInfo {
+  scheduledShiftId:    string;
+  plannedStartDatetime: Date | null;
 }
 
-interface ShiftDef {
-  id: string;
-  is_open_shift: boolean;
-  planned_start: string | null;  // "HH:MM:SS"
-  planned_end: string | null;
-  crosses_midnight: boolean;
-  break_type: "none" | "clocked" | "auto_deduct";
-  breaks: BreakDef[];
-}
-
-interface ScheduledShift {
-  id: string;
-  schedule_date: string;          // "YYYY-MM-DD"
-  shift_definition: ShiftDef;
-}
-
-// Inference result per clocking
-interface ClockingResult {
-  id: string;
-  inferred_type: string;
-  is_bstart: boolean;
-  has_conflict: boolean;
+interface ForwardPassResult {
+  id:            string;
+  inferredType:  string;  // engine-computed (written to inferred_type in DB)
+  effectiveType: string;  // override_type ?? inferredType (used for period logic)
+  isBstart:      boolean;
+  hasConflict:   boolean;
 }
 
 // ── Exported result type ──────────────────────────────────────────────────────
@@ -76,21 +60,26 @@ interface ClockingResult {
 export interface InferenceResult {
   periodsCreated: number;
   periodsUpdated: number;
-  /** Number of work periods that contain at least one AMBIGUOUS or conflict clocking */
-  conflicts: number;
+  conflicts:      number;
 }
 
-// ── Date/time helpers ─────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function toDate(iso: string): Date {
-  return new Date(iso);
+function toDate(iso: string): Date { return new Date(iso); }
+
+function minutesApart(a: Date, b: Date): number {
+  return Math.abs(a.getTime() - b.getTime()) / 60_000;
 }
 
 function hoursApart(a: Date, b: Date): number {
   return Math.abs(a.getTime() - b.getTime()) / 3_600_000;
 }
 
-/** Parse "HH:MM" or "HH:MM:SS" shift time onto a given UTC base date */
+function toDateStr(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** Parse "HH:MM" or "HH:MM:SS" onto a UTC base date */
 function timeOnDate(baseDate: Date, timeStr: string): Date {
   const [h, m, s] = timeStr.split(":").map(Number);
   const d = new Date(baseDate);
@@ -98,276 +87,244 @@ function timeOnDate(baseDate: Date, timeStr: string): Date {
   return d;
 }
 
-/** Date → "YYYY-MM-DD" (UTC) */
-function toDateStr(d: Date): string {
-  return d.toISOString().slice(0, 10);
+// ── Rule application ──────────────────────────────────────────────────────────
+
+/**
+ * Apply inference rules to a single clocking.
+ * Rules are applied top-to-bottom; first match wins.
+ * See inference-rules.md for the full rule table.
+ *
+ * @param rawType   Terminal type: 'IN' | 'OUT' | 'BreakIN' | 'BreakOUT' | null
+ * @param prev      Effective type of the most recent non-CC clocking, or null
+ * @param D         Open bStart exists within MaxShiftLength hours
+ * @param B         Inside ShiftStartVariance band around planned shift start
+ * @param C         Next clocking is within MaxBreakLength minutes
+ * @param E         Previous clocking is within MaxBreakLength minutes
+ */
+function applyRules(
+  rawType: string | null,
+  prev:    string | null,
+  D: boolean,
+  B: boolean,
+  C: boolean,
+  E: boolean,
+): string {
+  switch (rawType) {
+    // ── Raw = IN ──────────────────────────────────────────────────────────────
+    case "IN":
+      if (prev !== "bStart" && B) return "bStart";      // IN-1
+      if (!D)                     return "bStart";      // IN-2
+      if (prev === "BreakOut")    return "BreakIn";     // IN-3
+      /* prev !== "BreakOut" && D */
+      return "INambiguous";                             // IN-4
+
+    // ── Raw = OUT ─────────────────────────────────────────────────────────────
+    case "OUT":
+      if (!D)                                              return "OUTambiguous"; // OUT-1
+      if ((prev === "bStart" || prev === "BreakIn") && C)  return "BreakOut";    // OUT-2
+      if ((prev === "bStart" || prev === "BreakIn") && !C) return "bEnd";        // OUT-3
+      // OUT-4: prev=BreakOut && !D → OUTambiguous  (subsumed by OUT-1 above)
+      if (prev === "BreakOut" && !C)                       return "bEnd";        // OUT-5
+      if (prev === "BreakOut" &&  C)                       return "BreakOut";    // OUT-6
+      if (prev === "INambiguous")                          return "INambiguous"; // OUT-7
+      if (prev === "OUTambiguous")                         return "OUTambiguous";// OUT-8
+      return "OUTambiguous"; // fallback
+
+    // ── Raw = BreakIN ─────────────────────────────────────────────────────────
+    case "BreakIN":
+      return D ? "BreakIn" : "bStart"; // BreakIN-1 / BreakIN-2
+
+    // ── Raw = BreakOUT ────────────────────────────────────────────────────────
+    case "BreakOUT":
+      return D ? "BreakOut" : "OUTambiguous"; // BreakOUT-1 / BreakOUT-2
+
+    // ── Raw = null (bare swipe) ───────────────────────────────────────────────
+    default:
+      if (!D)                                      return "bStart";       // null-1
+      if (prev === "BreakOut" && !E)               return "bStart";       // null-2
+      if (prev !== "bStart" && B)                  return "bStart";       // null-3
+      if (prev === "BreakOut" && E)                return "BreakIn";      // null-4
+      if ((prev === "bStart" || prev === "BreakIn") && C) return "BreakOut"; // null-5
+      if (prev === "bStart" && !C)                 return "bEnd";         // null-6
+      if (prev === "BreakIn" && !B && !C)          return "bEnd";         // null-7
+      if (prev === "BreakIn" && !B && C)           return "BreakOut";     // null-8 (redundant with null-5)
+      if (prev === "INambiguous" && !B)            return "OUTambiguous"; // null-9
+      if (prev === "OUTambiguous" && !B)           return "INambiguous";  // null-10
+      return "INambiguous"; // fallback
+  }
+}
+
+// ── Forward pass ──────────────────────────────────────────────────────────────
+
+function runForwardPass(
+  clockings:   Clocking[],       // sorted by clocked_at ascending
+  shiftByDate: Map<string, ShiftInfo>,
+  config:      OrgConfig,
+): ForwardPassResult[] {
+  const results: ForwardPassResult[] = [];
+  let openBStart: Clocking | null = null;
+
+  for (let i = 0; i < clockings.length; i++) {
+    const c = clockings[i];
+    const clockedAt = toDate(c.clocked_at);
+
+    // ── Manager override: use as-is, skip inference ──────────────────────────
+    if (c.override_type) {
+      const effective = c.override_type;
+      results.push({
+        id:            c.id,
+        inferredType:  c.inferred_type ?? effective, // keep last engine value
+        effectiveType: effective,
+        isBstart:      effective === "bStart",
+        hasConflict:   effective === "INambiguous" || effective === "OUTambiguous",
+      });
+      if (effective === "bStart") openBStart = c;
+      else if (effective === "bEnd") openBStart = null;
+      continue;
+    }
+
+    // ── CC clockings: always CC, don't affect shift state ────────────────────
+    if (c.raw_type === "CC" || c.cost_centre_id) {
+      results.push({ id: c.id, inferredType: "CC", effectiveType: "CC", isBstart: false, hasConflict: false });
+      continue;
+    }
+
+    // ── Compute conditions ────────────────────────────────────────────────────
+
+    // D: open shift within MaxShiftLength
+    const D = openBStart != null &&
+      (clockedAt.getTime() - toDate(openBStart.clocked_at).getTime()) / 3_600_000
+        < config.ts_max_shift_hours;
+
+    // B: inside ShiftStartVariance band
+    const dateStr  = toDateStr(clockedAt);
+    const shiftInfo = shiftByDate.get(dateStr);
+    const B = shiftInfo?.plannedStartDatetime != null &&
+      minutesApart(clockedAt, shiftInfo.plannedStartDatetime) <= config.ts_shift_start_variance_minutes;
+
+    // C: next clocking within MaxBreakLength minutes
+    const nextClocking = clockings[i + 1];
+    const C = nextClocking != null &&
+      (toDate(nextClocking.clocked_at).getTime() - clockedAt.getTime()) / 60_000
+        <= config.ts_max_break_minutes;
+
+    // E: previous clocking within MaxBreakLength minutes
+    const prevClocking = clockings[i - 1];
+    const E = prevClocking != null &&
+      (clockedAt.getTime() - toDate(prevClocking.clocked_at).getTime()) / 60_000
+        <= config.ts_max_break_minutes;
+
+    // prev: effective type of the most recent non-CC result
+    let prev: string | null = null;
+    for (let j = results.length - 1; j >= 0; j--) {
+      if (results[j].effectiveType !== "CC") {
+        prev = results[j].effectiveType;
+        break;
+      }
+    }
+
+    // ── Apply rules ───────────────────────────────────────────────────────────
+    const inferredType = applyRules(c.raw_type, prev, D, B, C, E);
+    const hasConflict  = inferredType === "INambiguous" || inferredType === "OUTambiguous";
+
+    results.push({ id: c.id, inferredType, effectiveType: inferredType, isBstart: inferredType === "bStart", hasConflict });
+
+    if (inferredType === "bStart") openBStart = c;
+    else if (inferredType === "bEnd") openBStart = null;
+  }
+
+  return results;
 }
 
 // ── Work period grouping ──────────────────────────────────────────────────────
 
-/**
- * Split a sorted list of clockings into contiguous groups.
- * A gap of >= gapThresholdHours between consecutive clockings starts a new group.
- */
-function groupByGap(clockings: Clocking[], gapThresholdHours: number): Clocking[][] {
-  if (clockings.length === 0) return [];
-
-  const groups: Clocking[][] = [];
-  let current: Clocking[] = [clockings[0]];
-
-  for (let i = 1; i < clockings.length; i++) {
-    const prev = toDate(clockings[i - 1].clocked_at);
-    const curr = toDate(clockings[i].clocked_at);
-    if (hoursApart(prev, curr) >= gapThresholdHours) {
-      groups.push(current);
-      current = [];
-    }
-    current.push(clockings[i]);
-  }
-  groups.push(current);
-
-  return groups;
+interface PeriodAcc {
+  bStartClocking:  Clocking;
+  bEndClocking:    Clocking | null;
+  clockingIds:     string[];
+  hasConflicts:    boolean;
+  lastClockingAt:  Date;
 }
 
-// ── Scheduled shift matching ──────────────────────────────────────────────────
+function groupIntoPeriods(
+  clockings:  Clocking[],
+  results:    ForwardPassResult[],
+): PeriodAcc[] {
+  const resultById = new Map(results.map((r) => [r.id, r]));
+  const periods: PeriodAcc[] = [];
+  let current: PeriodAcc | null = null;
 
-/**
- * Find the best-matching scheduled shift for a work period whose bStart is `bStart`.
- * Matches on proximity of planned_start to actual bStart, within maxShiftHours / 2.
- * Handles midnight-crossing shifts (checks schedule_date - 1 day as well).
- */
-function matchScheduledShift(
-  bStart: Date,
-  scheduledShifts: ScheduledShift[],
-  maxShiftHours: number
-): ScheduledShift | null {
-  const bDate = toDateStr(bStart);
-  let best: ScheduledShift | null = null;
-  let bestDiff = Infinity;
+  for (const c of clockings) {
+    const r = resultById.get(c.id)!;
+    const t = r.effectiveType;
 
-  for (const ss of scheduledShifts) {
-    const def = ss.shift_definition;
-    if (!def.planned_start || def.is_open_shift) continue;
-
-    // Candidate planned_start datetimes to compare against bStart
-    const candidates: Date[] = [];
-
-    // Same calendar day
-    if (ss.schedule_date === bDate) {
-      candidates.push(timeOnDate(bStart, def.planned_start));
+    if (t === "bStart") {
+      if (current) periods.push(current); // close unclosed period
+      current = {
+        bStartClocking: c,
+        bEndClocking:   null,
+        clockingIds:    [c.id],
+        hasConflicts:   r.hasConflict,
+        lastClockingAt: toDate(c.clocked_at),
+      };
+    } else if (t === "bEnd" && current) {
+      current.bEndClocking  = c;
+      current.clockingIds.push(c.id);
+      current.hasConflicts   = current.hasConflicts || r.hasConflict;
+      current.lastClockingAt = toDate(c.clocked_at);
+      periods.push(current);
+      current = null;
+    } else if (current) {
+      current.clockingIds.push(c.id);
+      current.hasConflicts   = current.hasConflicts || r.hasConflict;
+      current.lastClockingAt = toDate(c.clocked_at);
     }
-
-    // Shift started the previous day and crosses midnight
-    if (def.crosses_midnight) {
-      const prevDay = new Date(bStart);
-      prevDay.setUTCDate(prevDay.getUTCDate() - 1);
-      if (toDateStr(prevDay) === ss.schedule_date) {
-        candidates.push(timeOnDate(prevDay, def.planned_start));
-      }
-    }
-
-    for (const planned of candidates) {
-      const diff = hoursApart(planned, bStart);
-      if (diff < bestDiff && diff <= maxShiftHours / 2) {
-        bestDiff = diff;
-        best = ss;
-      }
-    }
+    // else: orphan clocking (no open period) — work_period_id cleared below
   }
 
-  return best;
-}
-
-// ── Type inference within one work period ─────────────────────────────────────
-
-/**
- * Given a group of clockings belonging to one work period, assign inferred_type
- * and is_bstart to each. Returns one result object per clocking.
- *
- * Locked clockings (type_locked = true) are not reassigned but are included in
- * the result so the caller can still update work_period_id / is_bstart.
- */
-function inferTypesForPeriod(
-  clockings: Clocking[],
-  scheduledShift: ScheduledShift | null,
-  bStartDate: Date,
-  maxShiftHours: number
-): ClockingResult[] {
-  const result: ClockingResult[] = [];
-  const remaining = new Set<string>(clockings.map((c) => c.id));
-  const conflictIds = new Set<string>();
-
-  /** Assign a type to a clocking, respecting type_locked. */
-  function assign(c: Clocking, type: string, isBstart = false): void {
-    remaining.delete(c.id);
-    if (c.type_locked) {
-      // Preserve the manager's type; only update is_bstart if relevant
-      result.push({ id: c.id, inferred_type: c.inferred_type!, is_bstart: isBstart, has_conflict: false });
-    } else {
-      result.push({ id: c.id, inferred_type: type, is_bstart: isBstart, has_conflict: false });
-    }
-  }
-
-  /** Find the clocking in `pool` nearest to `target` within `maxH` hours. */
-  function nearest(pool: Clocking[], target: Date, maxH: number): Clocking | null {
-    let best: Clocking | null = null;
-    let bestDiff = Infinity;
-    for (const c of pool) {
-      const diff = hoursApart(toDate(c.clocked_at), target);
-      if (diff < bestDiff && diff <= maxH) {
-        bestDiff = diff;
-        best = c;
-      }
-    }
-    return best;
-  }
-
-  // ── Step 1: bStart — always the first clocking ──────────────────────────────
-  const first = clockings[0];
-  // bStart type: 'bStart' if it's a CC clocking, 'IN' otherwise
-  const bStartType = first.raw_type === "CC" ? "bStart" : "IN";
-  assign(first, bStartType, true);
-
-  const def = scheduledShift?.shift_definition ?? null;
-
-  if (def && !def.is_open_shift && def.planned_start && def.planned_end) {
-    // ── Scheduled shift path ─────────────────────────────────────────────────
-
-    // Resolve planned_end as a datetime (may be next day if crosses_midnight)
-    let plannedEnd = timeOnDate(bStartDate, def.planned_end);
-    if (def.crosses_midnight && plannedEnd <= bStartDate) {
-      plannedEnd = new Date(plannedEnd.getTime() + 86_400_000);
-    }
-
-    if (def.break_type === "clocked" && def.breaks.length > 0) {
-      // Assign break OUT / break IN pairs by proximity
-      for (const br of def.breaks) {
-        const breakOutTarget = timeOnDate(bStartDate, br.start);
-        const breakInTarget = timeOnDate(bStartDate, br.end);
-
-        const pool = clockings.filter((c) => remaining.has(c.id));
-
-        const breakOut = nearest(pool, breakOutTarget, maxShiftHours);
-        if (breakOut) assign(breakOut, "OUT");
-
-        const pool2 = clockings.filter((c) => remaining.has(c.id));
-        const breakIn = nearest(pool2, breakInTarget, maxShiftHours);
-        if (breakIn) assign(breakIn, "IN");
-      }
-    }
-    // break_type 'none' or 'auto_deduct': no clocking pairs needed for breaks
-
-    // Shift-end OUT: nearest remaining clocking to planned_end
-    const endPool = clockings.filter((c) => remaining.has(c.id));
-    const shiftEnd = nearest(endPool, plannedEnd, maxShiftHours);
-    if (shiftEnd) assign(shiftEnd, "OUT");
-
-    // Remaining clockings: CC if they have a cost_centre_id, otherwise AMBIGUOUS
-    for (const c of clockings) {
-      if (!remaining.has(c.id)) continue;
-      const type = c.raw_type === "CC" || c.cost_centre_id ? "CC" : "AMBIGUOUS";
-      if (type === "AMBIGUOUS") conflictIds.add(c.id);
-      assign(c, type);
-    }
-  } else {
-    // ── Open shift / no scheduled shift: alternating IN/OUT after bStart ─────
-
-    // After bStart (which is IN or bStart), we next expect an OUT
-    let expectingOut = true;
-
-    for (const c of clockings) {
-      if (!remaining.has(c.id)) continue;
-
-      if (c.type_locked) {
-        // Respect manager's assignment; update expectation accordingly
-        remaining.delete(c.id);
-        result.push({ id: c.id, inferred_type: c.inferred_type!, is_bstart: false, has_conflict: false });
-        if (c.inferred_type === "IN" || c.inferred_type === "bStart") expectingOut = true;
-        if (c.inferred_type === "OUT") expectingOut = false;
-        continue;
-      }
-
-      // Terminal supplied an explicit type
-      if (c.raw_type === "IN" || c.raw_type === "OUT") {
-        assign(c, c.raw_type);
-        expectingOut = c.raw_type === "IN";
-        continue;
-      }
-
-      // Cost centre clocking — keep as CC, doesn't affect IN/OUT alternation
-      if (c.raw_type === "CC" || c.cost_centre_id) {
-        assign(c, "CC");
-        continue;
-      }
-
-      // Bare swipe — alternate
-      const type = expectingOut ? "OUT" : "IN";
-      assign(c, type);
-      expectingOut = !expectingOut;
-    }
-
-    // Trailing IN with no OUT = employee may still be clocked in → flag conflict
-    const lastResult = result[result.length - 1];
-    if (
-      lastResult &&
-      (lastResult.inferred_type === "IN" || lastResult.inferred_type === "bStart")
-    ) {
-      conflictIds.add(lastResult.id);
-    }
-  }
-
-  // Stamp conflict flag onto results
-  for (const r of result) {
-    if (conflictIds.has(r.id)) r.has_conflict = true;
-  }
-
-  return result;
+  if (current) periods.push(current); // unclosed period (employee still clocked in)
+  return periods;
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
 /**
  * Run the inference engine for one member over a date range.
- *
- * @param supabase  Should be an admin/service-role client so RLS doesn't block
- *                  cross-table reads/writes during processing.
+ * @param supabase Should be a service-role client (bypasses RLS).
  */
 export async function runInference(params: {
-  supabase: SupabaseClient;
+  supabase:       SupabaseClient;
   organisationId: string;
-  memberId: string;
-  /** Start of the period to process (inclusive) */
-  rangeStart: Date;
-  /** End of the period to process (inclusive) */
-  rangeEnd: Date;
+  memberId:       string;
+  rangeStart:     Date;
+  rangeEnd:       Date;
 }): Promise<InferenceResult> {
   const { supabase, organisationId, memberId, rangeStart, rangeEnd } = params;
 
   // ── 1. Fetch org config ────────────────────────────────────────────────────
   const { data: org, error: orgErr } = await supabase
     .from("organisations")
-    .select("ts_gap_threshold_hours, ts_max_shift_hours, ts_allocate_to")
+    .select("ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_allocate_to")
     .eq("id", organisationId)
     .single();
 
   if (orgErr || !org) throw new Error(`Organisation ${organisationId} not found`);
 
   const config: OrgConfig = {
-    ts_gap_threshold_hours: Number(org.ts_gap_threshold_hours),
-    ts_max_shift_hours: Number(org.ts_max_shift_hours),
-    ts_allocate_to: org.ts_allocate_to as "start" | "end",
+    ts_max_shift_hours:              Number(org.ts_max_shift_hours),
+    ts_max_break_minutes:            Number(org.ts_max_break_minutes ?? 60),
+    ts_shift_start_variance_minutes: Number(org.ts_shift_start_variance_minutes ?? 30),
+    ts_allocate_to:                  (org.ts_allocate_to ?? "start") as "start" | "end",
   };
 
-  // ── 2. Fetch clockings with buffer to catch midnight crossings ─────────────
-  const bufferMs = config.ts_max_shift_hours * 3_600_000;
+  // ── 2. Fetch clockings with buffer ─────────────────────────────────────────
+  const bufferMs   = config.ts_max_shift_hours * 3_600_000;
   const fetchStart = new Date(rangeStart.getTime() - bufferMs).toISOString();
-  const fetchEnd = new Date(rangeEnd.getTime() + bufferMs).toISOString();
+  const fetchEnd   = new Date(rangeEnd.getTime()   + bufferMs).toISOString();
 
   const { data: rawClockings, error: clockErr } = await supabase
     .from("clockings")
-    .select(
-      "id, clocked_at, raw_type, inferred_type, is_bstart, type_locked, cost_centre_id, work_period_id"
-    )
+    .select("id, clocked_at, raw_type, inferred_type, override_type, is_bstart, cost_centre_id, work_period_id")
     .eq("organisation_id", organisationId)
     .eq("member_id", memberId)
     .eq("is_deleted", false)
@@ -377,68 +334,89 @@ export async function runInference(params: {
 
   if (clockErr) throw clockErr;
   const clockings = (rawClockings ?? []) as Clocking[];
-  if (clockings.length === 0) return { periodsCreated: 0, periodsUpdated: 0, conflicts: 0 };
 
-  // ── 3. Fetch scheduled shifts in buffered date range ──────────────────────
-  const bufferDays = Math.ceil(config.ts_max_shift_hours / 24) + 1;
-  const shiftDateStart = new Date(rangeStart);
-  shiftDateStart.setUTCDate(shiftDateStart.getUTCDate() - bufferDays);
-  const shiftDateEnd = new Date(rangeEnd);
-  shiftDateEnd.setUTCDate(shiftDateEnd.getUTCDate() + bufferDays);
+  if (clockings.length === 0) {
+    await supabase
+      .from("work_periods")
+      .delete()
+      .eq("member_id", memberId)
+      .eq("organisation_id", organisationId)
+      .gte("period_start", rangeStart.toISOString())
+      .lte("period_start", rangeEnd.toISOString());
+    return { periodsCreated: 0, periodsUpdated: 0, conflicts: 0 };
+  }
+
+  // ── 3. Fetch scheduled shifts → build shiftByDate map ─────────────────────
+  const bufferDays    = Math.ceil(config.ts_max_shift_hours / 24) + 1;
+  const shiftFetchStart = new Date(rangeStart);
+  shiftFetchStart.setUTCDate(shiftFetchStart.getUTCDate() - bufferDays);
+  const shiftFetchEnd = new Date(rangeEnd);
+  shiftFetchEnd.setUTCDate(shiftFetchEnd.getUTCDate() + bufferDays);
 
   const { data: rawShifts } = await supabase
     .from("scheduled_shifts")
     .select(
-      `id, schedule_date,
-       shift_definition:shift_definitions(
-         id, is_open_shift, planned_start, planned_end,
-         crosses_midnight, break_type, breaks
-       )`
+      `id, schedule_date, is_off_day,
+       shift_definition:shift_definitions(id, planned_start, is_open_shift)`
     )
     .eq("organisation_id", organisationId)
     .eq("member_id", memberId)
-    .gte("schedule_date", toDateStr(shiftDateStart))
-    .lte("schedule_date", toDateStr(shiftDateEnd));
+    .eq("is_off_day", false)
+    .gte("schedule_date", toDateStr(shiftFetchStart))
+    .lte("schedule_date", toDateStr(shiftFetchEnd));
 
-  const scheduledShifts = (rawShifts ?? []) as unknown as ScheduledShift[];
+  // Build Map<dateStr, ShiftInfo>
+  const shiftByDate = new Map<string, ShiftInfo>();
+  for (const ss of (rawShifts ?? []) as unknown as Array<{
+    id: string;
+    schedule_date: string;
+    shift_definition: { planned_start: string | null; is_open_shift: boolean } | null;
+  }>) {
+    const def = ss.shift_definition;
+    if (!def || def.is_open_shift || !def.planned_start) {
+      shiftByDate.set(ss.schedule_date, { scheduledShiftId: ss.id, plannedStartDatetime: null });
+      continue;
+    }
+    // Compute planned start as a UTC datetime on the schedule date
+    const baseDate = toDate(`${ss.schedule_date}T00:00:00Z`);
+    const plannedStartDatetime = timeOnDate(baseDate, def.planned_start);
+    shiftByDate.set(ss.schedule_date, { scheduledShiftId: ss.id, plannedStartDatetime });
+  }
 
-  // ── 4. Group clockings into work periods by gap ────────────────────────────
-  const groups = groupByGap(clockings, config.ts_gap_threshold_hours);
+  // ── 4. Forward pass: assign inferred types ─────────────────────────────────
+  const results = runForwardPass(clockings, shiftByDate, config);
+  const resultById = new Map(results.map((r) => [r.id, r]));
 
-  // ── 5. Process each group ─────────────────────────────────────────────────
+  // ── 5. Group into work periods from bStart/bEnd pairs ─────────────────────
+  const periods = groupIntoPeriods(clockings, results);
+
+  // ── 6. Upsert work periods and update clockings ────────────────────────────
   let periodsCreated = 0;
   let periodsUpdated = 0;
-  let conflicts = 0;
+  let conflicts      = 0;
   const now = new Date().toISOString();
+  const writtenPeriodIds = new Set<string>();
 
-  for (const group of groups) {
-    const bStart = toDate(group[0].clocked_at);
+  // Track which clockings were assigned to a work period
+  const clockingPeriodMap = new Map<string, string>(); // clocking id → work period id
 
-    // Skip buffer-only groups entirely outside the requested range
-    const lastClocking = toDate(group[group.length - 1].clocked_at);
-    if (lastClocking < rangeStart || bStart > rangeEnd) continue;
+  for (const period of periods) {
+    const bStart = toDate(period.bStartClocking.clocked_at);
 
-    // Match to a scheduled shift (null = open/unscheduled)
-    const matchedShift = matchScheduledShift(bStart, scheduledShifts, config.ts_max_shift_hours);
+    // Skip periods entirely outside the requested range
+    if (period.lastClockingAt < rangeStart || bStart > rangeEnd) continue;
 
-    // Infer types
-    const inferred = inferTypesForPeriod(group, matchedShift, bStart, config.ts_max_shift_hours);
-
-    // Find period_end = clocked_at of the last OUT result
-    const outResults = inferred.filter((r) => r.inferred_type === "OUT");
-    const lastOutId = outResults.length > 0 ? outResults[outResults.length - 1].id : null;
-    const lastOut = lastOutId
-      ? toDate(group.find((c) => c.id === lastOutId)!.clocked_at)
-      : null;
-
-    // Determine timesheet_date
-    const allocateSource = config.ts_allocate_to === "end" && lastOut ? lastOut : bStart;
+    // Determine period_end and timesheet_date
+    const bEnd = period.bEndClocking ? toDate(period.bEndClocking.clocked_at) : null;
+    const allocateSource = config.ts_allocate_to === "end" && bEnd ? bEnd : bStart;
     const timesheetDate = toDateStr(allocateSource);
 
-    const hasConflicts = inferred.some((r) => r.has_conflict);
-    if (hasConflicts) conflicts++;
+    if (period.hasConflicts) conflicts++;
 
-    // ── Upsert work_period (keyed on member_id + period_start) ──────────────
+    // Look up scheduled shift for this period's start date
+    const scheduledShiftId = shiftByDate.get(toDateStr(bStart))?.scheduledShiftId ?? null;
+
+    // Upsert work_period (keyed on member_id + period_start)
     const { data: existing } = await supabase
       .from("work_periods")
       .select("id")
@@ -452,11 +430,11 @@ export async function runInference(params: {
       await supabase
         .from("work_periods")
         .update({
-          scheduled_shift_id: matchedShift?.id ?? null,
-          period_end: lastOut?.toISOString() ?? null,
-          timesheet_date: timesheetDate,
-          has_conflicts: hasConflicts,
-          inference_run_at: now,
+          scheduled_shift_id: scheduledShiftId,
+          period_end:         bEnd?.toISOString() ?? null,
+          timesheet_date:     timesheetDate,
+          has_conflicts:      period.hasConflicts,
+          inference_run_at:   now,
         })
         .eq("id", existing.id);
       workPeriodId = existing.id;
@@ -465,14 +443,14 @@ export async function runInference(params: {
       const { data: created, error: createErr } = await supabase
         .from("work_periods")
         .insert({
-          organisation_id: organisationId,
-          member_id: memberId,
-          scheduled_shift_id: matchedShift?.id ?? null,
-          period_start: bStart.toISOString(),
-          period_end: lastOut?.toISOString() ?? null,
-          timesheet_date: timesheetDate,
-          has_conflicts: hasConflicts,
-          inference_run_at: now,
+          organisation_id:    organisationId,
+          member_id:          memberId,
+          scheduled_shift_id: scheduledShiftId,
+          period_start:       bStart.toISOString(),
+          period_end:         bEnd?.toISOString() ?? null,
+          timesheet_date:     timesheetDate,
+          has_conflicts:      period.hasConflicts,
+          inference_run_at:   now,
         })
         .select("id")
         .single();
@@ -481,30 +459,59 @@ export async function runInference(params: {
       periodsCreated++;
     }
 
-    // ── Update each clocking ─────────────────────────────────────────────────
-    for (const r of inferred) {
-      const original = group.find((c) => c.id === r.id)!;
+    writtenPeriodIds.add(workPeriodId);
 
-      if (original.type_locked) {
-        // Only update work_period_id and is_bstart — never touch inferred_type
-        if (original.work_period_id !== workPeriodId || original.is_bstart !== r.is_bstart) {
-          await supabase
-            .from("clockings")
-            .update({ work_period_id: workPeriodId, is_bstart: r.is_bstart })
-            .eq("id", r.id);
-        }
-        continue;
-      }
-
-      await supabase
-        .from("clockings")
-        .update({
-          inferred_type: r.inferred_type,
-          is_bstart: r.is_bstart,
-          work_period_id: workPeriodId,
-        })
-        .eq("id", r.id);
+    for (const clockingId of period.clockingIds) {
+      clockingPeriodMap.set(clockingId, workPeriodId);
     }
+  }
+
+  // ── 7. Update each clocking in the range ──────────────────────────────────
+  // Update inferred_type, is_bstart, work_period_id for all clockings
+  // in the requested range (not just those in written periods).
+  const rangeClockings = clockings.filter(
+    (c) => c.clocked_at >= rangeStart.toISOString() && c.clocked_at <= rangeEnd.toISOString()
+  );
+
+  for (const c of rangeClockings) {
+    const r = resultById.get(c.id);
+    if (!r) continue;
+
+    const workPeriodId = clockingPeriodMap.get(c.id) ?? null;
+
+    // Skip update if nothing changed (optimise DB writes)
+    const typeChanged     = !c.override_type && r.inferredType !== c.inferred_type;
+    const bstartChanged   = r.isBstart !== c.is_bstart;
+    const periodChanged   = workPeriodId !== c.work_period_id;
+
+    if (!typeChanged && !bstartChanged && !periodChanged) continue;
+
+    const updatePayload: Record<string, unknown> = {
+      is_bstart:      r.isBstart,
+      work_period_id: workPeriodId,
+    };
+
+    // Never overwrite inferred_type when the clocking has a manager override
+    if (!c.override_type) {
+      updatePayload.inferred_type = r.inferredType;
+    }
+
+    await supabase.from("clockings").update(updatePayload).eq("id", c.id);
+  }
+
+  // ── 8. Delete orphaned work periods ───────────────────────────────────────
+  const deleteQuery = supabase
+    .from("work_periods")
+    .delete()
+    .eq("member_id", memberId)
+    .eq("organisation_id", organisationId)
+    .gte("period_start", rangeStart.toISOString())
+    .lte("period_start", rangeEnd.toISOString());
+
+  if (writtenPeriodIds.size > 0) {
+    await deleteQuery.not("id", "in", `(${[...writtenPeriodIds].join(",")})`);
+  } else {
+    await deleteQuery;
   }
 
   return { periodsCreated, periodsUpdated, conflicts };

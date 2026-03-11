@@ -19,6 +19,9 @@ interface SidebarProps {
   requireMfa: boolean;
   canDefineCustomFields: boolean;
   currencySymbol: string;
+  tsMaxShiftHours: number;
+  tsMaxBreakMinutes: number;
+  tsShiftStartVarianceMinutes: number;
   initialFavouriteIds?: string[];
   initialCustomReports?: { id: string; name: string }[];
   initialShiftDefs?: { id: string; name: string }[];
@@ -33,6 +36,9 @@ export function Sidebar({
   requireMfa,
   canDefineCustomFields,
   currencySymbol,
+  tsMaxShiftHours,
+  tsMaxBreakMinutes,
+  tsShiftStartVarianceMinutes,
   initialFavouriteIds = [],
   initialCustomReports = [],
   initialShiftDefs = [],
@@ -254,6 +260,9 @@ export function Sidebar({
           role={role}
           canDefineCustomFields={canDefineCustomFields}
           currencySymbol={currencySymbol}
+          tsMaxShiftHours={tsMaxShiftHours}
+          tsMaxBreakMinutes={tsMaxBreakMinutes}
+          tsShiftStartVarianceMinutes={tsShiftStartVarianceMinutes}
         />
       )}
     </>

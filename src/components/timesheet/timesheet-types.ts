@@ -1,10 +1,10 @@
 export interface ClockingData {
   id:           string;
   clockedAt:    string;        // ISO timestamptz — immutable
-  rawType:      string | null; // 'IN' | 'OUT' | 'CC' | null
-  inferredType: string | null; // 'IN' | 'OUT' | 'CC' | 'bStart' | 'AMBIGUOUS'
+  rawType:      string | null; // 'IN' | 'OUT' | 'BreakIN' | 'BreakOUT' | 'CC' | null
+  inferredType: string | null; // engine output: 'bStart'|'bEnd'|'BreakOut'|'BreakIn'|'INambiguous'|'OUTambiguous'|'CC'
+  overrideType: string | null; // manager override — takes precedence over inferredType when set; shown in blue
   isBstart:     boolean;
-  typeLocked:   boolean;
   costCentreId: string | null;
 }
 
@@ -16,9 +16,11 @@ export interface WorkPeriodData {
   hasConflicts:   boolean;
   inferenceRunAt: string | null;
   scheduledShift: {
-    name:         string;
-    plannedStart: string | null; // "HH:MM:SS"
+    shiftDefinitionId: string | null;  // null for off-days
+    name:         string | null;
+    plannedStart: string | null;
     plannedEnd:   string | null;
+    isOffDay:     boolean;
   } | null;
   clockings: ClockingData[];
 }
@@ -29,24 +31,35 @@ export interface ClockingPair {
   out: ClockingData | null;
 }
 
+/** The effective type for a clocking: override takes precedence over inferred */
+export function effectiveType(c: ClockingData): string | null {
+  return c.overrideType ?? c.inferredType;
+}
+
+function isInType(t: string | null): boolean {
+  return t === "bStart" || t === "BreakIn";
+}
+function isOutType(t: string | null): boolean {
+  return t === "bEnd" || t === "BreakOut";
+}
+
 /** Extract paired IN/OUT clockings from a work period, in time order */
 export function computePairs(clockings: ClockingData[]): ClockingPair[] {
   const relevant = clockings
-    .filter((c) =>
-      c.inferredType === "IN" ||
-      c.inferredType === "OUT" ||
-      c.inferredType === "bStart"
-    )
+    .filter((c) => {
+      const t = effectiveType(c);
+      return isInType(t) || isOutType(t);
+    })
     .sort((a, b) => a.clockedAt.localeCompare(b.clockedAt));
 
   const pairs: ClockingPair[] = [];
   let i = 0;
   while (i < relevant.length) {
     const c = relevant[i];
-    const isIn = c.inferredType === "IN" || c.inferredType === "bStart";
-    if (isIn) {
+    const t = effectiveType(c);
+    if (isInType(t)) {
       const next = relevant[i + 1];
-      if (next && next.inferredType === "OUT") {
+      if (next && isOutType(effectiveType(next))) {
         pairs.push({ in: c, out: next });
         i += 2;
       } else {
@@ -62,7 +75,7 @@ export function computePairs(clockings: ClockingData[]): ClockingPair[] {
   return pairs;
 }
 
-/** Sum hours from complete IN/OUT pairs */
+/** Sum net hours from complete IN/OUT pairs (break time excluded automatically) */
 export function computeGrossHours(pairs: ClockingPair[]): number {
   return pairs.reduce((total, p) => {
     if (!p.in || !p.out) return total;

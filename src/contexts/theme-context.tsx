@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from "react";
 
-type Theme = "dark" | "vibrant";
+type Theme = "dark" | "vibrant" | "bq";
 
 interface ThemeContextValue {
   theme: Theme;
@@ -20,8 +20,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const stored = localStorage.getItem("clearhr-theme") as Theme | null;
-    if (stored === "vibrant") {
-      setThemeState("vibrant");
+    if (stored === "vibrant" || stored === "bq") {
+      setThemeState(stored);
     }
     setMounted(true);
   }, []);
@@ -29,7 +29,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!mounted) return;
     const html = document.documentElement;
-    html.classList.remove("dark", "vibrant");
+    html.classList.remove("dark", "vibrant", "bq");
     html.classList.add(theme);
     localStorage.setItem("clearhr-theme", theme);
   }, [theme, mounted]);

@@ -2,6 +2,7 @@ export type ColPref = { id: string; visible: boolean };
 
 export type GridPrefs = {
   columns: ColPref[];
+  filters?: Record<string, unknown>;
   groupBy?: string;
   pdfPageBreak?: boolean;
   pdfRepeatHeaders?: boolean;
@@ -16,6 +17,7 @@ export function parseGridPrefs(raw: unknown): GridPrefs {
     const obj = raw as Record<string, unknown>;
     return {
       columns: Array.isArray(obj.columns) ? (obj.columns as ColPref[]) : [],
+      filters: obj.filters && typeof obj.filters === "object" && !Array.isArray(obj.filters) ? (obj.filters as Record<string, unknown>) : undefined,
       groupBy: typeof obj.groupBy === "string" && obj.groupBy ? obj.groupBy : undefined,
       pdfPageBreak: obj.pdfPageBreak === true ? true : undefined,
       pdfRepeatHeaders: obj.pdfRepeatHeaders === true ? true : undefined,

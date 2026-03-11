@@ -15,8 +15,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { saveShiftDefinition } from "../actions";
+import { saveShiftDefinition, deleteShiftDefinition } from "../actions";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -458,7 +469,20 @@ export function ShiftDefinitionClient({
   const [overtimeBands, setOvertimeBands] = useState<OvertimeBand[]>(initialOvertimeBands);
 
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function handleDelete() {
+    if (!shiftDef?.id) return;
+    setDeleting(true);
+    const result = await deleteShiftDefinition(shiftDef.id);
+    setDeleting(false);
+    if (result.success) {
+      router.replace("/shifts");
+    } else {
+      setError(result.error ?? "Delete failed");
+    }
+  }
 
   async function handleSave() {
     if (!name.trim()) { setError("Name is required."); return; }
@@ -506,6 +530,32 @@ export function ShiftDefinitionClient({
           <p className="text-sm text-muted-foreground">Shifts</p>
           <h1 className="text-2xl font-bold truncate">{isNew ? "New Shift" : name}</h1>
         </div>
+        {!isNew && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="ghost" size="icon" disabled={deleting} className="text-destructive hover:text-destructive hover:bg-destructive/10">
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete shift?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will permanently delete <strong>{name}</strong> and all its breaks, overtime bands, and overtime rules. This cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={handleDelete}
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                >
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
         <Button onClick={handleSave} disabled={saving}>
           <Save className="h-4 w-4 mr-1.5" />
           {saving ? "Saving…" : "Save"}

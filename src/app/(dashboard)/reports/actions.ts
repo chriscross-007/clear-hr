@@ -46,7 +46,7 @@ export type CustomReport = {
   name: string;
   based_on: string;
   shared: boolean;
-  prefs: { columns?: ColPref[]; filters?: Record<string, unknown> };
+  prefs: { columns?: ColPref[]; filters?: Record<string, unknown>; groupBy?: string; pdfPageBreak?: boolean; pdfRepeatHeaders?: boolean; aggregateMetrics?: string[] };
   created_at: string;
   updated_at: string;
 };
@@ -77,7 +77,7 @@ export async function createCustomReport(input: {
   name: string;
   based_on: string;
   shared?: boolean;
-  prefs?: { columns?: ColPref[]; filters?: Record<string, unknown> };
+  prefs?: { columns?: ColPref[]; filters?: Record<string, unknown>; groupBy?: string; pdfPageBreak?: boolean; pdfRepeatHeaders?: boolean; aggregateMetrics?: string[] };
 }): Promise<{ success: boolean; error?: string; report?: CustomReport }> {
   try {
     const { supabase, membership, plan } = await getCallerMembership();
@@ -116,7 +116,7 @@ export async function updateCustomReport(
   input: {
     name?: string;
     shared?: boolean;
-    prefs?: { columns?: ColPref[]; filters?: Record<string, unknown> };
+    prefs?: { columns?: ColPref[]; filters?: Record<string, unknown>; groupBy?: string; pdfPageBreak?: boolean; pdfRepeatHeaders?: boolean; aggregateMetrics?: string[] };
   }
 ): Promise<{ success: boolean; error?: string }> {
   try {

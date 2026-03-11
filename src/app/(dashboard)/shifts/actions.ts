@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -127,6 +128,7 @@ export async function saveShiftDefinition(
     if (error) return { success: false, error: error.message };
   }
 
+  revalidatePath("/", "layout");
   return { success: true, id: shiftId };
 }
 
@@ -147,5 +149,6 @@ export async function deleteShiftDefinition(
     .eq("organisation_id", caller.organisation_id);
 
   if (error) return { success: false, error: error.message };
+  revalidatePath("/", "layout");
   return { success: true };
 }

@@ -2,7 +2,7 @@
 
 import type { ColumnDef, Column, RowData } from "@tanstack/react-table";
 import type { ReactNode } from "react";
-import { ArrowUp, ArrowDown, ArrowUpDown, Trash2, MoreHorizontal, Clock, CalendarDays, LayoutDashboard, Settings } from "lucide-react";
+import { ArrowUp, ArrowDown, ArrowUpDown, Trash2, MoreVertical, Clock, CalendarDays, LayoutDashboard, Settings } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -478,6 +478,8 @@ export function buildEmployeeColumns(opts: {
         row.accepted_at ? "Active" : row.invited_at ? "Invited" : "Not invited",
       header: "Status",
       cell: ({ row }) => <InviteStatus member={row.original} />,
+      filterFn: (row, columnId, filterValue: string) =>
+        !filterValue || row.getValue<string>(columnId) === filterValue,
       meta: {
         filterElement: (column) => (
           <select
@@ -634,7 +636,7 @@ export function buildEmployeeColumns(opts: {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon">
-                  <MoreHorizontal className="h-4 w-4" />
+                  <MoreVertical className="h-4 w-4" />
                   <span className="sr-only">Open menu</span>
                 </Button>
               </DropdownMenuTrigger>

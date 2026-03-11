@@ -116,6 +116,7 @@ export default async function StandardReportPage({
       callerMemberId={callerMemberId}
       existingCustomReports={customReports}
       orgName={orgName}
+      savedFilters={gridPrefs.filters}
     />
   );
 }

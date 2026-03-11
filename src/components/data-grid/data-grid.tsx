@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -17,6 +17,7 @@ import {
 } from "@tanstack/react-table";
 import { useColumnPrefs } from "@/hooks/use-column-prefs";
 import { type ColPref } from "@/lib/grid-prefs-actions";
+import type { GridPrefs } from "@/lib/grid-prefs";
 import {
   ColumnCustomiserTrigger,
   ColumnCustomiserDialog,
@@ -97,6 +98,8 @@ interface DataGridProps<T> {
   onPageRowsChange?: (rows: T[]) => void;
   /** Initial filter state (applied once on mount) */
   initialFilters?: ColumnFiltersState;
+  /** Called whenever any saveable prefs change (columns, filters, groupBy, etc.) */
+  onPrefsChange?: (snapshot: GridPrefs) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +125,7 @@ export function DataGrid<T extends object>({
   onExportPdf,
   onPageRowsChange,
   initialFilters,
+  onPrefsChange,
 }: DataGridProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(initialFilters ?? []);
@@ -191,6 +195,25 @@ export function DataGrid<T extends object>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [table.getRowModel().rows.length, sorting, columnFilters, pageIndex, pageSize]);
 
+  // Notify parent of the latest saveable prefs snapshot
+  const onPrefsChangeRef = useRef(onPrefsChange);
+  onPrefsChangeRef.current = onPrefsChange;
+  useEffect(() => {
+    if (!onPrefsChangeRef.current) return;
+    const filters = columnFilters.length > 0
+      ? Object.fromEntries(columnFilters.map((f) => [f.id, f.value]))
+      : undefined;
+    onPrefsChangeRef.current({
+      columns: prefs,
+      filters,
+      groupBy: groupBy || undefined,
+      pdfPageBreak: pdfPageBreak || undefined,
+      pdfRepeatHeaders: pdfRepeatHeaders || undefined,
+      aggregateMetrics,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs, columnFilters, groupBy, pdfPageBreak, pdfRepeatHeaders, aggregateMetrics]);
+
   async function handleExportPdf(orientation: "portrait" | "landscape") {
     if (!onExportPdf) return;
     setPdfLoading(true);
@@ -209,7 +232,9 @@ export function DataGrid<T extends object>({
   type AggValues = { sum: number; avg: number; count: number; min: number; max: number };
 
   const visibleLeafCols = table.getVisibleLeafColumns();
-  const hasAggregates = visibleLeafCols.some((col) => col.columnDef.meta?.getAggregateValue);
+  // Check ALL columns (not just visible) so the aggregate options stay accessible in the
+  // customiser even when the user has hidden their numeric/currency columns.
+  const hasAggregates = table.getAllLeafColumns().some((col) => col.columnDef.meta?.getAggregateValue);
 
   function fmtAgg(value: number, meta: { aggregateFormat?: "currency" | "number"; aggregateCurrencySymbol?: string; aggregateDecimals?: number | null }): string {
     const fmt = meta.aggregateFormat;

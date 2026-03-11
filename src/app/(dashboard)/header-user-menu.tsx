@@ -114,10 +114,10 @@ export function HeaderUserMenu({
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onSelect={() => setTheme(theme === "dark" ? "vibrant" : "dark")}
+              onSelect={() => setTheme(theme === "dark" ? "vibrant" : theme === "vibrant" ? "bq" : "dark")}
             >
               <Palette className="mr-2 h-4 w-4" />
-              {theme === "dark" ? "Vibrant theme" : "Dark theme"}
+              {theme === "dark" ? "Vibrant theme" : theme === "vibrant" ? "B&Q theme" : "Dark theme"}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
