@@ -32,14 +32,26 @@ interface OrgConfig {
 }
 
 interface Clocking {
-  id:             string;
-  clocked_at:     string;        // ISO timestamptz — NEVER modified
-  raw_type:       string | null; // 'IN' | 'OUT' | 'BreakIN' | 'BreakOUT' | 'CC' | null
-  inferred_type:  string | null;
-  override_type:  string | null; // manager override; when set, skips inference
-  is_bstart:      boolean;
-  cost_centre_id: string | null;
-  work_period_id: string | null;
+  id:                   string;
+  clocked_at:           string;        // ISO timestamptz — original, NEVER modified
+  raw_type:             string | null; // 'IN' | 'OUT' | 'BreakIN' | 'BreakOUT' | 'CC' | null
+  inferred_type:        string | null;
+  override_type:        string | null; // manager override; when set, skips inference
+  is_bstart:            boolean;
+  cost_centre_id:       string | null;
+  work_period_id:       string | null;
+  edited_clocked_at:    string | null; // replaces clocked_at when set
+  edited_raw_type:      string | null; // replaces raw_type when set
+}
+
+/** Effective timestamp for a clocking (edited overrides original) */
+function effectiveAt(c: Clocking): string {
+  return c.edited_clocked_at ?? c.clocked_at;
+}
+
+/** Effective raw type for a clocking (edited overrides original) */
+function effectiveRaw(c: Clocking): string | null {
+  return c.edited_raw_type ?? c.raw_type;
 }
 
 interface ShiftInfo {
@@ -166,7 +178,7 @@ function runForwardPass(
 
   for (let i = 0; i < clockings.length; i++) {
     const c = clockings[i];
-    const clockedAt = toDate(c.clocked_at);
+    const clockedAt = toDate(effectiveAt(c));
 
     // ── Manager override: use as-is, skip inference ──────────────────────────
     if (c.override_type) {
@@ -184,7 +196,7 @@ function runForwardPass(
     }
 
     // ── CC clockings: always CC, don't affect shift state ────────────────────
-    if (c.raw_type === "CC" || c.cost_centre_id) {
+    if (effectiveRaw(c) === "CC" || c.cost_centre_id) {
       results.push({ id: c.id, inferredType: "CC", effectiveType: "CC", isBstart: false, hasConflict: false });
       continue;
     }
@@ -193,7 +205,7 @@ function runForwardPass(
 
     // D: open shift within MaxShiftLength
     const D = openBStart != null &&
-      (clockedAt.getTime() - toDate(openBStart.clocked_at).getTime()) / 3_600_000
+      (clockedAt.getTime() - toDate(effectiveAt(openBStart)).getTime()) / 3_600_000
         < config.ts_max_shift_hours;
 
     // B: inside ShiftStartVariance band
@@ -205,13 +217,13 @@ function runForwardPass(
     // C: next clocking within MaxBreakLength minutes
     const nextClocking = clockings[i + 1];
     const C = nextClocking != null &&
-      (toDate(nextClocking.clocked_at).getTime() - clockedAt.getTime()) / 60_000
+      (toDate(effectiveAt(nextClocking)).getTime() - clockedAt.getTime()) / 60_000
         <= config.ts_max_break_minutes;
 
     // E: previous clocking within MaxBreakLength minutes
     const prevClocking = clockings[i - 1];
     const E = prevClocking != null &&
-      (clockedAt.getTime() - toDate(prevClocking.clocked_at).getTime()) / 60_000
+      (clockedAt.getTime() - toDate(effectiveAt(prevClocking)).getTime()) / 60_000
         <= config.ts_max_break_minutes;
 
     // prev: effective type of the most recent non-CC result
@@ -224,7 +236,7 @@ function runForwardPass(
     }
 
     // ── Apply rules ───────────────────────────────────────────────────────────
-    const inferredType = applyRules(c.raw_type, prev, D, B, C, E);
+    const inferredType = applyRules(effectiveRaw(c), prev, D, B, C, E);
     const hasConflict  = inferredType === "INambiguous" || inferredType === "OUTambiguous";
 
     results.push({ id: c.id, inferredType, effectiveType: inferredType, isBstart: inferredType === "bStart", hasConflict });
@@ -265,19 +277,19 @@ function groupIntoPeriods(
         bEndClocking:   null,
         clockingIds:    [c.id],
         hasConflicts:   r.hasConflict,
-        lastClockingAt: toDate(c.clocked_at),
+        lastClockingAt: toDate(effectiveAt(c)),
       };
     } else if (t === "bEnd" && current) {
       current.bEndClocking  = c;
       current.clockingIds.push(c.id);
       current.hasConflicts   = current.hasConflicts || r.hasConflict;
-      current.lastClockingAt = toDate(c.clocked_at);
+      current.lastClockingAt = toDate(effectiveAt(c));
       periods.push(current);
       current = null;
     } else if (current) {
       current.clockingIds.push(c.id);
       current.hasConflicts   = current.hasConflicts || r.hasConflict;
-      current.lastClockingAt = toDate(c.clocked_at);
+      current.lastClockingAt = toDate(effectiveAt(c));
     }
     // else: orphan clocking (no open period) — work_period_id cleared below
   }
@@ -324,7 +336,7 @@ export async function runInference(params: {
 
   const { data: rawClockings, error: clockErr } = await supabase
     .from("clockings")
-    .select("id, clocked_at, raw_type, inferred_type, override_type, is_bstart, cost_centre_id, work_period_id")
+    .select("id, clocked_at, raw_type, inferred_type, override_type, is_bstart, cost_centre_id, work_period_id, edited_clocked_at, edited_raw_type")
     .eq("organisation_id", organisationId)
     .eq("member_id", memberId)
     .eq("is_deleted", false)
@@ -333,7 +345,10 @@ export async function runInference(params: {
     .order("clocked_at");
 
   if (clockErr) throw clockErr;
-  const clockings = (rawClockings ?? []) as Clocking[];
+  // Sort by effective time (edited_clocked_at takes precedence over clocked_at)
+  const clockings = ((rawClockings ?? []) as Clocking[]).sort(
+    (a, b) => effectiveAt(a).localeCompare(effectiveAt(b))
+  );
 
   if (clockings.length === 0) {
     await supabase
@@ -401,13 +416,13 @@ export async function runInference(params: {
   const clockingPeriodMap = new Map<string, string>(); // clocking id → work period id
 
   for (const period of periods) {
-    const bStart = toDate(period.bStartClocking.clocked_at);
+    const bStart = toDate(effectiveAt(period.bStartClocking));
 
     // Skip periods entirely outside the requested range
     if (period.lastClockingAt < rangeStart || bStart > rangeEnd) continue;
 
     // Determine period_end and timesheet_date
-    const bEnd = period.bEndClocking ? toDate(period.bEndClocking.clocked_at) : null;
+    const bEnd = period.bEndClocking ? toDate(effectiveAt(period.bEndClocking)) : null;
     const allocateSource = config.ts_allocate_to === "end" && bEnd ? bEnd : bStart;
     const timesheetDate = toDateStr(allocateSource);
 
@@ -416,12 +431,14 @@ export async function runInference(params: {
     // Look up scheduled shift for this period's start date
     const scheduledShiftId = shiftByDate.get(toDateStr(bStart))?.scheduledShiftId ?? null;
 
-    // Upsert work_period (keyed on member_id + period_start)
+    // Upsert work_period — look up by both effective start and original start
+    // (if edited_clocked_at moved the bStart, we may need to find the old record)
+    const originalStart = toDate(period.bStartClocking.clocked_at);
     const { data: existing } = await supabase
       .from("work_periods")
       .select("id")
       .eq("member_id", memberId)
-      .eq("period_start", bStart.toISOString())
+      .in("period_start", [bStart.toISOString(), originalStart.toISOString()])
       .maybeSingle();
 
     let workPeriodId: string;

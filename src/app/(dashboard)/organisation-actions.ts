@@ -11,6 +11,14 @@ export async function updateOrganisation(data: {
   tsMaxShiftHours?: number;
   tsMaxBreakMinutes?: number;
   tsShiftStartVarianceMinutes?: number;
+  tsRoundFirstInMins?: number | null;
+  tsRoundFirstInGraceMins?: number | null;
+  tsRoundBreakOutMins?: number | null;
+  tsRoundBreakOutGraceMins?: number | null;
+  tsRoundBreakInMins?: number | null;
+  tsRoundBreakInGraceMins?: number | null;
+  tsRoundLastOutMins?: number | null;
+  tsRoundLastOutGraceMins?: number | null;
 }) {
   const supabase = await createClient();
   const {
@@ -34,11 +42,11 @@ export async function updateOrganisation(data: {
   // Fetch before-state for audit diff
   const { data: beforeOrg } = await supabase
     .from("organisations")
-    .select("name, member_label, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes")
+    .select("name, member_label, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins")
     .eq("id", membership.organisation_id)
     .single();
 
-  const updatePayload: Record<string, string | boolean | number> = {
+  const updatePayload: Record<string, string | boolean | number | null> = {
     name: data.name,
     member_label: data.memberLabel || "member",
   };
@@ -58,6 +66,15 @@ export async function updateOrganisation(data: {
   if (typeof data.tsShiftStartVarianceMinutes === "number" && data.tsShiftStartVarianceMinutes >= 0) {
     updatePayload.ts_shift_start_variance_minutes = data.tsShiftStartVarianceMinutes;
   }
+  // Rounding fields: allow null to clear
+  if (data.tsRoundFirstInMins !== undefined)       updatePayload.ts_round_first_in_mins        = data.tsRoundFirstInMins;
+  if (data.tsRoundFirstInGraceMins !== undefined)  updatePayload.ts_round_first_in_grace_mins  = data.tsRoundFirstInGraceMins;
+  if (data.tsRoundBreakOutMins !== undefined)      updatePayload.ts_round_break_out_mins       = data.tsRoundBreakOutMins;
+  if (data.tsRoundBreakOutGraceMins !== undefined) updatePayload.ts_round_break_out_grace_mins = data.tsRoundBreakOutGraceMins;
+  if (data.tsRoundBreakInMins !== undefined)       updatePayload.ts_round_break_in_mins        = data.tsRoundBreakInMins;
+  if (data.tsRoundBreakInGraceMins !== undefined)  updatePayload.ts_round_break_in_grace_mins  = data.tsRoundBreakInGraceMins;
+  if (data.tsRoundLastOutMins !== undefined)       updatePayload.ts_round_last_out_mins        = data.tsRoundLastOutMins;
+  if (data.tsRoundLastOutGraceMins !== undefined)  updatePayload.ts_round_last_out_grace_mins  = data.tsRoundLastOutGraceMins;
 
   const { error } = await supabase
     .from("organisations")
@@ -76,6 +93,14 @@ export async function updateOrganisation(data: {
         ts_max_shift_hours: beforeOrg.ts_max_shift_hours,
         ts_max_break_minutes: beforeOrg.ts_max_break_minutes,
         ts_shift_start_variance_minutes: beforeOrg.ts_shift_start_variance_minutes,
+        ts_round_first_in_mins:        beforeOrg.ts_round_first_in_mins,
+        ts_round_first_in_grace_mins:  beforeOrg.ts_round_first_in_grace_mins,
+        ts_round_break_out_mins:       beforeOrg.ts_round_break_out_mins,
+        ts_round_break_out_grace_mins: beforeOrg.ts_round_break_out_grace_mins,
+        ts_round_break_in_mins:        beforeOrg.ts_round_break_in_mins,
+        ts_round_break_in_grace_mins:  beforeOrg.ts_round_break_in_grace_mins,
+        ts_round_last_out_mins:        beforeOrg.ts_round_last_out_mins,
+        ts_round_last_out_grace_mins:  beforeOrg.ts_round_last_out_grace_mins,
       },
       {
         name: data.name,
@@ -85,6 +110,14 @@ export async function updateOrganisation(data: {
         ts_max_shift_hours: data.tsMaxShiftHours ?? beforeOrg.ts_max_shift_hours,
         ts_max_break_minutes: data.tsMaxBreakMinutes ?? beforeOrg.ts_max_break_minutes,
         ts_shift_start_variance_minutes: data.tsShiftStartVarianceMinutes ?? beforeOrg.ts_shift_start_variance_minutes,
+        ts_round_first_in_mins:        data.tsRoundFirstInMins        !== undefined ? data.tsRoundFirstInMins        : beforeOrg.ts_round_first_in_mins,
+        ts_round_first_in_grace_mins:  data.tsRoundFirstInGraceMins   !== undefined ? data.tsRoundFirstInGraceMins   : beforeOrg.ts_round_first_in_grace_mins,
+        ts_round_break_out_mins:       data.tsRoundBreakOutMins       !== undefined ? data.tsRoundBreakOutMins       : beforeOrg.ts_round_break_out_mins,
+        ts_round_break_out_grace_mins: data.tsRoundBreakOutGraceMins  !== undefined ? data.tsRoundBreakOutGraceMins  : beforeOrg.ts_round_break_out_grace_mins,
+        ts_round_break_in_mins:        data.tsRoundBreakInMins        !== undefined ? data.tsRoundBreakInMins        : beforeOrg.ts_round_break_in_mins,
+        ts_round_break_in_grace_mins:  data.tsRoundBreakInGraceMins   !== undefined ? data.tsRoundBreakInGraceMins   : beforeOrg.ts_round_break_in_grace_mins,
+        ts_round_last_out_mins:        data.tsRoundLastOutMins        !== undefined ? data.tsRoundLastOutMins        : beforeOrg.ts_round_last_out_mins,
+        ts_round_last_out_grace_mins:  data.tsRoundLastOutGraceMins   !== undefined ? data.tsRoundLastOutGraceMins   : beforeOrg.ts_round_last_out_grace_mins,
       }
     );
 

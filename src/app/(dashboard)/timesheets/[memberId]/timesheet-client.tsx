@@ -6,9 +6,9 @@ import Link from "next/link";
 import { ChevronLeft, ChevronRight, RefreshCw, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TimesheetGrid } from "@/components/timesheet/timesheet-grid";
-import { ClockingOverrideDialog } from "@/components/timesheet/override-dialog";
+import { ClockingEditDialog } from "@/components/timesheet/clocking-edit-dialog";
 import { triggerInference, setDayShift } from "@/app/(dashboard)/timesheets/actions";
-import type { ClockingData, WorkPeriodData } from "@/components/timesheet/timesheet-types";
+import type { CellClickContext, WorkPeriodData, RoundingConfig } from "@/components/timesheet/timesheet-types";
 import { ClockingsDebug, type DebugClocking } from "./clockings-debug";
 
 interface TimesheetClientProps {
@@ -21,6 +21,7 @@ interface TimesheetClientProps {
   shiftDefs: { id: string; name: string }[];
   shiftByDate: Record<string, { shiftDefinitionId: string | null; name: string | null; isOffDay: boolean }>;
   debugClockings: DebugClocking[];
+  roundingConfig: RoundingConfig;
 }
 
 function offsetWeek(dateStr: string, offsetWeeks: number): string {
@@ -46,9 +47,10 @@ export function TimesheetClient({
   shiftDefs,
   shiftByDate,
   debugClockings,
+  roundingConfig,
 }: TimesheetClientProps) {
   const router = useRouter();
-  const [selectedClocking, setSelectedClocking] = useState<ClockingData | null>(null);
+  const [selectedCell, setSelectedCell] = useState<CellClickContext | null>(null);
   const [isReinferring, startReinference] = useTransition();
   const [reinferResult, setReinferResult] = useState<{ msg: string; ok: boolean } | null>(null);
 
@@ -140,9 +142,10 @@ export function TimesheetClient({
         weekStart={weekStart}
         workPeriods={workPeriods}
         shiftByDate={shiftByDate}
-        onClockingClick={canEdit ? setSelectedClocking : undefined}
+        onCellClick={canEdit ? setSelectedCell : undefined}
         shiftDefs={shiftDefs}
         onShiftChange={canEdit ? handleShiftChange : undefined}
+        roundingConfig={roundingConfig}
       />
 
       {/* Debug: clockings CRUD */}
@@ -156,15 +159,13 @@ export function TimesheetClient({
         }}
       />
 
-      {/* Override dialog */}
-      {selectedClocking && (
-        <ClockingOverrideDialog
-          clocking={selectedClocking}
-          onClose={() => setSelectedClocking(null)}
-          onSuccess={() => {
-            setSelectedClocking(null);
-            router.refresh();
-          }}
+      {/* Edit dialog */}
+      {selectedCell && (
+        <ClockingEditDialog
+          ctx={selectedCell}
+          memberId={memberId}
+          onClose={() => setSelectedCell(null)}
+          onSuccess={() => { setSelectedCell(null); router.refresh(); }}
         />
       )}
     </div>

@@ -3,6 +3,7 @@
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient } from "@supabase/supabase-js";
 import { runInference } from "@/lib/timesheet/inference-engine";
+import { logAudit } from "@/lib/audit";
 
 function getAdminClient() {
   return createClient(
@@ -305,13 +306,37 @@ export async function debugDeleteClocking(
   return error ? { success: false, error: error.message } : { success: true };
 }
 
+// ── Timesheet edit actions ────────────────────────────────────────────────────
+
+/** Helper: run inference for a member over a ±2-day window around a given date */
+async function inferAround(memberId: string, organisationId: string, dateIso: string) {
+  const admin = getAdminClient();
+  const base  = new Date(`${dateIso.slice(0, 10)}T12:00:00Z`);
+  const start = new Date(base); start.setUTCDate(base.getUTCDate() - 2);
+  const end   = new Date(base); end.setUTCDate(base.getUTCDate() + 2);
+  await runInference({ supabase: admin, organisationId, memberId, rangeStart: start, rangeEnd: end });
+}
+
+/** Helper: resolve caller's display name */
+async function getCallerName(callerId: string): Promise<string> {
+  const admin = getAdminClient();
+  const { data } = await admin
+    .from("members")
+    .select("first_name, last_name, known_as")
+    .eq("id", callerId)
+    .maybeSingle();
+  if (!data) return "Unknown";
+  return `${data.known_as ?? data.first_name} ${data.last_name}`;
+}
+
 /**
- * Soft-delete a clocking and write an audit record.
- * The clocking remains in the DB for audit purposes.
+ * Edit a clocking's time and/or raw type.
+ * Stores edited values alongside originals; inference engine uses edited values.
  */
-export async function deleteClocking(
+export async function editClocking(
   clockingId: string,
-  reason: string
+  editedClockedAt: string,           // ISO UTC — the adjusted timestamp
+  editedRawType: string | null       // "IN" | "OUT" | null (bare swipe)
 ): Promise<{ success: boolean; error?: string }> {
   const caller = await getCallerMembership();
   if (!caller) return { success: false, error: "Not authenticated" };
@@ -323,30 +348,243 @@ export async function deleteClocking(
 
   const { data: clocking } = await admin
     .from("clockings")
-    .select("id, organisation_id, inferred_type, clocked_at")
+    .select("id, organisation_id, member_id, clocked_at, raw_type, inferred_type, edited_clocked_at, edited_raw_type")
     .eq("id", clockingId)
     .eq("organisation_id", caller.organisation_id)
     .maybeSingle();
 
   if (!clocking) return { success: false, error: "Clocking not found" };
 
-  const { error: auditErr } = await admin.from("clocking_adjustments").insert({
-    clocking_id: clockingId,
-    adjusted_by: caller.id,
-    action: "delete",
-    old_value: { inferred_type: clocking.inferred_type, clocked_at: clocking.clocked_at },
-    new_value: null,
-    reason,
-  });
+  const [callerName, targetName] = await Promise.all([
+    getCallerName(caller.id),
+    getCallerName(clocking.member_id),
+  ]);
+  const oldTime = clocking.edited_clocked_at ?? clocking.clocked_at;
 
-  if (auditErr) return { success: false, error: auditErr.message };
-
-  const { error: deleteErr } = await admin
+  const { error: updateErr } = await admin
     .from("clockings")
-    .update({ is_deleted: true })
+    .update({
+      edited_clocked_at:     editedClockedAt,
+      edited_raw_type:       editedRawType,
+      edited_by_member_id:   caller.id,
+      edited_at:             new Date().toISOString(),
+    })
     .eq("id", clockingId);
 
-  if (deleteErr) return { success: false, error: deleteErr.message };
+  if (updateErr) return { success: false, error: updateErr.message };
+
+  await inferAround(clocking.member_id, caller.organisation_id, editedClockedAt.slice(0, 10));
+
+  const { data: updated } = await admin
+    .from("clockings")
+    .select("inferred_type")
+    .eq("id", clockingId)
+    .maybeSingle();
+
+  await logAudit({
+    organisationId: caller.organisation_id,
+    actorId:        caller.id,
+    actorName:      callerName,
+    action:         "Edited Timesheet",
+    targetType:     "member",
+    targetId:       clocking.member_id,
+    targetLabel:    targetName,
+    changes: {
+      clocked_at:    { old: oldTime,                new: editedClockedAt                  },
+      inferred_type: { old: clocking.inferred_type, new: updated?.inferred_type ?? null   },
+    },
+    metadata: { clocking_date: editedClockedAt.slice(0, 10) },
+  });
+
+  return { success: true };
+}
+
+/**
+ * Revert an edited clocking back to its original state (clear edit fields).
+ */
+export async function deleteClockingEdit(
+  clockingId: string
+): Promise<{ success: boolean; error?: string }> {
+  const caller = await getCallerMembership();
+  if (!caller) return { success: false, error: "Not authenticated" };
+  if (caller.role !== "owner" && caller.role !== "admin") {
+    return { success: false, error: "Insufficient permissions" };
+  }
+
+  const admin = getAdminClient();
+
+  const { data: clocking } = await admin
+    .from("clockings")
+    .select("id, organisation_id, member_id, clocked_at, raw_type, inferred_type, edited_clocked_at, edited_raw_type")
+    .eq("id", clockingId)
+    .eq("organisation_id", caller.organisation_id)
+    .maybeSingle();
+
+  if (!clocking) return { success: false, error: "Clocking not found" };
+  if (!clocking.edited_clocked_at && !clocking.edited_raw_type) {
+    return { success: false, error: "No edit to revert" };
+  }
+
+  const [callerName, targetName] = await Promise.all([
+    getCallerName(caller.id),
+    getCallerName(clocking.member_id),
+  ]);
+
+  const { error: updateErr } = await admin
+    .from("clockings")
+    .update({
+      edited_clocked_at:   null,
+      edited_raw_type:     null,
+      edited_by_member_id: null,
+      edited_at:           null,
+    })
+    .eq("id", clockingId);
+
+  if (updateErr) return { success: false, error: updateErr.message };
+
+  await inferAround(clocking.member_id, caller.organisation_id, clocking.clocked_at.slice(0, 10));
+
+  const { data: reverted } = await admin
+    .from("clockings")
+    .select("inferred_type")
+    .eq("id", clockingId)
+    .maybeSingle();
+
+  await logAudit({
+    organisationId: caller.organisation_id,
+    actorId:        caller.id,
+    actorName:      callerName,
+    action:         "Edited Timesheet",
+    targetType:     "member",
+    targetId:       clocking.member_id,
+    targetLabel:    targetName,
+    changes: {
+      clocked_at:    { old: clocking.edited_clocked_at, new: clocking.clocked_at              },
+      inferred_type: { old: clocking.inferred_type,     new: reverted?.inferred_type ?? null  },
+    },
+    metadata: { action: "reverted_edit", clocking_date: clocking.clocked_at.slice(0, 10) },
+  });
+
+  return { success: true };
+}
+
+/**
+ * Hard-delete a clocking record and re-run inference.
+ */
+export async function deleteClocking(
+  clockingId: string
+): Promise<{ success: boolean; error?: string }> {
+  const caller = await getCallerMembership();
+  if (!caller) return { success: false, error: "Not authenticated" };
+  if (caller.role !== "owner" && caller.role !== "admin") {
+    return { success: false, error: "Insufficient permissions" };
+  }
+
+  const admin = getAdminClient();
+
+  const { data: clocking } = await admin
+    .from("clockings")
+    .select("id, organisation_id, member_id, clocked_at, raw_type, inferred_type, edited_clocked_at")
+    .eq("id", clockingId)
+    .eq("organisation_id", caller.organisation_id)
+    .maybeSingle();
+
+  if (!clocking) return { success: false, error: "Clocking not found" };
+
+  const [callerName, targetName] = await Promise.all([
+    getCallerName(caller.id),
+    getCallerName(clocking.member_id),
+  ]);
+  const effectiveDate = (clocking.edited_clocked_at ?? clocking.clocked_at).slice(0, 10);
+
+  const { error: delErr } = await admin
+    .from("clockings")
+    .delete()
+    .eq("id", clockingId);
+
+  if (delErr) return { success: false, error: delErr.message };
+
+  await logAudit({
+    organisationId: caller.organisation_id,
+    actorId:        caller.id,
+    actorName:      callerName,
+    action:         "Edited Timesheet",
+    targetType:     "member",
+    targetId:       clocking.member_id,
+    targetLabel:    targetName,
+    changes: {
+      clocked_at:    { old: clocking.edited_clocked_at ?? clocking.clocked_at, new: null },
+      inferred_type: { old: clocking.inferred_type,                            new: null },
+    },
+    metadata: { action: "deleted", clocking_date: effectiveDate },
+  });
+
+  await inferAround(clocking.member_id, caller.organisation_id, effectiveDate);
+
+  return { success: true };
+}
+
+/**
+ * Add a new clocking for a member and re-run inference.
+ */
+export async function addClocking(
+  memberId: string,
+  clockedAt: string,           // ISO UTC
+  rawType: string | null,      // "IN" | "OUT" | null (bare swipe)
+  overrideType?: string | null // inferred type override, bypasses inference
+): Promise<{ success: boolean; error?: string }> {
+  const caller = await getCallerMembership();
+  if (!caller) return { success: false, error: "Not authenticated" };
+  if (caller.role !== "owner" && caller.role !== "admin") {
+    return { success: false, error: "Insufficient permissions" };
+  }
+
+  const admin = getAdminClient();
+
+  const { data: target } = await admin
+    .from("members")
+    .select("id")
+    .eq("id", memberId)
+    .eq("organisation_id", caller.organisation_id)
+    .maybeSingle();
+
+  if (!target) return { success: false, error: "Member not found" };
+
+  const [callerName, targetName] = await Promise.all([
+    getCallerName(caller.id),
+    getCallerName(memberId),
+  ]);
+
+  const { data: created, error: insertErr } = await admin
+    .from("clockings")
+    .insert({
+      organisation_id: caller.organisation_id,
+      member_id:       memberId,
+      clocked_at:      clockedAt,
+      raw_type:        rawType,
+      override_type:   overrideType ?? null,
+      source:          "manual",
+    })
+    .select("id")
+    .single();
+
+  if (insertErr) return { success: false, error: insertErr.message };
+
+  await logAudit({
+    organisationId: caller.organisation_id,
+    actorId:        caller.id,
+    actorName:      callerName,
+    action:         "Edited Timesheet",
+    targetType:     "member",
+    targetId:       memberId,
+    targetLabel:    targetName,
+    changes: {
+      clocked_at: { old: null, new: clockedAt },
+    },
+    metadata: { action: "added", clocking_date: clockedAt.slice(0, 10) },
+  });
+
+  await inferAround(memberId, caller.organisation_id, clockedAt.slice(0, 10));
 
   return { success: true };
 }

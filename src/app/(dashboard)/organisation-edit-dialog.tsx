@@ -45,6 +45,14 @@ interface OrganisationEditDialogProps {
   tsMaxShiftHours: number;
   tsMaxBreakMinutes: number;
   tsShiftStartVarianceMinutes: number;
+  tsRoundFirstInMins: number | null;
+  tsRoundFirstInGraceMins: number | null;
+  tsRoundBreakOutMins: number | null;
+  tsRoundBreakOutGraceMins: number | null;
+  tsRoundBreakInMins: number | null;
+  tsRoundBreakInGraceMins: number | null;
+  tsRoundLastOutMins: number | null;
+  tsRoundLastOutGraceMins: number | null;
 }
 
 export function OrganisationEditDialog({
@@ -60,6 +68,14 @@ export function OrganisationEditDialog({
   tsMaxShiftHours: initialTsMaxShiftHours,
   tsMaxBreakMinutes: initialTsMaxBreakMinutes,
   tsShiftStartVarianceMinutes: initialTsShiftStartVarianceMinutes,
+  tsRoundFirstInMins: initialTsRoundFirstInMins,
+  tsRoundFirstInGraceMins: initialTsRoundFirstInGraceMins,
+  tsRoundBreakOutMins: initialTsRoundBreakOutMins,
+  tsRoundBreakOutGraceMins: initialTsRoundBreakOutGraceMins,
+  tsRoundBreakInMins: initialTsRoundBreakInMins,
+  tsRoundBreakInGraceMins: initialTsRoundBreakInGraceMins,
+  tsRoundLastOutMins: initialTsRoundLastOutMins,
+  tsRoundLastOutGraceMins: initialTsRoundLastOutGraceMins,
 }: OrganisationEditDialogProps) {
   const [name, setName] = useState(orgName);
   const [label, setLabel] = useState(memberLabel);
@@ -77,6 +93,14 @@ export function OrganisationEditDialog({
   const [tsMaxShiftHours, setTsMaxShiftHours] = useState(initialTsMaxShiftHours);
   const [tsMaxBreakMinutes, setTsMaxBreakMinutes] = useState(initialTsMaxBreakMinutes);
   const [tsShiftStartVarianceMinutes, setTsShiftStartVarianceMinutes] = useState(initialTsShiftStartVarianceMinutes);
+  const [tsRoundFirstInMins, setTsRoundFirstInMins] = useState<number | null>(initialTsRoundFirstInMins);
+  const [tsRoundFirstInGraceMins, setTsRoundFirstInGraceMins] = useState<number | null>(initialTsRoundFirstInGraceMins);
+  const [tsRoundBreakOutMins, setTsRoundBreakOutMins] = useState<number | null>(initialTsRoundBreakOutMins);
+  const [tsRoundBreakOutGraceMins, setTsRoundBreakOutGraceMins] = useState<number | null>(initialTsRoundBreakOutGraceMins);
+  const [tsRoundBreakInMins, setTsRoundBreakInMins] = useState<number | null>(initialTsRoundBreakInMins);
+  const [tsRoundBreakInGraceMins, setTsRoundBreakInGraceMins] = useState<number | null>(initialTsRoundBreakInGraceMins);
+  const [tsRoundLastOutMins, setTsRoundLastOutMins] = useState<number | null>(initialTsRoundLastOutMins);
+  const [tsRoundLastOutGraceMins, setTsRoundLastOutGraceMins] = useState<number | null>(initialTsRoundLastOutGraceMins);
   const [adminProfiles, setAdminProfiles] = useState<Profile[]>([]);
   const [employeeProfiles, setEmployeeProfiles] = useState<Profile[]>([]);
   const [userRightsType, setUserRightsType] = useState<"admin" | "employee">("admin");
@@ -94,6 +118,14 @@ export function OrganisationEditDialog({
     tsMaxShiftHours !== initialTsMaxShiftHours ||
     tsMaxBreakMinutes !== initialTsMaxBreakMinutes ||
     tsShiftStartVarianceMinutes !== initialTsShiftStartVarianceMinutes ||
+    tsRoundFirstInMins !== initialTsRoundFirstInMins ||
+    tsRoundFirstInGraceMins !== initialTsRoundFirstInGraceMins ||
+    tsRoundBreakOutMins !== initialTsRoundBreakOutMins ||
+    tsRoundBreakOutGraceMins !== initialTsRoundBreakOutGraceMins ||
+    tsRoundBreakInMins !== initialTsRoundBreakInMins ||
+    tsRoundBreakInGraceMins !== initialTsRoundBreakInGraceMins ||
+    tsRoundLastOutMins !== initialTsRoundLastOutMins ||
+    tsRoundLastOutGraceMins !== initialTsRoundLastOutGraceMins ||
     fieldDefsModified ||
     teams.some((t) => {
       const orig = originalTeams.find((o) => o.id === t.id);
@@ -114,6 +146,14 @@ export function OrganisationEditDialog({
       setTsMaxShiftHours(initialTsMaxShiftHours);
       setTsMaxBreakMinutes(initialTsMaxBreakMinutes);
       setTsShiftStartVarianceMinutes(initialTsShiftStartVarianceMinutes);
+      setTsRoundFirstInMins(initialTsRoundFirstInMins);
+      setTsRoundFirstInGraceMins(initialTsRoundFirstInGraceMins);
+      setTsRoundBreakOutMins(initialTsRoundBreakOutMins);
+      setTsRoundBreakOutGraceMins(initialTsRoundBreakOutGraceMins);
+      setTsRoundBreakInMins(initialTsRoundBreakInMins);
+      setTsRoundBreakInGraceMins(initialTsRoundBreakInGraceMins);
+      setTsRoundLastOutMins(initialTsRoundLastOutMins);
+      setTsRoundLastOutGraceMins(initialTsRoundLastOutGraceMins);
       setFieldDefsModified(false);
       // Load teams
       getTeams().then((result) => {
@@ -134,7 +174,7 @@ export function OrganisationEditDialog({
         getCustomFieldDefs().then(setFieldDefs);
       }
     }
-  }, [open, orgName, memberLabel, requireMfa, showCustomFields, initialCurrencySymbol, initialTsMaxShiftHours, initialTsMaxBreakMinutes, initialTsShiftStartVarianceMinutes]);
+  }, [open, orgName, memberLabel, requireMfa, showCustomFields, initialCurrencySymbol, initialTsMaxShiftHours, initialTsMaxBreakMinutes, initialTsShiftStartVarianceMinutes, initialTsRoundFirstInMins, initialTsRoundFirstInGraceMins, initialTsRoundBreakOutMins, initialTsRoundBreakOutGraceMins, initialTsRoundBreakInMins, initialTsRoundBreakInGraceMins, initialTsRoundLastOutMins, initialTsRoundLastOutGraceMins]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -166,6 +206,14 @@ export function OrganisationEditDialog({
       tsMaxShiftHours,
       tsMaxBreakMinutes,
       tsShiftStartVarianceMinutes,
+      tsRoundFirstInMins,
+      tsRoundFirstInGraceMins,
+      tsRoundBreakOutMins,
+      tsRoundBreakOutGraceMins,
+      tsRoundBreakInMins,
+      tsRoundBreakInGraceMins,
+      tsRoundLastOutMins,
+      tsRoundLastOutGraceMins,
     });
 
     if (!result.success) {
@@ -521,6 +569,66 @@ export function OrganisationEditDialog({
                     value={tsShiftStartVarianceMinutes}
                     onChange={(e) => setTsShiftStartVarianceMinutes(Number(e.target.value))}
                   />
+                </div>
+
+                {/* Time rounding */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <Label>Time Rounding (minutes)</Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="max-w-xs">
+                        <p>Round clocking times when calculating hours. Clock-in times round forward (later); clock-out times round backward (earlier). Leave blank for no rounding.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <div className="rounded-md border border-border divide-y divide-border text-sm">
+                    {/* Header row */}
+                    <div className="flex items-center px-3 py-1.5 gap-3 bg-muted/40">
+                      <span className="w-24 shrink-0" />
+                      <span className="w-20 text-right text-xs text-muted-foreground font-medium">Interval</span>
+                      <span className="w-20 text-right text-xs text-muted-foreground font-medium">Grace</span>
+                    </div>
+                    {([
+                      { label: "1st IN",    interval: tsRoundFirstInMins,  setInterval: setTsRoundFirstInMins,  grace: tsRoundFirstInGraceMins,  setGrace: setTsRoundFirstInGraceMins },
+                      { label: "Break OUT", interval: tsRoundBreakOutMins, setInterval: setTsRoundBreakOutMins, grace: tsRoundBreakOutGraceMins, setGrace: setTsRoundBreakOutGraceMins },
+                      { label: "Break IN",  interval: tsRoundBreakInMins,  setInterval: setTsRoundBreakInMins,  grace: tsRoundBreakInGraceMins,  setGrace: setTsRoundBreakInGraceMins },
+                      { label: "Last OUT",  interval: tsRoundLastOutMins,  setInterval: setTsRoundLastOutMins,  grace: tsRoundLastOutGraceMins,  setGrace: setTsRoundLastOutGraceMins },
+                    ] as const).map(({ label, interval, setInterval, grace, setGrace }) => (
+                      <div key={label} className="flex items-center px-3 py-2 gap-3">
+                        <span className="text-muted-foreground w-24 shrink-0">{label}</span>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={60}
+                          step={1}
+                          placeholder="None"
+                          value={interval ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setInterval(v === "" ? null : Math.max(1, Math.min(60, parseInt(v, 10))));
+                          }}
+                          className="h-7 w-20 text-right"
+                        />
+                        <Input
+                          type="number"
+                          min={0}
+                          max={30}
+                          step={1}
+                          placeholder="0"
+                          value={grace ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setGrace(v === "" ? null : Math.max(0, Math.min(30, parseInt(v, 10))));
+                          }}
+                          className="h-7 w-20 text-right"
+                          disabled={!interval}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </TabsContent>
             )}

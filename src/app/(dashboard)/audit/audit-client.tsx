@@ -95,7 +95,11 @@ const FIELD_LABELS: Record<string, string> = {
   admin_profile: "Admin Profile",
   employee_profile: "Employee Profile",
   rights: "Rights",
+  clocked_at: "clocked at",
+  inferred_type: "inferred type",
 };
+
+const HIDDEN_METADATA_KEYS = new Set(["clocking_date"]);
 
 function formatRightValue(val: unknown): string {
   if (val === true) return "Yes";
@@ -125,6 +129,12 @@ function formatValue(value: unknown): string {
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (Array.isArray(value)) return value.length === 0 ? "None" : value.join(", ");
   if (isRightsObject(value)) return formatRightsObject(value);
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) {
+    return new Date(value).toLocaleString("en-GB", {
+      day: "2-digit", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit", timeZone: "UTC",
+    });
+  }
   return String(value);
 }
 
@@ -164,8 +174,7 @@ function RightsDiff({
 }
 
 function formatDate(dateStr: string): string {
-  const date = new Date(dateStr);
-  return date.toLocaleDateString("en-GB", {
+  return new Date(dateStr).toLocaleString("en-GB", {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -233,9 +242,11 @@ function ChangeDetail({ changes }: { changes: Record<string, { old: unknown; new
 }
 
 function MetadataDetail({ metadata }: { metadata: Record<string, unknown> }) {
+  const entries = Object.entries(metadata).filter(([field]) => !HIDDEN_METADATA_KEYS.has(field));
+  if (entries.length === 0) return null;
   return (
     <div className="mt-2 space-y-1 rounded-md border bg-muted/30 p-3 text-sm">
-      {Object.entries(metadata).map(([field, value]) => (
+      {entries.map(([field, value]) => (
         <div key={field} className="flex gap-2">
           <span className="font-medium min-w-[120px]">{FIELD_LABELS[field] ?? field}:</span>
           <span>{formatValue(value)}</span>
@@ -492,12 +503,29 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
                         {ACTION_LABELS[entry.action] ?? entry.action}
                       </span>
                       {entry.target_label && (
-                        (entry.action === "member.created" || entry.action === "member.updated") && entry.target_id ? (
+                        entry.target_id && (entry.action === "member.created" || entry.action === "member.updated") ? (
                           <button
                             className="cursor-pointer font-medium text-primary underline underline-offset-2"
                             onClick={(e) => {
                               e.stopPropagation();
                               router.push(`/employees?memberId=${entry.target_id}`);
+                            }}
+                          >
+                            {entry.target_label}
+                          </button>
+                        ) : entry.target_id && entry.action === "Edited Timesheet" ? (
+                          <button
+                            className="cursor-pointer font-medium text-primary underline underline-offset-2"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const dateStr = entry.metadata?.clocking_date as string | undefined;
+                              const weekParam = dateStr ? (() => {
+                                const d = new Date(`${dateStr}T12:00:00Z`);
+                                const day = d.getUTCDay();
+                                d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
+                                return `?week=${d.toISOString().slice(0, 10)}`;
+                              })() : "";
+                              router.push(`/timesheets/${entry.target_id}${weekParam}`);
                             }}
                           >
                             {entry.target_label}

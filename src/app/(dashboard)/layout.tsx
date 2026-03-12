@@ -21,7 +21,7 @@ export default async function DashboardLayout({
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role, permissions, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes), admin_profiles(name), employee_profiles(name)")
+    .select("organisation_id, role, permissions, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins), admin_profiles(name), employee_profiles(name)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -40,6 +40,14 @@ export default async function DashboardLayout({
     ts_max_shift_hours: number;
     ts_max_break_minutes: number;
     ts_shift_start_variance_minutes: number;
+    ts_round_first_in_mins:        number | null;
+    ts_round_first_in_grace_mins:  number | null;
+    ts_round_break_out_mins:       number | null;
+    ts_round_break_out_grace_mins: number | null;
+    ts_round_break_in_mins:        number | null;
+    ts_round_break_in_grace_mins:  number | null;
+    ts_round_last_out_mins:        number | null;
+    ts_round_last_out_grace_mins:  number | null;
   };
   const memberLabel = org?.member_label || "member";
 
@@ -172,6 +180,14 @@ export default async function DashboardLayout({
             tsMaxShiftHours={org?.ts_max_shift_hours ?? 14}
             tsMaxBreakMinutes={org?.ts_max_break_minutes ?? 60}
             tsShiftStartVarianceMinutes={org?.ts_shift_start_variance_minutes ?? 30}
+            tsRoundFirstInMins={org?.ts_round_first_in_mins ?? null}
+            tsRoundFirstInGraceMins={org?.ts_round_first_in_grace_mins ?? null}
+            tsRoundBreakOutMins={org?.ts_round_break_out_mins ?? null}
+            tsRoundBreakOutGraceMins={org?.ts_round_break_out_grace_mins ?? null}
+            tsRoundBreakInMins={org?.ts_round_break_in_mins ?? null}
+            tsRoundBreakInGraceMins={org?.ts_round_break_in_grace_mins ?? null}
+            tsRoundLastOutMins={org?.ts_round_last_out_mins ?? null}
+            tsRoundLastOutGraceMins={org?.ts_round_last_out_grace_mins ?? null}
             initialFavouriteIds={sidebarFavouriteIds}
             initialCustomReports={sidebarCustomReports}
             initialShiftDefs={sidebarShiftDefs}

@@ -36,13 +36,34 @@ export default async function TimesheetPage({
 
   const { data: caller } = await supabase
     .from("members")
-    .select("id, organisation_id, role, permissions")
+    .select("id, organisation_id, role, permissions, organisations(ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!caller) redirect("/login");
   if (caller.role !== "owner" && caller.role !== "admin") notFound();
+
+  const orgSettings = caller.organisations as unknown as {
+    ts_round_first_in_mins:        number | null;
+    ts_round_first_in_grace_mins:  number | null;
+    ts_round_break_out_mins:       number | null;
+    ts_round_break_out_grace_mins: number | null;
+    ts_round_break_in_mins:        number | null;
+    ts_round_break_in_grace_mins:  number | null;
+    ts_round_last_out_mins:        number | null;
+    ts_round_last_out_grace_mins:  number | null;
+  } | null;
+  const roundingConfig = {
+    firstInMins:        orgSettings?.ts_round_first_in_mins        ?? null,
+    firstInGraceMins:   orgSettings?.ts_round_first_in_grace_mins  ?? null,
+    breakOutMins:       orgSettings?.ts_round_break_out_mins       ?? null,
+    breakOutGraceMins:  orgSettings?.ts_round_break_out_grace_mins ?? null,
+    breakInMins:        orgSettings?.ts_round_break_in_mins        ?? null,
+    breakInGraceMins:   orgSettings?.ts_round_break_in_grace_mins  ?? null,
+    lastOutMins:        orgSettings?.ts_round_last_out_mins        ?? null,
+    lastOutGraceMins:   orgSettings?.ts_round_last_out_grace_mins  ?? null,
+  };
 
   // Verify target member belongs to same org
   const { data: member } = await supabase
@@ -84,13 +105,30 @@ export default async function TimesheetPage({
   const { data: rawClockings } = periodIds.length > 0
     ? await supabase
         .from("clockings")
-        .select("id, work_period_id, clocked_at, raw_type, inferred_type, override_type, is_bstart, cost_centre_id")
+        .select("id, work_period_id, clocked_at, raw_type, inferred_type, override_type, is_bstart, cost_centre_id, source, edited_clocked_at, edited_raw_type, edited_by_member_id, edited_at")
         .in("work_period_id", periodIds)
         .eq("is_deleted", false)
         .order("clocked_at")
     : { data: [] };
 
   const allClockings = rawClockings ?? [];
+
+  // Resolve editor names for any edited clockings
+  const editorIds = [...new Set(
+    allClockings
+      .map((c) => c.edited_by_member_id as string | null)
+      .filter((id): id is string => id != null)
+  )];
+  const editorNameById: Record<string, string> = {};
+  if (editorIds.length > 0) {
+    const { data: editors } = await supabase
+      .from("members")
+      .select("id, first_name, last_name, known_as")
+      .in("id", editorIds);
+    for (const e of editors ?? []) {
+      editorNameById[e.id] = `${e.known_as ?? e.first_name} ${e.last_name}`;
+    }
+  }
 
   // Fetch all scheduled_shifts for this member for the week (keyed by date)
   const { data: rawScheduledShifts } = await supabase
@@ -133,13 +171,18 @@ export default async function TimesheetPage({
     clockings: allClockings
       .filter((c) => c.work_period_id === p.id)
       .map((c) => ({
-        id:           c.id,
-        clockedAt:    c.clocked_at,
-        rawType:      c.raw_type,
-        inferredType: c.inferred_type,
-        overrideType: c.override_type,
-        isBstart:     c.is_bstart,
-        costCentreId: c.cost_centre_id,
+        id:              c.id,
+        clockedAt:       c.clocked_at,
+        rawType:         c.raw_type,
+        inferredType:    c.inferred_type,
+        overrideType:    c.override_type,
+        isBstart:        c.is_bstart,
+        costCentreId:    c.cost_centre_id,
+        source:          (c.source as string | null) ?? null,
+        editedClockedAt: (c.edited_clocked_at as string | null) ?? null,
+        editedRawType:   (c.edited_raw_type as string | null) ?? null,
+        editedByName:    c.edited_by_member_id ? (editorNameById[c.edited_by_member_id as string] ?? null) : null,
+        editedAt:        (c.edited_at as string | null) ?? null,
       })),
   }));
 
@@ -176,6 +219,7 @@ export default async function TimesheetPage({
       shiftDefs={shiftDefs}
       shiftByDate={shiftByDate}
       debugClockings={debugClockings}
+      roundingConfig={roundingConfig}
     />
   );
 }

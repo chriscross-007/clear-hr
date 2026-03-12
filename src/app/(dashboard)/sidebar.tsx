@@ -22,6 +22,14 @@ interface SidebarProps {
   tsMaxShiftHours: number;
   tsMaxBreakMinutes: number;
   tsShiftStartVarianceMinutes: number;
+  tsRoundFirstInMins: number | null;
+  tsRoundFirstInGraceMins: number | null;
+  tsRoundBreakOutMins: number | null;
+  tsRoundBreakOutGraceMins: number | null;
+  tsRoundBreakInMins: number | null;
+  tsRoundBreakInGraceMins: number | null;
+  tsRoundLastOutMins: number | null;
+  tsRoundLastOutGraceMins: number | null;
   initialFavouriteIds?: string[];
   initialCustomReports?: { id: string; name: string }[];
   initialShiftDefs?: { id: string; name: string }[];
@@ -39,6 +47,14 @@ export function Sidebar({
   tsMaxShiftHours,
   tsMaxBreakMinutes,
   tsShiftStartVarianceMinutes,
+  tsRoundFirstInMins,
+  tsRoundFirstInGraceMins,
+  tsRoundBreakOutMins,
+  tsRoundBreakOutGraceMins,
+  tsRoundBreakInMins,
+  tsRoundBreakInGraceMins,
+  tsRoundLastOutMins,
+  tsRoundLastOutGraceMins,
   initialFavouriteIds = [],
   initialCustomReports = [],
   initialShiftDefs = [],
@@ -263,6 +279,14 @@ export function Sidebar({
           tsMaxShiftHours={tsMaxShiftHours}
           tsMaxBreakMinutes={tsMaxBreakMinutes}
           tsShiftStartVarianceMinutes={tsShiftStartVarianceMinutes}
+          tsRoundFirstInMins={tsRoundFirstInMins}
+          tsRoundFirstInGraceMins={tsRoundFirstInGraceMins}
+          tsRoundBreakOutMins={tsRoundBreakOutMins}
+          tsRoundBreakOutGraceMins={tsRoundBreakOutGraceMins}
+          tsRoundBreakInMins={tsRoundBreakInMins}
+          tsRoundBreakInGraceMins={tsRoundBreakInGraceMins}
+          tsRoundLastOutMins={tsRoundLastOutMins}
+          tsRoundLastOutGraceMins={tsRoundLastOutGraceMins}
         />
       )}
     </>
