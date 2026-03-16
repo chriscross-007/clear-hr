@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -31,12 +32,6 @@ import { saveShiftDefinition, deleteShiftDefinition } from "../actions";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-interface BreakDef {
-  start: string;         // "HH:MM"
-  end: string;
-  duration_mins: number;
-}
-
 interface OvertimeAfterRule {
   id?: string;
   period: string;        // 'daily' | 'weekly'
@@ -46,11 +41,20 @@ interface OvertimeAfterRule {
 
 interface OvertimeBand {
   id?: string;
-  name: string;
-  from_hour: number;
-  to_hour: number | null;
-  rate_multiplier: number;
+  rate_id: string | null;
+  from_time: string;
+  to_time: string | null;
+  min_time: string | null;
   sort_order: number;
+}
+
+interface BreakRule {
+  band_start:    string;        // "HH:MM" — start of break window
+  band_end:      string;        // "HH:MM" — end of break window
+  allowed_break: string;        // "HH:MM" — allowed break duration
+  penalty_break: string | null; // "HH:MM" — deducted if break not clocked, or null
+  paid:          boolean;       // whether the break is paid
+  rate_id:       string | null; // rate that receives break deduction/addition
 }
 
 interface ShiftDef {
@@ -68,9 +72,10 @@ interface ShiftDef {
 interface Props {
   organisationId: string;
   shiftDef: ShiftDef | null;
-  breaks: BreakDef[];
+  breakRules: BreakRule[];
   overtimeAfterRules: OvertimeAfterRule[];
   overtimeBands: OvertimeBand[];
+  rates: { id: string; name: string; rate_multiplier: number }[];
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -78,13 +83,6 @@ interface Props {
 function toTimeInput(val: string | null): string {
   if (!val) return "";
   return val.slice(0, 5); // "HH:MM" from "HH:MM:SS"
-}
-
-function durationFromTimes(start: string, end: string): number {
-  if (!start || !end) return 0;
-  const [sh, sm] = start.split(":").map(Number);
-  const [eh, em] = end.split(":").map(Number);
-  return Math.max(0, (eh * 60 + em) - (sh * 60 + sm));
 }
 
 // ── Sub-components ───────────────────────────────────────────────────────────
@@ -195,84 +193,104 @@ function GeneralTab({
 // ── Breaks Tab ───────────────────────────────────────────────────────────────
 
 function BreaksTab({
-  breaks, setBreaks, breakType,
+  breakRules, setBreakRules, rates,
 }: {
-  breaks: BreakDef[];
-  setBreaks: (v: BreakDef[]) => void;
-  breakType: string;
+  breakRules: BreakRule[];
+  setBreakRules: (v: BreakRule[]) => void;
+  rates: { id: string; name: string }[];
 }) {
-  function addBreak() {
-    setBreaks([...breaks, { start: "12:00", end: "13:00", duration_mins: 60 }]);
+  // ── Break rules (policy / penalty) ──
+  function addBreakRule() {
+    setBreakRules([...breakRules, {
+      band_start:    "12:00",
+      band_end:      "14:00",
+      allowed_break: "01:00",
+      penalty_break: null,
+      paid:          false,
+      rate_id:       null,
+    }]);
   }
-
-  function removeBreak(i: number) {
-    setBreaks(breaks.filter((_, idx) => idx !== i));
+  function removeBreakRule(i: number) {
+    setBreakRules(breakRules.filter((_, idx) => idx !== i));
   }
-
-  function updateBreak(i: number, field: keyof BreakDef, value: string | number) {
-    const next = breaks.map((b, idx) => {
-      if (idx !== i) return b;
-      const updated = { ...b, [field]: value };
-      if (field === "start" || field === "end") {
-        updated.duration_mins = durationFromTimes(updated.start, updated.end);
-      }
-      return updated;
-    });
-    setBreaks(next);
-  }
-
-  if (breakType === "none") {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Break type is set to <strong>No breaks</strong>. Change it in the General tab to configure break times.
-      </p>
-    );
+  function updateBreakRule<K extends keyof BreakRule>(i: number, field: K, value: BreakRule[K]) {
+    setBreakRules(breakRules.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
   }
 
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        {breakType === "clocked"
-          ? "Define the expected break windows. Clockings near these times will be matched as break start (OUT) and break end (IN)."
-          : "Define breaks to automatically deduct from worked hours. No clockings are required."}
-      </p>
-
-      {breaks.length === 0 ? (
-        <p className="text-sm text-muted-foreground italic">No breaks defined.</p>
-      ) : (
-        <div className="space-y-3">
-          {breaks.map((br, i) => (
-            <div key={i} className="flex items-end gap-3 p-3 rounded-md border border-border bg-muted/20">
-              <div className="space-y-1">
-                <Label className="text-xs">Start</Label>
-                <Input type="time" value={br.start} onChange={(e) => updateBreak(i, "start", e.target.value)} className="w-32" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">End</Label>
-                <Input type="time" value={br.end} onChange={(e) => updateBreak(i, "end", e.target.value)} className="w-32" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Duration (mins)</Label>
-                <Input
-                  type="number"
-                  value={br.duration_mins}
-                  onChange={(e) => updateBreak(i, "duration_mins", Number(e.target.value))}
-                  className="w-24"
-                  min={0}
-                />
-              </div>
-              <Button variant="ghost" size="icon" onClick={() => removeBreak(i)} className="mb-0.5">
-                <Trash2 className="h-4 w-4 text-destructive" />
-              </Button>
+    <div className="space-y-6">
+      <SectionCard
+        title="Break rules"
+        description="Define break entitlements and penalties. If the employee does not clock the break, the penalty duration is deducted automatically."
+      >
+        {breakRules.length === 0 ? (
+          <p className="text-sm text-muted-foreground italic">No break rules defined.</p>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-[6rem_6rem_6rem_6rem_10rem_4rem_2.5rem] gap-2 px-3 text-xs text-muted-foreground font-medium">
+              <span>Window start</span>
+              <span>Window end</span>
+              <span>Allowed</span>
+              <span>Penalty</span>
+              <span>Rate</span>
+              <span>Paid</span>
+              <span />
             </div>
-          ))}
-        </div>
-      )}
-
-      <Button variant="outline" size="sm" onClick={addBreak}>
-        <Plus className="h-4 w-4 mr-1.5" />
-        Add Break
-      </Button>
+            {breakRules.map((r, i) => (
+              <div key={i} className="grid grid-cols-[6rem_6rem_6rem_6rem_10rem_4rem_2.5rem] gap-2 items-center p-3 rounded-md border border-border bg-muted/20">
+                <Input
+                  type="time"
+                  value={r.band_start}
+                  onChange={(e) => updateBreakRule(i, "band_start", e.target.value)}
+                />
+                <Input
+                  type="time"
+                  value={r.band_end}
+                  onChange={(e) => updateBreakRule(i, "band_end", e.target.value)}
+                />
+                <Input
+                  type="time"
+                  value={r.allowed_break}
+                  onChange={(e) => updateBreakRule(i, "allowed_break", e.target.value)}
+                />
+                <Input
+                  type="time"
+                  value={r.penalty_break ?? ""}
+                  onChange={(e) => updateBreakRule(i, "penalty_break", e.target.value || null)}
+                  placeholder="—"
+                />
+                <Select
+                  value={r.rate_id ?? "__none__"}
+                  onValueChange={(v) => updateBreakRule(i, "rate_id", v === "__none__" ? null : v)}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="— select rate —" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— none —</SelectItem>
+                    {rates.map((rate) => (
+                      <SelectItem key={rate.id} value={rate.id}>{rate.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center justify-center">
+                  <Checkbox
+                    checked={r.paid}
+                    onCheckedChange={(v) => updateBreakRule(i, "paid", v === true)}
+                  />
+                </div>
+                <Button variant="ghost" size="icon" onClick={() => removeBreakRule(i)}>
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        <Button variant="outline" size="sm" onClick={addBreakRule}>
+          <Plus className="h-4 w-4 mr-1.5" />
+          Add Break Rule
+        </Button>
+      </SectionCard>
     </div>
   );
 }
@@ -280,15 +298,16 @@ function BreaksTab({
 // ── Overtime Bands Tab ───────────────────────────────────────────────────────
 
 function OvertimeBandsTab({
-  bands, setBands,
+  bands, setBands, rates,
 }: {
   bands: OvertimeBand[];
   setBands: (v: OvertimeBand[]) => void;
+  rates: { id: string; name: string; rate_multiplier: number }[];
 }) {
   function addBand() {
     const maxOrder = bands.reduce((m, b) => Math.max(m, b.sort_order), -1);
-    const lastTo = bands[bands.length - 1]?.to_hour ?? 0;
-    setBands([...bands, { name: "", from_hour: lastTo, to_hour: null, rate_multiplier: 1.0, sort_order: maxOrder + 1 }]);
+    const lastTo = bands[bands.length - 1]?.to_time ?? "00:00";
+    setBands([...bands, { rate_id: null, from_time: lastTo, to_time: null, min_time: null, sort_order: maxOrder + 1 }]);
   }
 
   function removeBand(i: number) {
@@ -310,45 +329,48 @@ function OvertimeBandsTab({
         <p className="text-sm text-muted-foreground italic">No bands defined.</p>
       ) : (
         <div className="space-y-3">
-          <div className="grid grid-cols-[1fr_6rem_6rem_7rem_2.5rem] gap-2 px-3 text-xs text-muted-foreground font-medium">
-            <span>Band name</span>
-            <span>From (hrs)</span>
-            <span>To (hrs)</span>
-            <span>Rate multiplier</span>
+          <div className="grid grid-cols-[1fr_6rem_6rem_6rem_2.5rem] gap-2 px-3 text-xs text-muted-foreground font-medium">
+            <span>Rate</span>
+            <span>From</span>
+            <span>To</span>
+            <span>Min</span>
             <span />
           </div>
           {bands.map((b, i) => (
-            <div key={i} className="grid grid-cols-[1fr_6rem_6rem_7rem_2.5rem] gap-2 items-center p-3 rounded-md border border-border bg-muted/20">
+            <div key={i} className="grid grid-cols-[1fr_6rem_6rem_6rem_2.5rem] gap-2 items-center p-3 rounded-md border border-border bg-muted/20">
+              <Select
+                value={b.rate_id ?? "__none__"}
+                onValueChange={(v) => updateBand(i, "rate_id", v === "__none__" ? null : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="— no rate —" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— no rate —</SelectItem>
+                  {rates.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>
+                      {r.name} <span className="text-muted-foreground">×{Number(r.rate_multiplier).toFixed(2)}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Input
-                value={b.name}
-                onChange={(e) => updateBand(i, "name", e.target.value)}
-                placeholder="e.g. Regular"
+                type="time"
+                value={b.from_time ?? ""}
+                onChange={(e) => updateBand(i, "from_time", e.target.value)}
               />
               <Input
-                type="number"
-                value={b.from_hour}
-                onChange={(e) => updateBand(i, "from_hour", Number(e.target.value))}
-                min={0}
-                step={0.5}
+                type="time"
+                value={b.to_time ?? ""}
+                onChange={(e) => updateBand(i, "to_time", e.target.value || null)}
+                placeholder="—"
               />
               <Input
-                type="number"
-                value={b.to_hour ?? ""}
-                onChange={(e) => updateBand(i, "to_hour", e.target.value === "" ? null : Number(e.target.value))}
-                placeholder="∞"
-                min={0}
-                step={0.5}
+                type="time"
+                value={b.min_time ?? ""}
+                onChange={(e) => updateBand(i, "min_time", e.target.value || null)}
+                placeholder="hh:mm"
               />
-              <div className="flex items-center gap-1.5">
-                <Input
-                  type="number"
-                  value={b.rate_multiplier}
-                  onChange={(e) => updateBand(i, "rate_multiplier", Number(e.target.value))}
-                  min={0}
-                  step={0.25}
-                />
-                <span className="text-xs text-muted-foreground">×</span>
-              </div>
               <Button variant="ghost" size="icon" onClick={() => removeBand(i)}>
                 <Trash2 className="h-4 w-4 text-destructive" />
               </Button>
@@ -361,10 +383,6 @@ function OvertimeBandsTab({
         <Plus className="h-4 w-4 mr-1.5" />
         Add Band
       </Button>
-
-      <p className="text-xs text-muted-foreground">
-        Example: Regular (0–8h × 1.0), Overtime (8–10h × 1.5), Double Time (10h+ × 2.0).
-      </p>
     </div>
   );
 }
@@ -446,9 +464,10 @@ function OvertimeAfterTab({
 export function ShiftDefinitionClient({
   organisationId,
   shiftDef,
-  breaks: initialBreaks,
+  breakRules: initialBreakRules,
   overtimeAfterRules: initialOvertimeAfterRules,
   overtimeBands: initialOvertimeBands,
+  rates,
 }: Props) {
   const router = useRouter();
   const isNew = !shiftDef;
@@ -464,7 +483,7 @@ export function ShiftDefinitionClient({
   const [sortOrder, setSortOrder] = useState(shiftDef?.sortOrder ?? 0);
 
   // Other tabs state
-  const [breaks, setBreaks] = useState<BreakDef[]>(initialBreaks);
+  const [breakRules, setBreakRules] = useState<BreakRule[]>(initialBreakRules);
   const [overtimeAfterRules, setOvertimeAfterRules] = useState<OvertimeAfterRule[]>(initialOvertimeAfterRules);
   const [overtimeBands, setOvertimeBands] = useState<OvertimeBand[]>(initialOvertimeBands);
 
@@ -500,9 +519,16 @@ export function ShiftDefinitionClient({
       breakType,
       active,
       sortOrder,
-      breaks,
+      breakRules,
       overtimeAfterRules,
-      overtimeBands,
+      overtimeBands: overtimeBands.map((b) => ({
+        id:         b.id,
+        rate_id:    b.rate_id,
+        from_time:  b.from_time,
+        to_time:    b.to_time,
+        min_time:   b.min_time,
+        sort_order: b.sort_order,
+      })),
     });
 
     setSaving(false);
@@ -588,11 +614,13 @@ export function ShiftDefinitionClient({
         </TabsContent>
 
         <TabsContent value="breaks">
-          <BreaksTab breaks={breaks} setBreaks={setBreaks} breakType={breakType} />
+          <BreaksTab
+            breakRules={breakRules} setBreakRules={setBreakRules} rates={rates}
+          />
         </TabsContent>
 
         <TabsContent value="overtime-bands">
-          <OvertimeBandsTab bands={overtimeBands} setBands={setOvertimeBands} />
+          <OvertimeBandsTab bands={overtimeBands} setBands={setOvertimeBands} rates={rates} />
         </TabsContent>
 
         <TabsContent value="overtime-after">

@@ -35,9 +35,9 @@ interface SaveShiftPayload {
   breakType: string;
   active: boolean;
   sortOrder: number;
-  breaks: { start: string; end: string; duration_mins: number }[];
+  breakRules: { band_start: string; band_end: string; allowed_break: string; penalty_break: string | null; paid: boolean; rate_id: string | null }[];
   overtimeAfterRules: { id?: string; period: string; threshold_hours: number; sort_order: number }[];
-  overtimeBands: { id?: string; name: string; from_hour: number; to_hour: number | null; rate_multiplier: number; sort_order: number }[];
+  overtimeBands: { id?: string; rate_id: string | null; from_time: string; to_time: string | null; min_time: string | null; sort_order: number }[];
 }
 
 export async function saveShiftDefinition(
@@ -58,16 +58,16 @@ export async function saveShiftDefinition(
 
   // Upsert the shift definition
   const shiftRow = {
-    organisation_id: payload.organisationId,
-    name:            payload.name,
-    is_open_shift:   payload.isOpenShift,
-    planned_start:   payload.plannedStart,
-    planned_end:     payload.plannedEnd,
+    organisation_id:  payload.organisationId,
+    name:             payload.name,
+    is_open_shift:    payload.isOpenShift,
+    planned_start:    payload.plannedStart,
+    planned_end:      payload.plannedEnd,
     crosses_midnight: payload.crossesMidnight,
-    break_type:      payload.breakType,
-    breaks:          payload.breaks,     // JSONB array
-    active:          payload.active,
-    sort_order:      payload.sortOrder,
+    break_type:       payload.breakType,
+    break_rules:      payload.breakRules, // JSONB array
+    active:           payload.active,
+    sort_order:       payload.sortOrder,
   };
 
   let shiftId: string;
@@ -118,10 +118,10 @@ export async function saveShiftDefinition(
     const { error } = await admin.from("overtime_bands").insert(
       payload.overtimeBands.map((b, i) => ({
         shift_definition_id: shiftId,
-        name:                b.name,
-        from_hour:           b.from_hour,
-        to_hour:             b.to_hour,
-        rate_multiplier:     b.rate_multiplier,
+        rate_id:             b.rate_id,
+        from_time:           b.from_time,
+        to_time:             b.to_time,
+        min_time:            b.min_time,
         sort_order:          i,
       }))
     );

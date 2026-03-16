@@ -12,8 +12,11 @@ import { ADMIN_RIGHTS, EMPLOYEE_RIGHTS } from "@/lib/rights-config";
 import { ProfileManager } from "./organisation-edit-dialog-profiles";
 import { CustomFieldsManager } from "./organisation-edit-dialog-custom-fields";
 import { BackupsManager } from "./organisation-edit-dialog-backups";
+import { RatesManager } from "./organisation-edit-dialog-rates";
 import { getCustomFieldDefs } from "./employees/custom-field-actions";
 import type { FieldDef } from "./employees/custom-field-actions";
+import { getRates } from "./rates-actions";
+import type { Rate } from "./rates-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -106,6 +109,7 @@ export function OrganisationEditDialog({
   const [userRightsType, setUserRightsType] = useState<"admin" | "employee">("admin");
   const [fieldDefs, setFieldDefs] = useState<FieldDef[]>([]);
   const [fieldDefsModified, setFieldDefsModified] = useState(false);
+  const [rates, setRates] = useState<Rate[]>([]);
   const router = useRouter();
   const isOwner = role === "owner";
   const showCustomFields = isOwner || canDefineCustomFields;
@@ -173,8 +177,12 @@ export function OrganisationEditDialog({
       if (showCustomFields) {
         getCustomFieldDefs().then(setFieldDefs);
       }
+      // Load rates
+      if (isOwner) {
+        getRates().then(setRates);
+      }
     }
-  }, [open, orgName, memberLabel, requireMfa, showCustomFields, initialCurrencySymbol, initialTsMaxShiftHours, initialTsMaxBreakMinutes, initialTsShiftStartVarianceMinutes, initialTsRoundFirstInMins, initialTsRoundFirstInGraceMins, initialTsRoundBreakOutMins, initialTsRoundBreakOutGraceMins, initialTsRoundBreakInMins, initialTsRoundBreakInGraceMins, initialTsRoundLastOutMins, initialTsRoundLastOutGraceMins]);
+  }, [open, orgName, memberLabel, requireMfa, showCustomFields, isOwner, initialCurrencySymbol, initialTsMaxShiftHours, initialTsMaxBreakMinutes, initialTsShiftStartVarianceMinutes, initialTsRoundFirstInMins, initialTsRoundFirstInGraceMins, initialTsRoundBreakOutMins, initialTsRoundBreakOutGraceMins, initialTsRoundBreakInMins, initialTsRoundBreakInGraceMins, initialTsRoundLastOutMins, initialTsRoundLastOutGraceMins]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -298,6 +306,7 @@ export function OrganisationEditDialog({
               {isOwner && <TabsTrigger value="teams">Teams</TabsTrigger>}
               {isOwner && <TabsTrigger value="user-rights">User Rights</TabsTrigger>}
               {isOwner && <TabsTrigger value="timesheet">Timesheet</TabsTrigger>}
+              {isOwner && <TabsTrigger value="rates">Rates</TabsTrigger>}
               {showCustomFields && <TabsTrigger value="custom-fields">Custom Fields</TabsTrigger>}
               {isOwner && <TabsTrigger value="backups">Backups</TabsTrigger>}
             </TabsList>
@@ -630,6 +639,13 @@ export function OrganisationEditDialog({
                     ))}
                   </div>
                 </div>
+              </TabsContent>
+            )}
+
+            {/* Rates tab */}
+            {isOwner && (
+              <TabsContent value="rates" className="mt-4 max-h-[400px] overflow-y-auto">
+                <RatesManager rates={rates} onRatesChange={setRates} />
               </TabsContent>
             )}
 

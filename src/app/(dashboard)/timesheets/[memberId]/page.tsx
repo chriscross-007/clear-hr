@@ -77,6 +77,15 @@ export default async function TimesheetPage({
 
   const { weekStart, weekEnd } = getWeekBounds(week);
 
+  // Fetch org rates (for timesheet column headers)
+  const { data: rawRates } = await supabase
+    .from("rates")
+    .select("id, name, rate_multiplier")
+    .eq("organisation_id", caller.organisation_id)
+    .order("sort_order");
+
+  const rates = (rawRates ?? []) as { id: string; name: string; rate_multiplier: number }[];
+
   // Fetch active shift definitions for the org (for the shift picker)
   const { data: rawShiftDefs } = await supabase
     .from("shift_definitions")
@@ -159,6 +168,41 @@ export default async function TimesheetPage({
     };
   }
 
+  // Fetch overtime bands and break rules for each shift definition used this week
+  const shiftDefIds = [...new Set(
+    Object.values(shiftByDate)
+      .map((s) => s.shiftDefinitionId)
+      .filter((id): id is string => id !== null),
+  )];
+  const shiftBands: Record<string, { rate_id: string | null; from_time: string; to_time: string | null; min_time: string | null }[]> = {};
+  const shiftBreakRules: Record<string, { band_start: string; band_end: string; allowed_break: string; penalty_break: string | null; paid: boolean; rate_id: string | null }[]> = {};
+  if (shiftDefIds.length > 0) {
+    const [{ data: rawBands }, { data: rawShiftDefs }] = await Promise.all([
+      supabase
+        .from("overtime_bands")
+        .select("shift_definition_id, rate_id, from_time, to_time, min_time")
+        .in("shift_definition_id", shiftDefIds)
+        .order("sort_order"),
+      supabase
+        .from("shift_definitions")
+        .select("id, break_rules")
+        .in("id", shiftDefIds),
+    ]);
+    for (const b of rawBands ?? []) {
+      const defId = b.shift_definition_id as string;
+      if (!shiftBands[defId]) shiftBands[defId] = [];
+      shiftBands[defId].push({
+        rate_id:   (b.rate_id as string | null) ?? null,
+        from_time: ((b.from_time as string) ?? "00:00").slice(0, 5),
+        to_time:   b.to_time ? (b.to_time as string).slice(0, 5) : null,
+        min_time:  b.min_time ? (b.min_time as string).slice(0, 5) : null,
+      });
+    }
+    for (const sd of rawShiftDefs ?? []) {
+      shiftBreakRules[sd.id as string] = (sd.break_rules as { band_start: string; band_end: string; allowed_break: string; penalty_break: string | null; paid: boolean; rate_id: string | null }[]) ?? [];
+    }
+  }
+
   // Attach clockings and shift info to each period
   const workPeriods = periods.map((p) => ({
     id: p.id,
@@ -218,8 +262,11 @@ export default async function TimesheetPage({
       callerRole={caller.role}
       shiftDefs={shiftDefs}
       shiftByDate={shiftByDate}
+      shiftBands={shiftBands}
+      shiftBreakRules={shiftBreakRules}
       debugClockings={debugClockings}
       roundingConfig={roundingConfig}
+      rates={rates}
     />
   );
 }

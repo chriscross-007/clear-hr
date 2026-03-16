@@ -25,6 +25,15 @@ export default async function ShiftDefinitionPage({
   if (!membership) redirect("/login");
   if (membership.role !== "owner" && membership.role !== "admin") notFound();
 
+  // Fetch org rates for the band rate selector
+  const { data: rawRates } = await supabase
+    .from("rates")
+    .select("id, name, rate_multiplier")
+    .eq("organisation_id", membership.organisation_id)
+    .order("sort_order");
+
+  const rates = (rawRates ?? []) as { id: string; name: string; rate_multiplier: number }[];
+
   const isNew = id === "new";
 
   // For new shifts, return a blank shell
@@ -33,9 +42,10 @@ export default async function ShiftDefinitionPage({
       <ShiftDefinitionClient
         organisationId={membership.organisation_id}
         shiftDef={null}
-        breaks={[]}
+        breakRules={[]}
         overtimeAfterRules={[]}
         overtimeBands={[]}
+        rates={rates}
       />
     );
   }
@@ -54,7 +64,7 @@ export default async function ShiftDefinitionPage({
       .maybeSingle(),
     supabase
       .from("shift_definitions")
-      .select("breaks")
+      .select("break_rules")
       .eq("id", id)
       .maybeSingle(),
     supabase
@@ -64,17 +74,20 @@ export default async function ShiftDefinitionPage({
       .order("sort_order"),
     supabase
       .from("overtime_bands")
-      .select("id, name, from_hour, to_hour, rate_multiplier, sort_order")
+      .select("id, rate_id, from_time, to_time, min_time, sort_order")
       .eq("shift_definition_id", id)
       .order("sort_order"),
   ]);
 
   if (!shiftDef) notFound();
 
-  const breaks = (rawBreaks?.breaks ?? []) as {
-    start: string;
-    end: string;
-    duration_mins: number;
+  const breakRules = (rawBreaks?.break_rules ?? []) as {
+    band_start:    string;
+    band_end:      string;
+    allowed_break: string;
+    penalty_break: string | null;
+    paid:          boolean;
+    rate_id:       string | null;
   }[];
 
   return (
@@ -91,21 +104,22 @@ export default async function ShiftDefinitionPage({
         active: shiftDef.active,
         sortOrder: shiftDef.sort_order,
       }}
-      breaks={breaks}
+      breakRules={breakRules}
       overtimeAfterRules={(overtimeAfterRules ?? []) as {
         id: string;
         period: string;
         threshold_hours: number;
         sort_order: number;
       }[]}
-      overtimeBands={(overtimeBands ?? []) as {
-        id: string;
-        name: string;
-        from_hour: number;
-        to_hour: number | null;
-        rate_multiplier: number;
-        sort_order: number;
-      }[]}
+      overtimeBands={(overtimeBands ?? []).map((b) => ({
+        id:         b.id as string,
+        rate_id:    (b.rate_id ?? null) as string | null,
+        from_time:  ((b.from_time as string) ?? "00:00").slice(0, 5),
+        to_time:    b.to_time ? (b.to_time as string).slice(0, 5) : null,
+        min_time:   b.min_time ? (b.min_time as string).slice(0, 5) : null,
+        sort_order: b.sort_order as number,
+      }))}
+      rates={rates}
     />
   );
 }

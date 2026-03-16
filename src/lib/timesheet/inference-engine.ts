@@ -21,6 +21,18 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  computePairs,
+  splitHoursByBands,
+  applyBreakRules,
+  computeGrossHours,
+} from "@/components/timesheet/timesheet-types";
+import type {
+  ClockingData,
+  OvertimeBandDef,
+  BreakRuleDef,
+  RoundingConfig,
+} from "@/components/timesheet/timesheet-types";
 
 // ── Internal types ────────────────────────────────────────────────────────────
 
@@ -55,8 +67,9 @@ function effectiveRaw(c: Clocking): string | null {
 }
 
 interface ShiftInfo {
-  scheduledShiftId:    string;
+  scheduledShiftId:     string;
   plannedStartDatetime: Date | null;
+  shiftDefinitionId:    string | null;
 }
 
 interface ForwardPassResult {
@@ -124,9 +137,9 @@ function applyRules(
   switch (rawType) {
     // ── Raw = IN ──────────────────────────────────────────────────────────────
     case "IN":
+      if (!D)                     return "bStart";      // IN-2 (no open shift — must be new)
+      if (prev === "BreakOut")    return "BreakIn";     // IN-3 (returning from break, before B-band check)
       if (prev !== "bStart" && B) return "bStart";      // IN-1
-      if (!D)                     return "bStart";      // IN-2
-      if (prev === "BreakOut")    return "BreakIn";     // IN-3
       /* prev !== "BreakOut" && D */
       return "INambiguous";                             // IN-4
 
@@ -154,8 +167,8 @@ function applyRules(
     default:
       if (!D)                                      return "bStart";       // null-1
       if (prev === "BreakOut" && !E)               return "bStart";       // null-2
+      if (prev === "BreakOut" && E)                return "BreakIn";      // null-4 (checked before B-band)
       if (prev !== "bStart" && B)                  return "bStart";       // null-3
-      if (prev === "BreakOut" && E)                return "BreakIn";      // null-4
       if ((prev === "bStart" || prev === "BreakIn") && C) return "BreakOut"; // null-5
       if (prev === "bStart" && !C)                 return "bEnd";         // null-6
       if (prev === "BreakIn" && !B && !C)          return "bEnd";         // null-7
@@ -298,6 +311,25 @@ function groupIntoPeriods(
   return periods;
 }
 
+// ── Rate hours computation helper ─────────────────────────────────────────────
+
+function toClockingData(c: Clocking, r: ForwardPassResult): ClockingData {
+  return {
+    id:              c.id,
+    clockedAt:       c.clocked_at,
+    rawType:         c.raw_type,
+    inferredType:    r.inferredType,
+    overrideType:    c.override_type,
+    isBstart:        r.isBstart,
+    costCentreId:    c.cost_centre_id,
+    source:          null,
+    editedClockedAt: c.edited_clocked_at,
+    editedRawType:   c.edited_raw_type,
+    editedByName:    null,
+    editedAt:        null,
+  };
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 /**
@@ -316,7 +348,7 @@ export async function runInference(params: {
   // ── 1. Fetch org config ────────────────────────────────────────────────────
   const { data: org, error: orgErr } = await supabase
     .from("organisations")
-    .select("ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_allocate_to")
+    .select("ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_allocate_to, ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins")
     .eq("id", organisationId)
     .single();
 
@@ -328,6 +360,19 @@ export async function runInference(params: {
     ts_shift_start_variance_minutes: Number(org.ts_shift_start_variance_minutes ?? 30),
     ts_allocate_to:                  (org.ts_allocate_to ?? "start") as "start" | "end",
   };
+
+  const roundingConfig: RoundingConfig = {
+    firstInMins:        (org.ts_round_first_in_mins        as number | null) ?? null,
+    firstInGraceMins:   (org.ts_round_first_in_grace_mins  as number | null) ?? null,
+    breakOutMins:       (org.ts_round_break_out_mins       as number | null) ?? null,
+    breakOutGraceMins:  (org.ts_round_break_out_grace_mins as number | null) ?? null,
+    breakInMins:        (org.ts_round_break_in_mins        as number | null) ?? null,
+    breakInGraceMins:   (org.ts_round_break_in_grace_mins  as number | null) ?? null,
+    lastOutMins:        (org.ts_round_last_out_mins        as number | null) ?? null,
+    lastOutGraceMins:   (org.ts_round_last_out_grace_mins  as number | null) ?? null,
+  };
+  const hasRounding = Object.values(roundingConfig).some((v) => v !== null);
+  const rounding = hasRounding ? roundingConfig : undefined;
 
   // ── 2. Fetch clockings with buffer ─────────────────────────────────────────
   const bufferMs   = config.ts_max_shift_hours * 3_600_000;
@@ -385,17 +430,53 @@ export async function runInference(params: {
   for (const ss of (rawShifts ?? []) as unknown as Array<{
     id: string;
     schedule_date: string;
-    shift_definition: { planned_start: string | null; is_open_shift: boolean } | null;
+    shift_definition: { id: string; planned_start: string | null; is_open_shift: boolean } | null;
   }>) {
     const def = ss.shift_definition;
     if (!def || def.is_open_shift || !def.planned_start) {
-      shiftByDate.set(ss.schedule_date, { scheduledShiftId: ss.id, plannedStartDatetime: null });
+      shiftByDate.set(ss.schedule_date, {
+        scheduledShiftId:     ss.id,
+        plannedStartDatetime: null,
+        shiftDefinitionId:    def?.id ?? null,
+      });
       continue;
     }
     // Compute planned start as a UTC datetime on the schedule date
     const baseDate = toDate(`${ss.schedule_date}T00:00:00Z`);
     const plannedStartDatetime = timeOnDate(baseDate, def.planned_start);
-    shiftByDate.set(ss.schedule_date, { scheduledShiftId: ss.id, plannedStartDatetime });
+    shiftByDate.set(ss.schedule_date, { scheduledShiftId: ss.id, plannedStartDatetime, shiftDefinitionId: def.id });
+  }
+
+  // ── 3b. Fetch overtime bands and break rules for shift definitions in range ─
+  const shiftDefIds = [...new Set(
+    [...shiftByDate.values()].map((s) => s.shiftDefinitionId).filter((id): id is string => id !== null),
+  )];
+  const bandsByShiftDef: Record<string, OvertimeBandDef[]> = {};
+  const breakRulesByShiftDef: Record<string, BreakRuleDef[]> = {};
+  if (shiftDefIds.length > 0) {
+    const [{ data: rawBands }, { data: rawShiftDefsBreak }] = await Promise.all([
+      supabase
+        .from("overtime_bands")
+        .select("shift_definition_id, rate_id, from_time, to_time, min_time")
+        .in("shift_definition_id", shiftDefIds)
+        .order("sort_order"),
+      supabase
+        .from("shift_definitions")
+        .select("id, break_rules")
+        .in("id", shiftDefIds),
+    ]);
+    for (const b of (rawBands ?? []) as Array<{ shift_definition_id: string; rate_id: string | null; from_time: string; to_time: string | null; min_time: string | null }>) {
+      if (!bandsByShiftDef[b.shift_definition_id]) bandsByShiftDef[b.shift_definition_id] = [];
+      bandsByShiftDef[b.shift_definition_id].push({
+        rate_id:   b.rate_id,
+        from_time: b.from_time.slice(0, 5),
+        to_time:   b.to_time ? b.to_time.slice(0, 5) : null,
+        min_time:  b.min_time ? b.min_time.slice(0, 5) : null,
+      });
+    }
+    for (const sd of (rawShiftDefsBreak ?? []) as Array<{ id: string; break_rules: BreakRuleDef[] | null }>) {
+      breakRulesByShiftDef[sd.id] = sd.break_rules ?? [];
+    }
   }
 
   // ── 4. Forward pass: assign inferred types ─────────────────────────────────
@@ -443,6 +524,22 @@ export async function runInference(params: {
 
     let workPeriodId: string;
 
+    // Compute rate_hours and gross_hours for this period
+    const periodClockingData = period.clockingIds
+      .map((cid) => {
+        const c = clockings.find((x) => x.id === cid);
+        const r = resultById.get(cid);
+        return c && r ? toClockingData(c, r) : null;
+      })
+      .filter((x): x is ClockingData => x !== null);
+    const pairs = computePairs(periodClockingData);
+    const shiftDefId = shiftByDate.get(toDateStr(bStart))?.shiftDefinitionId ?? null;
+    const bands      = shiftDefId ? (bandsByShiftDef[shiftDefId] ?? []) : [];
+    const breakRules = shiftDefId ? (breakRulesByShiftDef[shiftDefId] ?? []) : [];
+    const rateSplit  = splitHoursByBands(pairs, bands, rounding);
+    const rateHours  = applyBreakRules(periodClockingData, rateSplit, breakRules);
+    const grossHours = computeGrossHours(pairs, rounding);
+
     if (existing) {
       await supabase
         .from("work_periods")
@@ -452,6 +549,8 @@ export async function runInference(params: {
           timesheet_date:     timesheetDate,
           has_conflicts:      period.hasConflicts,
           inference_run_at:   now,
+          rate_hours:         Object.keys(rateHours).length > 0 ? rateHours : null,
+          gross_hours:        grossHours > 0 ? grossHours : null,
         })
         .eq("id", existing.id);
       workPeriodId = existing.id;
@@ -468,6 +567,8 @@ export async function runInference(params: {
           timesheet_date:     timesheetDate,
           has_conflicts:      period.hasConflicts,
           inference_run_at:   now,
+          rate_hours:         Object.keys(rateHours).length > 0 ? rateHours : null,
+          gross_hours:        grossHours > 0 ? grossHours : null,
         })
         .select("id")
         .single();

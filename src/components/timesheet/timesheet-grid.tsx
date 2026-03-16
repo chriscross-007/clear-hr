@@ -9,10 +9,14 @@ import {
   type ClockingPair,
   type CellClickContext,
   type RoundingConfig,
+  type OvertimeBandDef,
+  type BreakRuleDef,
   effectiveType,
   effectiveTime,
   computePairs,
   computeGrossHours,
+  splitHoursByBands,
+  applyBreakRules,
   fmtTime,
   fmtHours,
   fmtRoundedTime,
@@ -29,6 +33,9 @@ interface TimesheetGridProps {
   shiftDefs?: { id: string; name: string }[];
   onShiftChange?: (date: string, shiftDefinitionId: string | null) => void;
   roundingConfig?: RoundingConfig;
+  rates?: { id: string; name: string; rate_multiplier: number }[];
+  shiftBands?: Record<string, OvertimeBandDef[]>;
+  shiftBreakRules?: Record<string, BreakRuleDef[]>;
 }
 
 const INFERRED_TYPE_LABELS: Record<string, string> = {
@@ -207,7 +214,7 @@ function ShiftCell({
   );
 }
 
-export function TimesheetGrid({ weekStart, workPeriods, shiftByDate = {}, onCellClick, shiftDefs = [], onShiftChange, roundingConfig }: TimesheetGridProps) {
+export function TimesheetGrid({ weekStart, workPeriods, shiftByDate = {}, onCellClick, shiftDefs = [], onShiftChange, roundingConfig, rates = [], shiftBands = {}, shiftBreakRules = {} }: TimesheetGridProps) {
   const days = getDayDates(weekStart);
 
   const byDate = new Map<string, WorkPeriodData[]>();
@@ -217,7 +224,27 @@ export function TimesheetGrid({ weekStart, workPeriods, shiftByDate = {}, onCell
     byDate.set(period.timesheetDate, arr);
   }
 
-  const totalHours = workPeriods.reduce((sum, p) => sum + computeGrossHours(computePairs(p.clockings), roundingConfig), 0);
+  // Per-rate totals for the footer.
+  // Periods with no bands contribute gross hours to the first rate column (fallback).
+  const rateTotals: Record<string, number> = {};
+  let noBandsTotalHours = 0;
+  const totalHours = workPeriods.reduce((sum, p) => {
+    const pairs      = computePairs(p.clockings);
+    const gross      = computeGrossHours(pairs, roundingConfig);
+    const shiftDefId = p.scheduledShift?.shiftDefinitionId ?? "";
+    const bands      = shiftBands[shiftDefId] ?? [];
+    const brules     = shiftBreakRules[shiftDefId] ?? [];
+    if (bands.length === 0) {
+      noBandsTotalHours += gross;
+    } else {
+      const split    = splitHoursByBands(pairs, bands, roundingConfig);
+      const adjusted = applyBreakRules(p.clockings, split, brules);
+      for (const [rateId, hrs] of Object.entries(adjusted)) {
+        rateTotals[rateId] = (rateTotals[rateId] ?? 0) + hrs;
+      }
+    }
+    return sum + gross;
+  }, 0);
 
   return (
     <div className="overflow-x-auto rounded-md border border-border">
@@ -239,9 +266,16 @@ export function TimesheetGrid({ weekStart, workPeriods, shiftByDate = {}, onCell
                 Clocking {i + 1}
               </th>
             ))}
-            <th className="px-3 py-2 text-right font-semibold text-xs uppercase tracking-wide whitespace-nowrap border-l border-border/50">
-              Hours
-            </th>
+            {rates.length > 0 ? rates.map((rate) => (
+              <th key={rate.id} className="px-3 py-2 text-right font-semibold text-xs uppercase tracking-wide whitespace-nowrap border-l border-border/50">
+                <div>{rate.name}</div>
+                <div className="text-[10px] font-normal text-muted-foreground tabular-nums">×{Number(rate.rate_multiplier).toFixed(2)}</div>
+              </th>
+            )) : (
+              <th className="px-3 py-2 text-right font-semibold text-xs uppercase tracking-wide whitespace-nowrap border-l border-border/50">
+                Hours
+              </th>
+            )}
             <th className="px-2 py-2 w-6" aria-label="Conflicts" />
           </tr>
           <tr className="bg-muted/30 border-b border-border text-muted-foreground">
@@ -253,7 +287,11 @@ export function TimesheetGrid({ weekStart, workPeriods, shiftByDate = {}, onCell
                 <th className="px-2 py-1 text-center font-normal text-xs">OUT</th>
               </React.Fragment>
             ))}
-            <th className="border-l border-border/50" />
+            {rates.length > 0 ? rates.map((rate) => (
+              <th key={rate.id} className="border-l border-border/50" />
+            )) : (
+              <th className="border-l border-border/50" />
+            )}
             <th />
           </tr>
         </thead>
@@ -298,17 +336,30 @@ export function TimesheetGrid({ weekStart, workPeriods, shiftByDate = {}, onCell
                       />
                     </React.Fragment>
                   ))}
-                  <td className="border-l border-border/50" />
+                  {rates.length > 0 ? rates.map((rate) => (
+                    <td key={rate.id} className="border-l border-border/50" />
+                  )) : (
+                    <td className="border-l border-border/50" />
+                  )}
                   <td />
                 </tr>
               );
             }
 
             return periods.flatMap((period, periodIdx) => {
-              const pairs       = computePairs(period.clockings);
-              const grossHours  = computeGrossHours(pairs, roundingConfig);
-              const ccClockings = period.clockings.filter((c) => effectiveType(c) === "CC");
-              const chunks      = chunkPairs(pairs);
+              const pairs        = computePairs(period.clockings);
+              const grossHours   = computeGrossHours(pairs, roundingConfig);
+              const ccClockings  = period.clockings.filter((c) => effectiveType(c) === "CC");
+              const chunks       = chunkPairs(pairs);
+              const shiftDefId   = period.scheduledShift?.shiftDefinitionId ?? "";
+              const bands        = shiftBands[shiftDefId] ?? [];
+              const hasBands     = bands.length > 0;
+              const brules       = shiftBreakRules[shiftDefId] ?? [];
+              const rateSplit    = applyBreakRules(
+                period.clockings,
+                splitHoursByBands(pairs, bands, roundingConfig),
+                brules,
+              );
 
               return chunks.map((chunk, chunkIdx) => {
                 const isFirstOfDay    = periodIdx === 0 && chunkIdx === 0;
@@ -375,19 +426,40 @@ export function TimesheetGrid({ weekStart, workPeriods, shiftByDate = {}, onCell
                       );
                     })}
 
-                    {/* Hours — shown on first row of each period */}
-                    <td className="px-3 py-2 text-right font-medium tabular-nums border-l border-border/50 whitespace-nowrap align-top">
-                      {isFirstOfPeriod ? (
-                        <>
-                          {fmtHours(grossHours)}
-                          {ccClockings.length > 0 && (
-                            <span className="ml-1 text-[10px] text-blue-500" title={`${ccClockings.length} CC clocking(s)`}>
-                              CC
-                            </span>
-                          )}
-                        </>
-                      ) : null}
-                    </td>
+                    {/* Hours per rate — shown on first row of each period */}
+                    {rates.length > 0 ? rates.map((rate, rateIdx) => {
+                      // No bands: show gross hours in first column as fallback
+                      const hrs = hasBands
+                        ? (rateSplit[rate.id] ?? 0)
+                        : (rateIdx === 0 ? grossHours : 0);
+                      return (
+                        <td key={rate.id} className="px-3 py-2 text-right font-medium tabular-nums border-l border-border/50 whitespace-nowrap align-top">
+                          {isFirstOfPeriod ? (
+                            <>
+                              {fmtHours(hrs)}
+                              {rateIdx === 0 && ccClockings.length > 0 && (
+                                <span className="ml-1 text-[10px] text-blue-500" title={`${ccClockings.length} CC clocking(s)`}>
+                                  CC
+                                </span>
+                              )}
+                            </>
+                          ) : null}
+                        </td>
+                      );
+                    }) : (
+                      <td className="px-3 py-2 text-right font-medium tabular-nums border-l border-border/50 whitespace-nowrap align-top">
+                        {isFirstOfPeriod ? (
+                          <>
+                            {fmtHours(grossHours)}
+                            {ccClockings.length > 0 && (
+                              <span className="ml-1 text-[10px] text-blue-500" title={`${ccClockings.length} CC clocking(s)`}>
+                                CC
+                              </span>
+                            )}
+                          </>
+                        ) : null}
+                      </td>
+                    )}
 
                     {/* Conflict indicator — shown on first row of each period */}
                     <td className="px-1 py-2 text-center align-top">
@@ -413,9 +485,20 @@ export function TimesheetGrid({ weekStart, workPeriods, shiftByDate = {}, onCell
             {Array.from({ length: MAX_PAIRS_PER_ROW * 2 }, (_, i) => (
               <td key={i} className={cn("px-2 py-2", i % 2 === 0 && "border-l border-border/50")} />
             ))}
-            <td className="px-3 py-2 text-right tabular-nums border-l border-border/50">
-              {fmtHours(totalHours)}
-            </td>
+            {rates.length > 0 ? rates.map((rate, rateIdx) => {
+              // No-bands periods contribute to the first column as a fallback
+              const hrs = (rateTotals[rate.id] ?? 0) +
+                (rateIdx === 0 ? noBandsTotalHours : 0);
+              return (
+                <td key={rate.id} className="px-3 py-2 text-right tabular-nums border-l border-border/50">
+                  {fmtHours(hrs)}
+                </td>
+              );
+            }) : (
+              <td className="px-3 py-2 text-right tabular-nums border-l border-border/50">
+                {fmtHours(totalHours)}
+              </td>
+            )}
             <td />
           </tr>
         </tfoot>

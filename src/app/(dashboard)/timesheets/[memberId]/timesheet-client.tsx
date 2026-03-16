@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { TimesheetGrid } from "@/components/timesheet/timesheet-grid";
 import { ClockingEditDialog } from "@/components/timesheet/clocking-edit-dialog";
 import { triggerInference, setDayShift } from "@/app/(dashboard)/timesheets/actions";
-import type { CellClickContext, WorkPeriodData, RoundingConfig } from "@/components/timesheet/timesheet-types";
+import type { CellClickContext, WorkPeriodData, RoundingConfig, OvertimeBandDef, BreakRuleDef } from "@/components/timesheet/timesheet-types";
 import { ClockingsDebug, type DebugClocking } from "./clockings-debug";
 
 interface TimesheetClientProps {
@@ -20,8 +20,11 @@ interface TimesheetClientProps {
   callerRole: string;
   shiftDefs: { id: string; name: string }[];
   shiftByDate: Record<string, { shiftDefinitionId: string | null; name: string | null; isOffDay: boolean }>;
+  shiftBands: Record<string, OvertimeBandDef[]>;
+  shiftBreakRules: Record<string, BreakRuleDef[]>;
   debugClockings: DebugClocking[];
   roundingConfig: RoundingConfig;
+  rates: { id: string; name: string; rate_multiplier: number }[];
 }
 
 function offsetWeek(dateStr: string, offsetWeeks: number): string {
@@ -46,8 +49,11 @@ export function TimesheetClient({
   callerRole,
   shiftDefs,
   shiftByDate,
+  shiftBands,
+  shiftBreakRules,
   debugClockings,
   roundingConfig,
+  rates,
 }: TimesheetClientProps) {
   const router = useRouter();
   const [selectedCell, setSelectedCell] = useState<CellClickContext | null>(null);
@@ -66,20 +72,22 @@ export function TimesheetClient({
   const prevWeek = offsetWeek(weekStart, -1);
   const nextWeek = offsetWeek(weekStart, 1);
 
-  function handleReinfer() {
+  async function runRecalculate() {
+    const result = await triggerInference(memberId, weekStart, weekEnd);
+    if (result.success) {
+      setReinferResult({
+        ok: true,
+        msg: `Done — ${result.periodsCreated} created, ${result.periodsUpdated} updated${result.conflicts > 0 ? `, ${result.conflicts} conflict(s)` : ""}`,
+      });
+    } else {
+      setReinferResult({ ok: false, msg: result.error ?? "Recalculation failed" });
+    }
+    router.refresh();
+  }
+
+  function handleRecalculate() {
     setReinferResult(null);
-    startReinference(async () => {
-      const result = await triggerInference(memberId, weekStart, weekEnd);
-      if (result.success) {
-        setReinferResult({
-          ok: true,
-          msg: `Done — ${result.periodsCreated} created, ${result.periodsUpdated} updated${result.conflicts > 0 ? `, ${result.conflicts} conflict(s)` : ""}`,
-        });
-        router.refresh();
-      } else {
-        setReinferResult({ ok: false, msg: result.error ?? "Inference failed" });
-      }
-    });
+    startReinference(runRecalculate);
   }
 
   const totalConflicts = workPeriods.filter((p) => p.hasConflicts).length;
@@ -121,11 +129,11 @@ export function TimesheetClient({
             <Button
               variant="outline"
               size="sm"
-              onClick={handleReinfer}
+              onClick={handleRecalculate}
               disabled={isReinferring}
             >
               <RefreshCw className={`h-4 w-4 mr-1.5 ${isReinferring ? "animate-spin" : ""}`} />
-              Re-run Inference
+              Recalculate Timesheet
             </Button>
           )}
         </div>
@@ -142,10 +150,13 @@ export function TimesheetClient({
         weekStart={weekStart}
         workPeriods={workPeriods}
         shiftByDate={shiftByDate}
+        shiftBands={shiftBands}
+        shiftBreakRules={shiftBreakRules}
         onCellClick={canEdit ? setSelectedCell : undefined}
         shiftDefs={shiftDefs}
         onShiftChange={canEdit ? handleShiftChange : undefined}
         roundingConfig={roundingConfig}
+        rates={rates}
       />
 
       {/* Debug: clockings CRUD */}
@@ -153,10 +164,7 @@ export function TimesheetClient({
         memberId={memberId}
         weekStart={weekStart}
         clockings={debugClockings}
-        onRefresh={async () => {
-          await triggerInference(memberId, weekStart, weekEnd);
-          router.refresh();
-        }}
+        onRefresh={() => startReinference(runRecalculate)}
       />
 
       {/* Edit dialog */}
@@ -165,7 +173,7 @@ export function TimesheetClient({
           ctx={selectedCell}
           memberId={memberId}
           onClose={() => setSelectedCell(null)}
-          onSuccess={() => { setSelectedCell(null); router.refresh(); }}
+          onSuccess={() => { setSelectedCell(null); startReinference(runRecalculate); }}
         />
       )}
     </div>
