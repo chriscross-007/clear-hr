@@ -78,15 +78,17 @@ export function ClockingsMapInner({ clockings }: { clockings: MapClocking[] }) {
 
       {positions.length > 0 && <FitBounds positions={positions} />}
 
-      {withCoords.map((c, i) => (
+      {withCoords.map((c) => {
+        const legendNum = clockings.indexOf(c) + 1;
+        return (
         <Marker
           key={c.id}
           position={[c.latitude!, c.longitude!]}
-          icon={makeIcon(i + 1, typeHex(c))}
+          icon={makeIcon(legendNum, typeHex(c))}
         >
           <Popup>
             <div style={{ fontSize: 12 }}>
-              <strong>{i + 1}. {formatUtcTime(c.clockedAt)} — {typeLabel(c)}</strong>
+              <strong>{legendNum}. {formatUtcTime(c.clockedAt)} — {typeLabel(c)}</strong>
               <br />
               <span style={{ color: "#6b7280" }}>
                 {c.latitude!.toFixed(6)}, {c.longitude!.toFixed(6)}
@@ -94,7 +96,8 @@ export function ClockingsMapInner({ clockings }: { clockings: MapClocking[] }) {
             </div>
           </Popup>
         </Marker>
-      ))}
+        );
+      })}
     </MapContainer>
   );
 }
