@@ -3,10 +3,11 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, RefreshCw, AlertTriangle } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, Map } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TimesheetGrid } from "@/components/timesheet/timesheet-grid";
 import { ClockingEditDialog } from "@/components/timesheet/clocking-edit-dialog";
+import { ClockingsMapDialog } from "@/components/timesheet/clockings-map-dialog";
 import { triggerInference, setDayShift } from "@/app/(dashboard)/timesheets/actions";
 import type { CellClickContext, WorkPeriodData, RoundingConfig, OvertimeBandDef, BreakRuleDef } from "@/components/timesheet/timesheet-types";
 import { ClockingsDebug, type DebugClocking } from "./clockings-debug";
@@ -59,6 +60,7 @@ export function TimesheetClient({
   const [selectedCell, setSelectedCell] = useState<CellClickContext | null>(null);
   const [isReinferring, startReinference] = useTransition();
   const [reinferResult, setReinferResult] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [mapOpen, setMapOpen] = useState(false);
 
   const canEdit = callerRole === "owner" || callerRole === "admin";
 
@@ -125,6 +127,14 @@ export function TimesheetClient({
               {totalConflicts} conflict{totalConflicts > 1 ? "s" : ""} need attention
             </span>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setMapOpen(true)}
+          >
+            <Map className="h-4 w-4 mr-1.5" />
+            Map
+          </Button>
           {canEdit && (
             <Button
               variant="outline"
@@ -166,6 +176,16 @@ export function TimesheetClient({
         clockings={debugClockings}
         onRefresh={() => startReinference(runRecalculate)}
       />
+
+      {/* Map dialog */}
+      {mapOpen && (
+        <ClockingsMapDialog
+          memberId={memberId}
+          weekStart={weekStart}
+          weekEnd={weekEnd}
+          onClose={() => setMapOpen(false)}
+        />
+      )}
 
       {/* Edit dialog */}
       {selectedCell && (

@@ -588,3 +588,60 @@ export async function addClocking(
 
   return { success: true };
 }
+
+export interface MapClocking {
+  id:           string;
+  clockedAt:    string;
+  rawType:      string | null;
+  inferredType: string | null;
+  latitude:     number | null;
+  longitude:    number | null;
+}
+
+/**
+ * Fetch clockings with GPS coordinates for a single member on a given date.
+ * Only owners and admins may call this.
+ */
+export async function getClockingsWithLocation(
+  memberId: string,
+  date: string,        // "YYYY-MM-DD"
+): Promise<{ clockings: MapClocking[]; error?: string }> {
+  const caller = await getCallerMembership();
+  if (!caller) return { clockings: [], error: "Unauthenticated" };
+  if (caller.role !== "owner" && caller.role !== "admin") return { clockings: [], error: "Forbidden" };
+
+  const supabase = await createServerClient();
+
+  // Verify target member belongs to same org
+  const { data: target } = await supabase
+    .from("members")
+    .select("id")
+    .eq("id", memberId)
+    .eq("organisation_id", caller.organisation_id)
+    .maybeSingle();
+
+  if (!target) return { clockings: [], error: "Member not found" };
+
+  const { data, error } = await supabase
+    .from("clockings")
+    .select("id, clocked_at, raw_type, inferred_type, latitude, longitude")
+    .eq("member_id", memberId)
+    .eq("organisation_id", caller.organisation_id)
+    .eq("is_deleted", false)
+    .gte("clocked_at", `${date}T00:00:00Z`)
+    .lte("clocked_at", `${date}T23:59:59Z`)
+    .order("clocked_at");
+
+  if (error) return { clockings: [], error: error.message };
+
+  return {
+    clockings: (data ?? []).map((c) => ({
+      id:           c.id as string,
+      clockedAt:    c.clocked_at as string,
+      rawType:      c.raw_type as string | null,
+      inferredType: c.inferred_type as string | null,
+      latitude:     c.latitude as number | null,
+      longitude:    c.longitude as number | null,
+    })),
+  };
+}
