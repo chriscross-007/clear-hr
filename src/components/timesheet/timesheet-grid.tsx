@@ -261,10 +261,8 @@ export function TimesheetGrid({ weekStart, workPeriods, shiftByDate = {}, onCell
               <th
                 key={i}
                 colSpan={2}
-                className="px-2 py-2 text-center font-semibold text-xs uppercase tracking-wide border-l border-border/50"
-              >
-                Clocking {i + 1}
-              </th>
+                className="border-l border-border/50"
+              />
             ))}
             {rates.length > 0 ? rates.map((rate) => (
               <th key={rate.id} className="px-3 py-2 text-right font-semibold text-xs uppercase tracking-wide whitespace-nowrap border-l border-border/50">
