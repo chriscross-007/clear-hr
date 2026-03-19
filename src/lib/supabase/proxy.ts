@@ -52,6 +52,7 @@ export async function updateSession(request: NextRequest) {
     "/organisation-setup",
     "/accept-invite",
     "/api/webhooks",
+    "/api/trigger-inference",
     "/mfa-setup",
     "/mfa-verify",
   ];
