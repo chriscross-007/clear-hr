@@ -764,3 +764,87 @@ export async function acceptInvite(
     };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Bulk update members
+// ---------------------------------------------------------------------------
+
+export type BulkUpdatePayload = {
+  team_id?: string;
+  role?: "admin" | "employee";
+  custom_fields?: Record<string, unknown>;
+};
+
+export async function bulkUpdateMembers(
+  memberIds: string[],
+  updates: BulkUpdatePayload
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    if (!memberIds.length) return { success: false, error: "No members selected" };
+
+    // Verify caller — owner or admin with can_manage_members write access
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Not authenticated" };
+
+    const { data: membership } = await supabase
+      .from("members")
+      .select("id, organisation_id, role, permissions, first_name, last_name")
+      .eq("user_id", user.id)
+      .limit(1)
+      .single();
+
+    if (!membership) return { success: false, error: "No organisation" };
+
+    const permissions = (membership.permissions as Record<string, unknown>) ?? {};
+    const canEdit =
+      membership.role === "owner" ||
+      (membership.role === "admin" && permissions.can_manage_members === "write");
+
+    if (!canEdit) return { success: false, error: "Insufficient permissions" };
+
+    // Validate role if provided
+    if (updates.role && !["admin", "employee"].includes(updates.role)) {
+      return { success: false, error: "Invalid role" };
+    }
+
+    // Call the RPC via service role client (bypasses RLS, runs in single transaction)
+    const admin = createAdminClient();
+    const { error } = await admin.rpc("bulk_update_members", {
+      p_member_ids: memberIds,
+      p_org_id: membership.organisation_id,
+      p_team_id: updates.team_id ?? null,
+      p_role: updates.role ?? null,
+      p_custom_fields: updates.custom_fields ?? null,
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    // Audit log
+    const changedParts: string[] = [];
+    if (updates.team_id) changedParts.push("team");
+    if (updates.role) changedParts.push("role");
+    if (updates.custom_fields) changedParts.push("custom fields");
+
+    logAudit({
+      organisationId: membership.organisation_id,
+      actorId: membership.id,
+      actorName: `${membership.first_name} ${membership.last_name}`,
+      action: "member.bulk_update",
+      targetType: "member",
+      targetId: memberIds[0],
+      targetLabel: `${memberIds.length} members (${changedParts.join(", ")})`,
+    });
+
+    return { success: true };
+  } catch (e) {
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : "An error occurred",
+    };
+  }
+}

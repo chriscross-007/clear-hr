@@ -358,10 +358,10 @@ export function buildEmployeeColumns(opts: {
           <img
             src={m.avatar_url}
             alt={`${m.first_name} ${m.last_name}`}
-            className="h-12 w-12 rounded-full object-cover shrink-0"
+            className="h-12 w-12 min-w-12 rounded-full object-cover shrink-0"
           />
         ) : (
-          <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center shrink-0">
+          <div className="h-12 w-12 min-w-12 rounded-full bg-muted flex items-center justify-center shrink-0">
             <span className="text-sm font-medium text-muted-foreground">{initials}</span>
           </div>
         );

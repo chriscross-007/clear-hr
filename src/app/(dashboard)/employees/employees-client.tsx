@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { type ColPref } from "@/lib/grid-prefs-actions";
+import { type ColumnDef } from "@tanstack/react-table";
 import { DataGrid } from "@/components/data-grid/data-grid";
 import {
   buildEmployeeColumns,
@@ -14,11 +15,12 @@ import {
   DATE_PRESET_LABELS,
 } from "./employee-columns";
 import Link from "next/link";
-import { Plus, List, LayoutGrid } from "lucide-react";
+import { Plus, List, LayoutGrid, Pencil } from "lucide-react";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
-import { deleteEmployee } from "./actions";
+import { deleteEmployee, type BulkUpdatePayload } from "./actions";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,6 +40,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { EditEmployeeDialog } from "./edit-employee-dialog";
+import { BulkEditSheet } from "./bulk-edit-sheet";
 import { AddEmployeeDialog } from "./add-employee-dialog";
 import type { Profile } from "./profile-actions";
 import type { FieldDef } from "./custom-field-actions";
@@ -97,7 +100,25 @@ export function EmployeesClient({
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showCapacityDialog, setShowCapacityDialog] = useState(false);
   const [view, setView] = useState<"list" | "card">("list");
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [cardRows, setCardRows] = useState<Member[]>(initialMembers);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const handleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleSelectAll = (visibleIds: string[]) => {
+    setSelectedIds(new Set(visibleIds));
+  };
+
+  const handleDeselectAll = () => {
+    setSelectedIds(new Set());
+  };
 
   useEffect(() => {
     const saved = localStorage.getItem(`employee-directory-view-${userId}`) as "list" | "card" | null;
@@ -124,7 +145,7 @@ export function EmployeesClient({
     ...Object.fromEntries(customFieldDefs.map((d) => [`cf_${d.field_key}`, d.label])),
   };
 
-  const columns = buildEmployeeColumns({
+  const baseColumns = buildEmployeeColumns({
     teams,
     adminProfiles,
     employeeProfiles,
@@ -134,6 +155,47 @@ export function EmployeesClient({
     customFieldDefs,
     onDelete: (member) => setDeletingMember(member),
   });
+
+  const selectColumn: ColumnDef<Member> = useMemo(() => ({
+    id: "select",
+    size: 40,
+    enableSorting: false,
+    enableColumnFilter: false,
+    header: ({ table }) => {
+      const pageIds = table.getRowModel().rows.map(r => r.original.member_id);
+      const allSelected = pageIds.length > 0 && pageIds.every(id => selectedIds.has(id));
+      const someSelected = pageIds.some(id => selectedIds.has(id));
+      return (
+        <Checkbox
+          checked={allSelected ? true : someSelected ? "indeterminate" : false}
+          onCheckedChange={(value) => {
+            if (value) {
+              handleSelectAll(pageIds);
+            } else {
+              handleDeselectAll();
+            }
+          }}
+          onClick={(e) => e.stopPropagation()}
+          aria-label="Select all"
+        />
+      );
+    },
+    cell: ({ row }) => (
+      <Checkbox
+        checked={selectedIds.has(row.original.member_id)}
+        onCheckedChange={() => handleSelect(row.original.member_id)}
+        onClick={(e) => e.stopPropagation()}
+        aria-label="Select row"
+      />
+    ),
+    meta: {
+      headerClassName: "w-10",
+      cellClassName: "w-10",
+    },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [selectedIds]);
+
+  const columns = [selectColumn, ...baseColumns];
 
   async function handleExportPdf(
     rows: Member[],
@@ -249,9 +311,19 @@ export function EmployeesClient({
     }
   }
 
-  // Toolbar slot: view toggle + add button
+  // Toolbar slot: view toggle + add button + selection count
   const toolbar = (
     <div className="flex items-center gap-3">
+      {selectedIds.size > 0 && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setBulkEditOpen(true)}
+        >
+          <Pencil className="h-4 w-4 mr-2" />
+          Bulk Edit ({selectedIds.size})
+        </Button>
+      )}
       <div className="flex overflow-hidden rounded-md border border-input text-sm">
         <button
           className={cn("flex items-center gap-1.5 px-3 py-1.5", view === "list" ? "bg-muted font-medium" : "hover:bg-muted/50")}
@@ -310,13 +382,34 @@ export function EmployeesClient({
           emptyMessage={`No ${pluralize(memberLabel)} found.`}
           onExportPdf={handleExportPdf}
           onPageRowsChange={setCardRows}
+          leadingColumnIds={["select"]}
         />
       </div>
 
       {/* Card view */}
       {view === "card" && (
         <>
-          <div className="mb-4 flex justify-end">
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                checked={
+                  cardRows.length > 0 && cardRows.every(m => selectedIds.has(m.member_id))
+                    ? true
+                    : cardRows.some(m => selectedIds.has(m.member_id))
+                    ? "indeterminate"
+                    : false
+                }
+                onCheckedChange={(value) => {
+                  if (value) {
+                    handleSelectAll(cardRows.map(m => m.member_id));
+                  } else {
+                    handleDeselectAll();
+                  }
+                }}
+                aria-label="Select all"
+              />
+              <span className="text-sm text-muted-foreground">Select all</span>
+            </div>
             {toolbar}
           </div>
           <div className="mb-4">
@@ -329,9 +422,22 @@ export function EmployeesClient({
                   return (
                     <div
                       key={m.member_id}
-                      className="flex flex-col items-center gap-3 rounded-lg border bg-card p-6 text-center cursor-pointer hover:bg-muted/50"
+                      className={cn(
+                        "relative flex flex-col items-center gap-3 rounded-lg border bg-card p-6 text-center cursor-pointer hover:bg-muted/50",
+                        selectedIds.has(m.member_id) && "ring-2 ring-primary"
+                      )}
                       onClick={() => router.push(`/employees/${m.member_id}/dashboard`)}
                     >
+                      <div
+                        className="absolute top-2 left-2 z-10"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Checkbox
+                          checked={selectedIds.has(m.member_id)}
+                          onCheckedChange={() => handleSelect(m.member_id)}
+                          aria-label="Select member"
+                        />
+                      </div>
                       {m.avatar_url ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
@@ -434,6 +540,38 @@ export function EmployeesClient({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bulk edit sheet */}
+      <BulkEditSheet
+        open={bulkEditOpen}
+        onOpenChange={setBulkEditOpen}
+        selectedCount={selectedIds.size}
+        selectedIds={selectedIds}
+        teams={teams}
+        memberLabel={memberLabel}
+        customFieldDefs={customFieldDefs}
+        currencySymbol={currencySymbol}
+        onBulkUpdate={(updatedIds, updates) => {
+          // Optimistic update — apply changes to local state immediately
+          setMembers((prev) =>
+            prev.map((member) => {
+              if (!updatedIds.includes(member.member_id)) return member;
+              const updated = { ...member };
+              if (updates.team_id !== undefined) updated.team_id = updates.team_id;
+              if (updates.role !== undefined) updated.role = updates.role;
+              if (updates.custom_fields) {
+                updated.custom_fields = {
+                  ...member.custom_fields,
+                  ...updates.custom_fields,
+                };
+              }
+              return updated;
+            })
+          );
+          // Background refresh to sync server state
+          router.refresh();
+        }}
+      />
 
       {/* Delete confirmation */}
       <AlertDialog

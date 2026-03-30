@@ -100,6 +100,8 @@ interface DataGridProps<T> {
   initialFilters?: ColumnFiltersState;
   /** Called whenever any saveable prefs change (columns, filters, groupBy, etc.) */
   onPrefsChange?: (snapshot: GridPrefs) => void;
+  /** Column IDs to pin before the prefs-managed columns (e.g. ["select"]) */
+  leadingColumnIds?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +128,7 @@ export function DataGrid<T extends object>({
   onPageRowsChange,
   initialFilters,
   onPrefsChange,
+  leadingColumnIds,
 }: DataGridProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(initialFilters ?? []);
@@ -167,10 +170,14 @@ export function DataGrid<T extends object>({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupBy]);
 
+  const effectiveColumnOrder = leadingColumnIds?.length
+    ? [...leadingColumnIds, ...columnOrder]
+    : columnOrder;
+
   const table = useReactTable({
     data,
     columns,
-    state: { sorting, columnFilters, columnOrder, columnVisibility, pagination: { pageIndex, pageSize } },
+    state: { sorting, columnFilters, columnOrder: effectiveColumnOrder, columnVisibility, pagination: { pageIndex, pageSize } },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     onPaginationChange: (updater) => {
