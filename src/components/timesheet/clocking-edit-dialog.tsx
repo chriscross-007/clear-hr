@@ -27,23 +27,29 @@ import type { CellClickContext } from "./timesheet-types";
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Convert an ISO UTC timestamp to a datetime-local string (treated as UTC) */
+/** Convert an ISO timestamp to a datetime-local string (local time) */
 function toDatetimeLocal(iso: string): string {
-  return iso.slice(0, 16); // "YYYY-MM-DDTHH:MM"
+  const d = new Date(iso);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 }
 
-/** Convert a datetime-local string to an ISO UTC string */
+/** Convert a datetime-local string (local time) to an ISO UTC string */
 function fromDatetimeLocal(dtl: string): string {
-  return `${dtl}:00.000Z`;
+  return new Date(dtl).toISOString();
 }
 
-/** Format a short date+time label for display */
+/** Format a short date+time label for display (local time) */
 function fmtDateTime(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString("en-GB", {
     weekday: "short", day: "numeric", month: "short",
-    hour: "2-digit", minute: "2-digit", timeZone: "UTC",
-  }) + " UTC";
+    hour: "2-digit", minute: "2-digit",
+  });
 }
 
 // Types a manager can explicitly assign via override.

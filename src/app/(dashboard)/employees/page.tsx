@@ -35,7 +35,7 @@ export default async function EmployeesPage({
 
   if (!canView) {
     return (
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
         <p className="text-muted-foreground">You don&apos;t have access to this page.</p>
       </div>
     );

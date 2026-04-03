@@ -129,7 +129,7 @@ function ClockingCell({ clocking, expectedType, date, workPeriodId, onCellClick,
     `Inferred: ${INFERRED_TYPE_LABELS[clocking.inferredType ?? ""] ?? clocking.inferredType ?? "—"}`,
     isOverridden ? `Override → ${displayLabel}` : "",
     isEdited && clocking.editedByName
-      ? `Edited by ${clocking.editedByName}${clocking.editedAt ? ` on ${new Date(clocking.editedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })} at ${fmtTime(clocking.editedAt)}` : ""}`
+      ? `Edited by ${clocking.editedByName}${clocking.editedAt ? ` on ${new Date(clocking.editedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} at ${fmtTime(clocking.editedAt)}` : ""}`
       : "",
   ].filter(Boolean).join(" · ");
 

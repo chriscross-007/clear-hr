@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Users, Building2, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, Clock } from "lucide-react";
+import { Users, Building2, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, CalendarDays, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { hasPlanFeature } from "@/lib/plan-config";
@@ -30,6 +30,10 @@ interface SidebarProps {
   tsRoundBreakInGraceMins: number | null;
   tsRoundLastOutMins: number | null;
   tsRoundLastOutGraceMins: number | null;
+  holidayYearStartType: string;
+  holidayYearStartDay: number;
+  holidayYearStartMonth: number;
+  bankHolidayHandling: string;
   initialFavouriteIds?: string[];
   initialCustomReports?: { id: string; name: string }[];
   initialShiftDefs?: { id: string; name: string }[];
@@ -55,6 +59,10 @@ export function Sidebar({
   tsRoundBreakInGraceMins,
   tsRoundLastOutMins,
   tsRoundLastOutGraceMins,
+  holidayYearStartType,
+  holidayYearStartDay,
+  holidayYearStartMonth,
+  bankHolidayHandling,
   initialFavouriteIds = [],
   initialCustomReports = [],
   initialShiftDefs = [],
@@ -118,6 +126,18 @@ export function Sidebar({
             <Link href="/employees" className={linkClass("/employees")}>
               <Users className="h-4 w-4 shrink-0" />
               {capitalize(pluralize(memberLabel))}
+            </Link>
+          )}
+          {(role === "owner" || role === "admin") && (
+            <Link href="/absence-types" className={linkClass("/absence-types")}>
+              <CalendarDays className="h-4 w-4 shrink-0" />
+              Absence Types
+            </Link>
+          )}
+          {(role === "owner" || role === "admin") && (
+            <Link href="/holiday-profiles" className={linkClass("/holiday-profiles")}>
+              <CalendarDays className="h-4 w-4 shrink-0" />
+              Holiday Profiles
             </Link>
           )}
           {showShifts && (
@@ -287,6 +307,10 @@ export function Sidebar({
           tsRoundBreakInGraceMins={tsRoundBreakInGraceMins}
           tsRoundLastOutMins={tsRoundLastOutMins}
           tsRoundLastOutGraceMins={tsRoundLastOutGraceMins}
+          holidayYearStartType={holidayYearStartType}
+          holidayYearStartDay={holidayYearStartDay}
+          holidayYearStartMonth={holidayYearStartMonth}
+          bankHolidayHandling={bankHolidayHandling}
         />
       )}
     </>

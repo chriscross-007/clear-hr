@@ -19,6 +19,10 @@ export async function updateOrganisation(data: {
   tsRoundBreakInGraceMins?: number | null;
   tsRoundLastOutMins?: number | null;
   tsRoundLastOutGraceMins?: number | null;
+  holidayYearStartType?: string;
+  holidayYearStartDay?: number | null;
+  holidayYearStartMonth?: number | null;
+  bankHolidayHandling?: string;
 }) {
   const supabase = await createClient();
   const {
@@ -42,7 +46,7 @@ export async function updateOrganisation(data: {
   // Fetch before-state for audit diff
   const { data: beforeOrg } = await supabase
     .from("organisations")
-    .select("name, member_label, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins")
+    .select("name, member_label, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins, holiday_year_start_type, holiday_year_start_day, holiday_year_start_month, bank_holiday_handling")
     .eq("id", membership.organisation_id)
     .single();
 
@@ -76,6 +80,23 @@ export async function updateOrganisation(data: {
   if (data.tsRoundLastOutMins !== undefined)       updatePayload.ts_round_last_out_mins        = data.tsRoundLastOutMins;
   if (data.tsRoundLastOutGraceMins !== undefined)  updatePayload.ts_round_last_out_grace_mins  = data.tsRoundLastOutGraceMins;
 
+  // Holiday year start
+  if (data.holidayYearStartType !== undefined) {
+    updatePayload.holiday_year_start_type = data.holidayYearStartType;
+    if (data.holidayYearStartType === "fixed") {
+      updatePayload.holiday_year_start_day = data.holidayYearStartDay ?? 1;
+      updatePayload.holiday_year_start_month = data.holidayYearStartMonth ?? 1;
+    } else {
+      updatePayload.holiday_year_start_day = null;
+      updatePayload.holiday_year_start_month = null;
+    }
+  }
+
+  // Bank holiday handling
+  if (data.bankHolidayHandling !== undefined) {
+    updatePayload.bank_holiday_handling = data.bankHolidayHandling;
+  }
+
   const { error } = await supabase
     .from("organisations")
     .update(updatePayload)
@@ -101,6 +122,10 @@ export async function updateOrganisation(data: {
         ts_round_break_in_grace_mins:  beforeOrg.ts_round_break_in_grace_mins,
         ts_round_last_out_mins:        beforeOrg.ts_round_last_out_mins,
         ts_round_last_out_grace_mins:  beforeOrg.ts_round_last_out_grace_mins,
+        holiday_year_start_type:  beforeOrg.holiday_year_start_type,
+        holiday_year_start_day:   beforeOrg.holiday_year_start_day,
+        holiday_year_start_month: beforeOrg.holiday_year_start_month,
+        bank_holiday_handling:    beforeOrg.bank_holiday_handling,
       },
       {
         name: data.name,
@@ -118,6 +143,10 @@ export async function updateOrganisation(data: {
         ts_round_break_in_grace_mins:  data.tsRoundBreakInGraceMins   !== undefined ? data.tsRoundBreakInGraceMins   : beforeOrg.ts_round_break_in_grace_mins,
         ts_round_last_out_mins:        data.tsRoundLastOutMins        !== undefined ? data.tsRoundLastOutMins        : beforeOrg.ts_round_last_out_mins,
         ts_round_last_out_grace_mins:  data.tsRoundLastOutGraceMins   !== undefined ? data.tsRoundLastOutGraceMins   : beforeOrg.ts_round_last_out_grace_mins,
+        holiday_year_start_type:  data.holidayYearStartType  ?? beforeOrg.holiday_year_start_type,
+        holiday_year_start_day:   data.holidayYearStartType === "fixed" ? (data.holidayYearStartDay ?? beforeOrg.holiday_year_start_day) : null,
+        holiday_year_start_month: data.holidayYearStartType === "fixed" ? (data.holidayYearStartMonth ?? beforeOrg.holiday_year_start_month) : null,
+        bank_holiday_handling:    data.bankHolidayHandling ?? beforeOrg.bank_holiday_handling,
       }
     );
 

@@ -74,7 +74,7 @@ export function ClockingOverrideDialog({
 
   const clockedAtDate = new Date(clocking.clockedAt);
   const dateLabel = clockedAtDate.toLocaleDateString("en-GB", {
-    weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC",
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
   });
   const timeLabel = fmtTime(clocking.clockedAt);
   const eff = effectiveType(clocking);

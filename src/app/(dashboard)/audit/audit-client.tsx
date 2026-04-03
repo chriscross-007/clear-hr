@@ -338,7 +338,7 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-bold">Audit Trail</h1>
         <div className="flex items-center gap-2">

@@ -356,13 +356,14 @@ export function EmployeesClient({
   void DATE_PRESET_LABELS; // imported for re-export use in other files
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
       <h1 className="text-2xl font-bold mb-6">
         {capitalize(pluralize(memberLabel))} Directory
       </h1>
 
       {/* DataGrid — always mounted so state (filters/sort) survives view toggle */}
-      <div className={view !== "list" ? "hidden" : ""}>
+      <div className={view !== "list" ? "hidden" : "flex justify-center w-full"}>
+        <div className="w-full max-w-[90%] min-w-0">
         <DataGrid<Member>
           data={members}
           columns={columns}
@@ -384,6 +385,7 @@ export function EmployeesClient({
           onPageRowsChange={setCardRows}
           leadingColumnIds={["select"]}
         />
+        </div>
       </div>
 
       {/* Card view */}

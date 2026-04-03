@@ -355,7 +355,7 @@ export function DataGrid<T extends object>({
 
       {/* Table */}
       <div className="rounded-md border">
-        <Table>
+        <Table className="w-full">
           <TableHeader>
             {/* Column header row */}
             {table.getHeaderGroups().map((headerGroup) => (

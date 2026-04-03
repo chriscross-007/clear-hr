@@ -177,7 +177,8 @@ Do NOT modify auth code to "fix" cache issues.
 | Auth callback loops | Token handling | Missing `next` param | Add `?next=` to redirectTo |
 
 ## UI Conventions
-- **Row editing:** Never use a pencil/edit icon button on list rows. Make the entire row clickable to open edit mode (`cursor-pointer hover:bg-muted/50 onClick={() => startEdit(...)}`). Only action buttons that are destructive (delete) or independent (drag handle) should remain as separate icons with `e.stopPropagation()`.
+- **Row editing:** Never use a pencil/edit icon button on list rows. Make the entire row clickable to open edit mode (`cursor-pointer hover:bg-muted/50 onClick={() => startEdit(...)}`). Only action buttons that are destructive (delete) or independent (drag handle) should remain as separate icons with `e.stopPropagation()`. The choice of modal vs page for the edit target is decided per screen based on complexity — do not default to inline editing.
+- **Boolean values in tables:** Never display "Yes" or "No" text for boolean columns. Use Lucide icons instead: `<Check className="h-5 w-5 text-green-500" />` for true, `<X className="h-5 w-5 text-red-500" />` for false. Icons should be sized to fill approximately 50% of the row height.
 - **Date filters:** Date and datetime columns use a preset dropdown ordered Last/This/Next per period (Last Week, This Week, Next Week, Last Month, This Month, Next Month, Last Year, This Year, Next Year, Custom range...) rather than raw date pickers. "Custom range..." reveals From/To date inputs. Filter value shape: `{ preset?: string; from?: string; to?: string }`. The `getDateRange(preset)` helper in `employees-client.tsx` resolves presets to `{ from, to }` ISO date strings. Applies to `last_log_in` and all `date`-type custom field columns.
 
 ## Data Security — Non-Negotiable Rules

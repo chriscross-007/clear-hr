@@ -37,8 +37,10 @@ export function ShiftsListClient({ shiftDefs }: { shiftDefs: ShiftDef[] }) {
   }
 
   return (
-    <div className="rounded-md border border-border divide-y divide-border">
-      {shiftDefs.map((s) => (
+    <div className="flex justify-center w-full">
+      <div className="w-auto max-w-[90%] min-w-0">
+        <div className="rounded-md border border-border divide-y divide-border">
+          {shiftDefs.map((s) => (
         <Link
           key={s.id}
           href={`/shifts/${s.id}`}
@@ -70,7 +72,9 @@ export function ShiftsListClient({ shiftDefs }: { shiftDefs: ShiftDef[] }) {
           </div>
           <Clock className="h-4 w-4 text-muted-foreground shrink-0" />
         </Link>
-      ))}
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

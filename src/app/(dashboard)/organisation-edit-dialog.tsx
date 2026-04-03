@@ -56,6 +56,10 @@ interface OrganisationEditDialogProps {
   tsRoundBreakInGraceMins: number | null;
   tsRoundLastOutMins: number | null;
   tsRoundLastOutGraceMins: number | null;
+  holidayYearStartType: string;
+  holidayYearStartDay: number;
+  holidayYearStartMonth: number;
+  bankHolidayHandling: string;
 }
 
 export function OrganisationEditDialog({
@@ -79,6 +83,10 @@ export function OrganisationEditDialog({
   tsRoundBreakInGraceMins: initialTsRoundBreakInGraceMins,
   tsRoundLastOutMins: initialTsRoundLastOutMins,
   tsRoundLastOutGraceMins: initialTsRoundLastOutGraceMins,
+  holidayYearStartType: initialHolidayYearStartType,
+  holidayYearStartDay: initialHolidayYearStartDay,
+  holidayYearStartMonth: initialHolidayYearStartMonth,
+  bankHolidayHandling: initialBankHolidayHandling,
 }: OrganisationEditDialogProps) {
   const [name, setName] = useState(orgName);
   const [label, setLabel] = useState(memberLabel);
@@ -104,6 +112,10 @@ export function OrganisationEditDialog({
   const [tsRoundBreakInGraceMins, setTsRoundBreakInGraceMins] = useState<number | null>(initialTsRoundBreakInGraceMins);
   const [tsRoundLastOutMins, setTsRoundLastOutMins] = useState<number | null>(initialTsRoundLastOutMins);
   const [tsRoundLastOutGraceMins, setTsRoundLastOutGraceMins] = useState<number | null>(initialTsRoundLastOutGraceMins);
+  const [holidayYearStartType, setHolidayYearStartType] = useState(initialHolidayYearStartType);
+  const [holidayYearStartDay, setHolidayYearStartDay] = useState(initialHolidayYearStartDay);
+  const [holidayYearStartMonth, setHolidayYearStartMonth] = useState(initialHolidayYearStartMonth);
+  const [bankHolidayHandling, setBankHolidayHandling] = useState(initialBankHolidayHandling);
   const [adminProfiles, setAdminProfiles] = useState<Profile[]>([]);
   const [employeeProfiles, setEmployeeProfiles] = useState<Profile[]>([]);
   const [userRightsType, setUserRightsType] = useState<"admin" | "employee">("admin");
@@ -130,6 +142,10 @@ export function OrganisationEditDialog({
     tsRoundBreakInGraceMins !== initialTsRoundBreakInGraceMins ||
     tsRoundLastOutMins !== initialTsRoundLastOutMins ||
     tsRoundLastOutGraceMins !== initialTsRoundLastOutGraceMins ||
+    holidayYearStartType !== initialHolidayYearStartType ||
+    holidayYearStartDay !== initialHolidayYearStartDay ||
+    holidayYearStartMonth !== initialHolidayYearStartMonth ||
+    bankHolidayHandling !== initialBankHolidayHandling ||
     fieldDefsModified ||
     teams.some((t) => {
       const orig = originalTeams.find((o) => o.id === t.id);
@@ -158,6 +174,10 @@ export function OrganisationEditDialog({
       setTsRoundBreakInGraceMins(initialTsRoundBreakInGraceMins);
       setTsRoundLastOutMins(initialTsRoundLastOutMins);
       setTsRoundLastOutGraceMins(initialTsRoundLastOutGraceMins);
+      setHolidayYearStartType(initialHolidayYearStartType);
+      setHolidayYearStartDay(initialHolidayYearStartDay);
+      setHolidayYearStartMonth(initialHolidayYearStartMonth);
+      setBankHolidayHandling(initialBankHolidayHandling);
       setFieldDefsModified(false);
       // Load teams
       getTeams().then((result) => {
@@ -182,7 +202,7 @@ export function OrganisationEditDialog({
         getRates().then(setRates);
       }
     }
-  }, [open, orgName, memberLabel, requireMfa, showCustomFields, isOwner, initialCurrencySymbol, initialTsMaxShiftHours, initialTsMaxBreakMinutes, initialTsShiftStartVarianceMinutes, initialTsRoundFirstInMins, initialTsRoundFirstInGraceMins, initialTsRoundBreakOutMins, initialTsRoundBreakOutGraceMins, initialTsRoundBreakInMins, initialTsRoundBreakInGraceMins, initialTsRoundLastOutMins, initialTsRoundLastOutGraceMins]);
+  }, [open, orgName, memberLabel, requireMfa, showCustomFields, isOwner, initialCurrencySymbol, initialTsMaxShiftHours, initialTsMaxBreakMinutes, initialTsShiftStartVarianceMinutes, initialTsRoundFirstInMins, initialTsRoundFirstInGraceMins, initialTsRoundBreakOutMins, initialTsRoundBreakOutGraceMins, initialTsRoundBreakInMins, initialTsRoundBreakInGraceMins, initialTsRoundLastOutMins, initialTsRoundLastOutGraceMins, initialHolidayYearStartType, initialHolidayYearStartDay, initialHolidayYearStartMonth, initialBankHolidayHandling]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -222,6 +242,10 @@ export function OrganisationEditDialog({
       tsRoundBreakInGraceMins,
       tsRoundLastOutMins,
       tsRoundLastOutGraceMins,
+      holidayYearStartType,
+      holidayYearStartDay,
+      holidayYearStartMonth,
+      bankHolidayHandling,
     });
 
     if (!result.success) {
@@ -306,6 +330,7 @@ export function OrganisationEditDialog({
               {isOwner && <TabsTrigger value="teams">Teams</TabsTrigger>}
               {isOwner && <TabsTrigger value="user-rights">User Rights</TabsTrigger>}
               {isOwner && <TabsTrigger value="timesheet">Timesheet</TabsTrigger>}
+              {isOwner && <TabsTrigger value="holiday-year">Holiday Year</TabsTrigger>}
               {isOwner && <TabsTrigger value="rates">Rates</TabsTrigger>}
               {showCustomFields && <TabsTrigger value="custom-fields">Custom Fields</TabsTrigger>}
               {isOwner && <TabsTrigger value="backups">Backups</TabsTrigger>}
@@ -637,6 +662,108 @@ export function OrganisationEditDialog({
                         />
                       </div>
                     ))}
+                  </div>
+                </div>
+              </TabsContent>
+            )}
+
+            {/* Holiday Year tab */}
+            {isOwner && (
+              <TabsContent value="holiday-year" className="space-y-4 mt-4">
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">Holiday year starts on</Label>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="holidayYearType"
+                        value="fixed"
+                        checked={holidayYearStartType === "fixed"}
+                        onChange={() => setHolidayYearStartType("fixed")}
+                        className="accent-primary"
+                      />
+                      <span className="text-sm">Fixed date (same for all employees)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="holidayYearType"
+                        value="employee_start_date"
+                        checked={holidayYearStartType === "employee_start_date"}
+                        onChange={() => setHolidayYearStartType("employee_start_date")}
+                        className="accent-primary"
+                      />
+                      <span className="text-sm">Employee start date (individual anniversary)</span>
+                    </label>
+                  </div>
+                </div>
+
+                {holidayYearStartType === "fixed" && (
+                  <div className="flex items-center gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Day</Label>
+                      <select
+                        className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                        value={holidayYearStartDay}
+                        onChange={(e) => setHolidayYearStartDay(parseInt(e.target.value, 10))}
+                      >
+                        {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                          <option key={d} value={d}>{d}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Month</Label>
+                      <select
+                        className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                        value={holidayYearStartMonth}
+                        onChange={(e) => setHolidayYearStartMonth(parseInt(e.target.value, 10))}
+                      >
+                        {["January","February","March","April","May","June","July","August","September","October","November","December"].map((name, i) => (
+                          <option key={i + 1} value={i + 1}>{name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-xs text-muted-foreground">
+                  {holidayYearStartType === "fixed"
+                    ? `All employees share the same holiday year starting ${holidayYearStartDay} ${["January","February","March","April","May","June","July","August","September","October","November","December"][holidayYearStartMonth - 1]}.`
+                    : "Each employee's holiday year starts on the anniversary of their start date."}
+                </p>
+
+                <div className="border-t pt-4 space-y-3">
+                  <Label className="text-sm font-medium">Bank holiday handling</Label>
+                  <div className="space-y-2">
+                    <label className="flex items-start gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="bankHolidayHandling"
+                        value="additional"
+                        checked={bankHolidayHandling === "additional"}
+                        onChange={() => setBankHolidayHandling("additional")}
+                        className="accent-primary mt-0.5"
+                      />
+                      <div>
+                        <span className="text-sm font-medium">Additional</span>
+                        <p className="text-xs text-muted-foreground">Bank holidays are added on top of employees&apos; annual leave allowance.</p>
+                      </div>
+                    </label>
+                    <label className="flex items-start gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="bankHolidayHandling"
+                        value="deducted"
+                        checked={bankHolidayHandling === "deducted"}
+                        onChange={() => setBankHolidayHandling("deducted")}
+                        className="accent-primary mt-0.5"
+                      />
+                      <div>
+                        <span className="text-sm font-medium">Deducted</span>
+                        <p className="text-xs text-muted-foreground">Bank holidays are deducted from employees&apos; annual leave allowance when taken.</p>
+                      </div>
+                    </label>
                   </div>
                 </div>
               </TabsContent>
