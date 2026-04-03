@@ -19,6 +19,7 @@ import { Plus, List, LayoutGrid, Pencil } from "lucide-react";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { deleteEmployee, type BulkUpdatePayload } from "./actions";
+import type { AbsenceProfile } from "../absence-actions";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -68,6 +69,7 @@ interface EmployeesClientProps {
   currencySymbol: string;
   canSeeCurrency: boolean;
   userId: string;
+  absenceProfiles: AbsenceProfile[];
 }
 
 export function EmployeesClient({
@@ -89,6 +91,7 @@ export function EmployeesClient({
   customFieldDefs,
   currencySymbol,
   userId,
+  absenceProfiles,
 }: EmployeesClientProps) {
   const { memberLabel } = useMemberLabel();
   const router = useRouter();
@@ -477,6 +480,7 @@ export function EmployeesClient({
         teams={teams}
         adminProfiles={adminProfiles}
         employeeProfiles={employeeProfiles}
+        absenceProfiles={absenceProfiles}
         customFieldDefs={customFieldDefs}
         currencySymbol={currencySymbol}
         onSaved={(updated) => {
@@ -511,6 +515,7 @@ export function EmployeesClient({
         onOpenChange={setShowAddDialog}
         teams={teams}
         employeeProfiles={employeeProfiles}
+        absenceProfiles={absenceProfiles}
         customFieldDefs={customFieldDefs}
         currencySymbol={currencySymbol}
         onAdded={(newMember) => {

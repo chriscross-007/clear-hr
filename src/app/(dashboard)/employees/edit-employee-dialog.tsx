@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize } from "@/lib/label-utils";
-import { updateEmployee, sendInvite, uploadMemberAvatar } from "./actions";
+import { updateEmployee, sendInvite, uploadMemberAvatar, getMemberHolidayFields } from "./actions";
+import type { AbsenceProfile } from "../absence-actions";
 import { updateMemberTeam, getMemberTeams, setMemberTeams } from "./team-actions";
 import type { Profile } from "./profile-actions";
 import { getMemberProfile } from "./profile-actions";
@@ -44,6 +45,7 @@ interface EditEmployeeDialogProps {
   teams: Team[];
   adminProfiles: Profile[];
   employeeProfiles: Profile[];
+  absenceProfiles: AbsenceProfile[];
   customFieldDefs: FieldDef[];
   currencySymbol: string;
   onSaved: (updated: {
@@ -66,6 +68,7 @@ export function EditEmployeeDialog({
   teams,
   adminProfiles,
   employeeProfiles,
+  absenceProfiles,
   customFieldDefs,
   currencySymbol,
   onSaved,
@@ -87,6 +90,8 @@ export function EditEmployeeDialog({
   const [inviting, setInviting] = useState(false);
   const [inviteSuccess, setInviteSuccess] = useState(false);
   const [profileId, setProfileId] = useState<string>("__none__");
+  const [startDate, setStartDate] = useState("");
+  const [holidayProfileId, setHolidayProfileId] = useState<string>("__none__");
   const [customValues, setCustomValues] = useState<Record<string, unknown>>({});
 
   const isMultiTeam = member?.role === "admin" || member?.role === "owner";
@@ -101,7 +106,16 @@ export function EditEmployeeDialog({
       setError(null);
       setInviteSuccess(false);
       setProfileId("__none__");
+      setStartDate("");
+      setHolidayProfileId("__none__");
       setCustomValues(member.custom_fields ?? {});
+      // Load start_date and holiday_profile_id
+      getMemberHolidayFields(member.member_id).then((result) => {
+        if (result.success) {
+          setStartDate(result.startDate ?? "");
+          setHolidayProfileId(result.holidayProfileId ?? "__none__");
+        }
+      });
       // Load the member's current profile assignment
       getMemberProfile(member.member_id).then((result) => {
         if (result.success) {
@@ -145,6 +159,8 @@ export function EditEmployeeDialog({
       isMultiTeam,
       profileId,
       updatedAt: member.updated_at,
+      startDate: startDate || null,
+      holidayProfileId: holidayProfileId === "__none__" ? null : holidayProfileId,
     });
 
     if (!result.success) {
@@ -256,7 +272,8 @@ export function EditEmployeeDialog({
         <DialogHeader>
           <DialogTitle>Edit {capitalize(memberLabel)}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="max-h-[60vh] overflow-y-auto space-y-4 pr-1">
           {error && (
             <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
               {error}
@@ -355,6 +372,39 @@ export function EditEmployeeDialog({
                   onChange={(e) => setPayrollNumber(e.target.value)}
                 />
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-start-date">Start Date</Label>
+                <Input
+                  id="edit-start-date"
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                />
+              </div>
+              {absenceProfiles.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Holiday Profile</Label>
+                  <Select
+                    value={holidayProfileId}
+                    onValueChange={setHolidayProfileId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">No profile</SelectItem>
+                      {absenceProfiles.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name} ({p.allowance} {p.measurement_mode})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    To change the active holiday profile and create a new year record, use the Holiday page for this employee.
+                  </p>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label>Role</Label>
                 {member?.role === "owner" ? (
@@ -507,6 +557,7 @@ export function EditEmployeeDialog({
               </TabsContent>
             )}
           </Tabs>
+          </div>
           <DialogFooter>
             {!isAccepted && (
               <Button

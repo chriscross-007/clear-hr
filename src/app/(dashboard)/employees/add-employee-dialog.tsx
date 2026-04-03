@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize } from "@/lib/label-utils";
-import { addEmployee } from "./actions";
+import { addEmployee, generateHolidayYearRecords } from "./actions";
 import { assignProfile } from "./profile-actions";
+import type { AbsenceProfile } from "../absence-actions";
 import type { Profile } from "./profile-actions";
 import type { FieldDef } from "./custom-field-actions";
 import { saveCustomFieldValues } from "./custom-field-actions";
@@ -34,6 +35,7 @@ interface AddEmployeeDialogProps {
   onOpenChange: (open: boolean) => void;
   teams: Team[];
   employeeProfiles: Profile[];
+  absenceProfiles: AbsenceProfile[];
   customFieldDefs: FieldDef[];
   currencySymbol: string;
   onAdded: (member: Member) => void;
@@ -44,6 +46,7 @@ export function AddEmployeeDialog({
   onOpenChange,
   teams,
   employeeProfiles,
+  absenceProfiles,
   customFieldDefs,
   currencySymbol,
   onAdded,
@@ -55,6 +58,8 @@ export function AddEmployeeDialog({
   const [payrollNumber, setPayrollNumber] = useState("");
   const [teamId, setTeamId] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
+  const [startDate, setStartDate] = useState("");
+  const [holidayProfileId, setHolidayProfileId] = useState<string | null>(null);
   const [customValues, setCustomValues] = useState<Record<string, unknown>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -66,6 +71,8 @@ export function AddEmployeeDialog({
     setPayrollNumber("");
     setTeamId(null);
     setProfileId(null);
+    setStartDate("");
+    setHolidayProfileId(null);
     setCustomValues({});
     setError(null);
   }
@@ -81,6 +88,8 @@ export function AddEmployeeDialog({
       lastName,
       teamId,
       payrollNumber: payrollNumber.trim() || null,
+      startDate: startDate || null,
+      holidayProfileId,
     });
 
     if (!result.success) {
@@ -106,6 +115,11 @@ export function AddEmployeeDialog({
       await assignProfile(result.member.member_id, "employee", profileId);
     }
 
+    // Generate holiday year records if start date and holiday profile are set
+    if (result.member && startDate && holidayProfileId) {
+      await generateHolidayYearRecords(result.member.member_id);
+    }
+
     // Save custom field values if any
     if (result.member && customFieldDefs.length > 0 && Object.keys(customValues).length > 0) {
       await saveCustomFieldValues(result.member.member_id, customValues);
@@ -128,7 +142,8 @@ export function AddEmployeeDialog({
         <DialogHeader>
           <DialogTitle>Add New {capitalize(memberLabel)}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="max-h-[60vh] overflow-y-auto space-y-4 pr-1">
           {error && (
             <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
               {error}
@@ -180,6 +195,37 @@ export function AddEmployeeDialog({
               onChange={(e) => setPayrollNumber(e.target.value)}
             />
           </div>
+          <div className="space-y-2">
+            <Label htmlFor="add-start-date">Start Date</Label>
+            <Input
+              id="add-start-date"
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              required
+            />
+          </div>
+          {absenceProfiles.length > 0 && (
+            <div className="space-y-2">
+              <Label>Holiday Profile</Label>
+              <Select
+                value={holidayProfileId ?? "__none__"}
+                onValueChange={(v) => setHolidayProfileId(v === "__none__" ? null : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">No profile</SelectItem>
+                  {absenceProfiles.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name} ({p.allowance} {p.measurement_mode})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           {teams.length > 0 && (
             <div className="space-y-2">
               <Label>Team</Label>
@@ -285,6 +331,7 @@ export function AddEmployeeDialog({
               ))}
             </div>
           )}
+          </div>
           <DialogFooter>
             <Button
               type="button"

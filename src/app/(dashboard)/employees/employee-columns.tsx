@@ -2,7 +2,7 @@
 
 import type { ColumnDef, Column, RowData } from "@tanstack/react-table";
 import type { ReactNode } from "react";
-import { ArrowUp, ArrowDown, ArrowUpDown, Trash2, MoreVertical, Clock, CalendarDays, LayoutDashboard, Settings } from "lucide-react";
+import { ArrowUp, ArrowDown, ArrowUpDown, Trash2, MoreVertical, Clock, CalendarDays, LayoutDashboard, Settings, Palmtree } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -657,6 +657,12 @@ export function buildEmployeeColumns(opts: {
                   <Link href={`/employees/${memberId}/calendar`}>
                     <CalendarDays className="mr-2 h-4 w-4" />
                     Calendar
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href={`/employees/${memberId}/holiday`}>
+                    <Palmtree className="mr-2 h-4 w-4" />
+                    Holiday
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>

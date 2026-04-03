@@ -73,6 +73,8 @@ export async function addEmployee(formData: {
   lastName: string;
   teamId?: string | null;
   payrollNumber?: string | null;
+  startDate?: string | null;
+  holidayProfileId?: string | null;
 }): Promise<{ success: boolean; error?: string; member?: MemberResult }> {
   try {
     const membership = await getCallerMembership();
@@ -126,6 +128,8 @@ export async function addEmployee(formData: {
         role: "employee",
         team_id: formData.teamId || null,
         payroll_number: trimmedPayroll,
+        start_date: formData.startDate || null,
+        holiday_profile_id: formData.holidayProfileId || null,
         permissions: {
           can_request_holidays: true,
           can_approve_holidays: false,
@@ -206,6 +210,32 @@ export async function addEmployee(formData: {
       success: false,
       error: e instanceof Error ? e.message : "An error occurred",
     };
+  }
+}
+
+// Get start_date and holiday_profile_id for a member (used by edit dialog)
+export async function getMemberHolidayFields(
+  memberId: string
+): Promise<{ success: boolean; startDate?: string | null; holidayProfileId?: string | null }> {
+  try {
+    const membership = await getCallerMembership();
+    const admin = createAdminClient();
+
+    const { data } = await admin
+      .from("members")
+      .select("start_date, holiday_profile_id")
+      .eq("id", memberId)
+      .eq("organisation_id", membership.organisation_id)
+      .single();
+
+    if (!data) return { success: false };
+    return {
+      success: true,
+      startDate: data.start_date,
+      holidayProfileId: data.holiday_profile_id,
+    };
+  } catch {
+    return { success: false };
   }
 }
 
@@ -299,6 +329,8 @@ export async function updateEmployee(formData: {
   // undefined = no change, "__none__" = clear profile, UUID = assign profile
   profileId?: string;
   updatedAt?: string | null;
+  startDate?: string | null;
+  holidayProfileId?: string | null;
 }): Promise<{ success: boolean; error?: string; conflict?: boolean }> {
   try {
     const membership = await getCallerMembership();
@@ -338,6 +370,13 @@ export async function updateEmployee(formData: {
       last_name: formData.lastName,
       payroll_number: trimmedPayroll,
     };
+
+    if (formData.startDate !== undefined) {
+      updateData.start_date = formData.startDate || null;
+    }
+    if (formData.holidayProfileId !== undefined) {
+      updateData.holiday_profile_id = formData.holidayProfileId || null;
+    }
 
     // Role change validation (skip if owner — owner role is immutable)
     if (formData.role && formData.role !== "owner") {
@@ -838,6 +877,212 @@ export async function bulkUpdateMembers(
       targetType: "member",
       targetId: memberIds[0],
       targetLabel: `${memberIds.length} members (${changedParts.join(", ")})`,
+    });
+
+    return { success: true };
+  } catch (e) {
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : "An error occurred",
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Generate holiday year records for a new employee
+// ---------------------------------------------------------------------------
+
+export async function generateHolidayYearRecords(
+  memberId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const membership = await getCallerMembership();
+    const admin = createAdminClient();
+
+    // Fetch the member
+    const { data: member } = await admin
+      .from("members")
+      .select("id, organisation_id, start_date, holiday_profile_id")
+      .eq("id", memberId)
+      .eq("organisation_id", membership.organisation_id)
+      .single();
+
+    if (!member) return { success: false, error: "Member not found" };
+    if (!member.start_date) return { success: false, error: "Member has no start date" };
+    if (!member.holiday_profile_id) return { success: false, error: "Member has no holiday profile" };
+
+    // Fetch the absence profile
+    const { data: profile } = await admin
+      .from("absence_profiles")
+      .select("id, absence_type_id, allowance")
+      .eq("id", member.holiday_profile_id)
+      .single();
+
+    if (!profile) return { success: false, error: "Holiday profile not found" };
+
+    // Fetch org settings
+    const { data: org } = await admin
+      .from("organisations")
+      .select("holiday_year_start_type, holiday_year_start_day, holiday_year_start_month")
+      .eq("id", member.organisation_id)
+      .single();
+
+    if (!org) return { success: false, error: "Organisation not found" };
+
+    const startDate = new Date(member.start_date + "T00:00:00Z");
+    const allowance = Number(profile.allowance);
+
+    let year1Start: Date;
+    let year1End: Date;
+    let year2Start: Date;
+    let year2End: Date;
+    let year1Allowance: number;
+    let year2Allowance: number;
+
+    if (org.holiday_year_start_type === "employee_start_date") {
+      year1Start = startDate;
+      year1End = new Date(Date.UTC(startDate.getUTCFullYear() + 1, startDate.getUTCMonth(), startDate.getUTCDate() - 1));
+      year2Start = new Date(Date.UTC(year1End.getUTCFullYear(), year1End.getUTCMonth(), year1End.getUTCDate() + 1));
+      year2End = new Date(Date.UTC(year2Start.getUTCFullYear() + 1, year2Start.getUTCMonth(), year2Start.getUTCDate() - 1));
+      year1Allowance = allowance;
+      year2Allowance = allowance;
+    } else {
+      const fixedDay = org.holiday_year_start_day ?? 1;
+      const fixedMonth = (org.holiday_year_start_month ?? 1) - 1;
+
+      let nextYearStart = new Date(Date.UTC(startDate.getUTCFullYear(), fixedMonth, fixedDay));
+      if (nextYearStart <= startDate) {
+        nextYearStart = new Date(Date.UTC(startDate.getUTCFullYear() + 1, fixedMonth, fixedDay));
+      }
+
+      year1Start = startDate;
+      year1End = new Date(Date.UTC(nextYearStart.getUTCFullYear(), nextYearStart.getUTCMonth(), nextYearStart.getUTCDate() - 1));
+      year2Start = nextYearStart;
+      year2End = new Date(Date.UTC(year2Start.getUTCFullYear() + 1, year2Start.getUTCMonth(), year2Start.getUTCDate() - 1));
+
+      const daysInYear1 = Math.round((year1End.getTime() - year1Start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      const fullYearStart = new Date(Date.UTC(nextYearStart.getUTCFullYear() - 1, fixedMonth, fixedDay));
+      const daysInFullYear = Math.round((nextYearStart.getTime() - fullYearStart.getTime()) / (1000 * 60 * 60 * 24));
+      year1Allowance = Math.round((allowance * daysInYear1 / daysInFullYear) * 10) / 10;
+      year2Allowance = allowance;
+    }
+
+    function fmtDate(d: Date): string {
+      return d.toISOString().slice(0, 10);
+    }
+
+    const records = [
+      {
+        organisation_id: member.organisation_id,
+        member_id: member.id,
+        absence_type_id: profile.absence_type_id,
+        year_start: fmtDate(year1Start),
+        year_end: fmtDate(year1End),
+        base_amount: year1Allowance,
+        adjustment: 0,
+        carried_over: 0,
+        borrow_forward: 0,
+        pro_rata_amount: year1Allowance,
+      },
+      {
+        organisation_id: member.organisation_id,
+        member_id: member.id,
+        absence_type_id: profile.absence_type_id,
+        year_start: fmtDate(year2Start),
+        year_end: fmtDate(year2End),
+        base_amount: year2Allowance,
+        adjustment: 0,
+        carried_over: 0,
+        borrow_forward: 0,
+        pro_rata_amount: year2Allowance,
+      },
+    ];
+
+    const { error } = await admin
+      .from("holiday_year_records")
+      .upsert(records, { onConflict: "member_id,absence_type_id,year_start" });
+
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (e) {
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : "An error occurred",
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Change an employee's holiday profile
+// ---------------------------------------------------------------------------
+
+export async function changeEmployeeHolidayProfile(
+  memberId: string,
+  newProfileId: string,
+  effectiveDate: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const membership = await getCallerMembership();
+    const admin = createAdminClient();
+
+    // Verify member belongs to caller's org
+    const { data: member } = await admin
+      .from("members")
+      .select("id, organisation_id")
+      .eq("id", memberId)
+      .eq("organisation_id", membership.organisation_id)
+      .single();
+
+    if (!member) return { success: false, error: "Member not found" };
+
+    // Fetch the new profile
+    const { data: profile } = await admin
+      .from("absence_profiles")
+      .select("id, absence_type_id, allowance")
+      .eq("id", newProfileId)
+      .eq("organisation_id", membership.organisation_id)
+      .single();
+
+    if (!profile) return { success: false, error: "Holiday profile not found" };
+
+    // Update member's holiday_profile_id
+    const { error: updateError } = await admin
+      .from("members")
+      .update({ holiday_profile_id: newProfileId })
+      .eq("id", memberId);
+
+    if (updateError) return { success: false, error: updateError.message };
+
+    // Create a new holiday year record
+    const start = new Date(effectiveDate + "T00:00:00Z");
+    const end = new Date(Date.UTC(start.getUTCFullYear() + 1, start.getUTCMonth(), start.getUTCDate() - 1));
+    const allowance = Number(profile.allowance);
+
+    const { error: insertError } = await admin
+      .from("holiday_year_records")
+      .upsert({
+        organisation_id: member.organisation_id,
+        member_id: member.id,
+        absence_type_id: profile.absence_type_id,
+        year_start: effectiveDate,
+        year_end: end.toISOString().slice(0, 10),
+        base_amount: allowance,
+        adjustment: 0,
+        carried_over: 0,
+        borrow_forward: 0,
+        pro_rata_amount: allowance,
+      }, { onConflict: "member_id,absence_type_id,year_start" });
+
+    if (insertError) return { success: false, error: insertError.message };
+
+    logAudit({
+      organisationId: membership.organisation_id,
+      actorId: membership.id,
+      actorName: `${membership.first_name} ${membership.last_name}`,
+      action: "member.holiday_profile_changed",
+      targetType: "member",
+      targetId: memberId,
+      targetLabel: `Changed holiday profile`,
     });
 
     return { success: true };
