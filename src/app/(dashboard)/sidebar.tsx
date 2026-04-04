@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Users, Building2, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, CalendarDays, Clock } from "lucide-react";
+import { Users, Building2, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, CalendarDays, Clock, Palmtree, ClipboardCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { hasPlanFeature } from "@/lib/plan-config";
@@ -122,6 +122,10 @@ export function Sidebar({
     <>
       <nav className="w-48 shrink-0 border-r bg-background sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto">
         <div className="flex flex-col gap-0.5 p-2 pt-4">
+          <Link href="/holiday" className={linkClass("/holiday")}>
+            <Palmtree className="h-4 w-4 shrink-0" />
+            My Holiday
+          </Link>
           {showEmployees && (
             <Link href="/employees" className={linkClass("/employees")}>
               <Users className="h-4 w-4 shrink-0" />
@@ -138,6 +142,12 @@ export function Sidebar({
             <Link href="/holiday-profiles" className={linkClass("/holiday-profiles")}>
               <CalendarDays className="h-4 w-4 shrink-0" />
               Holiday Profiles
+            </Link>
+          )}
+          {(role === "owner" || role === "admin") && (
+            <Link href="/approvals" className={linkClass("/approvals")}>
+              <ClipboardCheck className="h-4 w-4 shrink-0" />
+              Approvals
             </Link>
           )}
           {showShifts && (

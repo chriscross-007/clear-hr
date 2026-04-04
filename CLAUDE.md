@@ -103,6 +103,7 @@ src/
 - Server client: `createClient()` from `@/lib/supabase/server` (async, uses cookies)
 - Admin client: `createClient(url, SERVICE_ROLE_KEY)` from `@supabase/supabase-js` (server actions only)
 - Environment variables: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`
+- **Explicit FK hints on `holiday_bookings`:** This table has two FKs to `members` (`member_id` and `approver1_id`). Supabase cannot disambiguate and silently returns no data. Always use `employee:members!holiday_bookings_member_id_fkey(first_name, last_name, ...)` or fetch members separately via a lookup map. Never use the ambiguous `members(...)` form. This applies to all queries on `holiday_bookings` that join to `members`, including in `page.tsx`, server actions, and any future files. The recommended pattern is to fetch members as a separate query and join by `member_id` in application code.
 
 ### Next.js 16
 - Uses `proxy.ts` (not `middleware.ts`) with `export async function proxy()`
