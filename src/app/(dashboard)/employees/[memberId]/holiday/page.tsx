@@ -7,6 +7,7 @@ import { EmployeeHolidayClient } from "./employee-holiday-client";
 type HolidayYearRecord = {
   id: string;
   absence_type_id: string;
+  absence_profile_id: string | null;
   year_start: string;
   year_end: string;
   base_amount: number;
@@ -22,6 +23,7 @@ type AbsenceProfileRow = {
   allowance: number;
   measurement_mode: string;
   absence_type_id: string;
+  carry_over_max: number | null;
 };
 
 export default async function EmployeeHolidayPage({
@@ -49,49 +51,52 @@ export default async function EmployeeHolidayPage({
   // Fetch target member
   const { data: member } = await supabase
     .from("members")
-    .select("id, first_name, last_name, holiday_profile_id, start_date")
+    .select("id, first_name, last_name, start_date")
     .eq("id", memberId)
     .eq("organisation_id", caller.organisation_id)
     .single();
 
   if (!member) redirect("/employees");
 
-  // Fetch current profile name
-  let currentProfileName = "No profile assigned";
-  let currentMeasurementMode = "days";
-  if (member.holiday_profile_id) {
-    const { data: profile } = await supabase
-      .from("absence_profiles")
-      .select("name, measurement_mode")
-      .eq("id", member.holiday_profile_id)
-      .single();
-    if (profile) {
-      currentProfileName = profile.name;
-      currentMeasurementMode = profile.measurement_mode;
-    }
-  }
-
-  // Fetch all absence profiles for the org (for the change profile dropdown + profile name lookup)
+  // Fetch all absence profiles for the org
   const { data: absenceProfiles } = await supabase
     .from("absence_profiles")
-    .select("id, name, allowance, measurement_mode, absence_type_id")
+    .select("id, name, allowance, measurement_mode, absence_type_id, carry_over_max")
     .eq("organisation_id", caller.organisation_id)
     .order("name");
 
   // Fetch holiday year records (initial)
   let { data: records } = await supabase
     .from("holiday_year_records")
-    .select("id, absence_type_id, year_start, year_end, base_amount, adjustment, carried_over, borrow_forward, pro_rata_amount")
+    .select("id, absence_type_id, absence_profile_id, year_start, year_end, base_amount, adjustment, carried_over, borrow_forward, pro_rata_amount")
     .eq("member_id", memberId)
     .order("year_start", { ascending: true });
 
-  // Auto-generate next year record if missing
+  // Derive current profile from current year record
   const today = new Date().toISOString().slice(0, 10);
   const typedRecords = (records ?? []) as HolidayYearRecord[];
   const currentYearRec = typedRecords.find((r) => r.year_start <= today && r.year_end >= today);
 
-  if (currentYearRec && member.holiday_profile_id) {
-    // Next year starts the day after current year ends
+  // Build profile lookups — by ID (preferred) and by absence_type_id (fallback)
+  const profileById = new Map<string, AbsenceProfileRow>();
+  const profileByTypeId = new Map<string, AbsenceProfileRow>();
+  for (const p of (absenceProfiles ?? []) as AbsenceProfileRow[]) {
+    profileById.set(p.id, p);
+    profileByTypeId.set(p.absence_type_id, p);
+  }
+
+  function resolveProfile(rec: HolidayYearRecord): AbsenceProfileRow | undefined {
+    if (rec.absence_profile_id) return profileById.get(rec.absence_profile_id);
+    return profileByTypeId.get(rec.absence_type_id);
+  }
+
+  const currentProfile = currentYearRec ? resolveProfile(currentYearRec) : undefined;
+  const currentProfileName = currentProfile?.name ?? "No profile assigned";
+  const currentMeasurementMode = currentProfile?.measurement_mode ?? "days";
+  const currentProfileId = currentProfile?.id ?? null;
+
+  // Auto-generate next year record if missing
+  if (currentYearRec && currentProfile) {
     const nextStart = new Date(currentYearRec.year_end + "T00:00:00Z");
     nextStart.setUTCDate(nextStart.getUTCDate() + 1);
     const nextStartStr = nextStart.toISOString().slice(0, 10);
@@ -99,10 +104,7 @@ export default async function EmployeeHolidayPage({
     const hasNextYear = typedRecords.some((r) => r.year_start === nextStartStr);
 
     if (!hasNextYear) {
-      // Find the current profile for allowance + absence_type_id
-      const profile = (absenceProfiles ?? []).find(
-        (p: AbsenceProfileRow) => p.id === member.holiday_profile_id
-      ) as AbsenceProfileRow | undefined;
+      const profile = currentProfile;
 
       if (profile) {
         const nextEnd = new Date(Date.UTC(
@@ -128,7 +130,7 @@ export default async function EmployeeHolidayPage({
         // Re-fetch records to include the new row
         const { data: refreshed } = await supabase
           .from("holiday_year_records")
-          .select("id, absence_type_id, year_start, year_end, base_amount, adjustment, carried_over, borrow_forward, pro_rata_amount")
+          .select("id, absence_type_id, absence_profile_id, year_start, year_end, base_amount, adjustment, carried_over, borrow_forward, pro_rata_amount")
           .eq("member_id", memberId)
           .order("year_start", { ascending: true });
         records = refreshed;
@@ -136,12 +138,13 @@ export default async function EmployeeHolidayPage({
     }
   }
 
-  // Fetch holiday bookings for this member to calculate Booked and Taken
+  // Fetch holiday bookings for this member (all non-cancelled for aggregation + display)
   const { data: bookings } = await supabase
     .from("holiday_bookings")
-    .select("start_date, end_date, days_deducted, status")
+    .select("id, start_date, end_date, start_half, end_half, days_deducted, hours_deducted, status, approver_note, employee_note, created_at, absence_reasons(name, colour)")
     .eq("member_id", memberId)
-    .eq("status", "approved");
+    .in("status", ["pending", "approved"])
+    .order("start_date", { ascending: true });
 
   // Build booked/taken aggregates keyed by holiday_year_record id
   const bookingAggregates: Record<string, { booked: number; taken: number }> = {};
@@ -163,11 +166,43 @@ export default async function EmployeeHolidayPage({
     bookingAggregates[rec.id] = { booked, taken };
   }
 
-  // Build profile name map for the records table
+  // Build profile name, allowance, and carry-over max maps (keyed by record ID)
   const profileMap: Record<string, string> = {};
-  for (const p of (absenceProfiles ?? []) as AbsenceProfileRow[]) {
-    profileMap[p.absence_type_id] = p.name;
+  const profileAllowanceMap: Record<string, number> = {};
+  const carryOverMaxMap: Record<string, number | null> = {};
+  for (const rec of finalRecords) {
+    const p = resolveProfile(rec);
+    if (p) {
+      profileMap[rec.id] = p.name;
+      profileAllowanceMap[rec.id] = Number(p.allowance);
+      carryOverMaxMap[rec.id] = p.carry_over_max !== null ? Number(p.carry_over_max) : null;
+    }
   }
+
+  // Fetch employee work profile assignments
+  const { data: empWorkProfiles } = await supabase
+    .from("employee_work_profiles")
+    .select("id, work_profile_id, effective_from, work_profiles(name)")
+    .eq("member_id", memberId)
+    .order("effective_from", { ascending: false });
+
+  const workProfileAssignments = (empWorkProfiles ?? []).map((r) => {
+    const wp = r.work_profiles as unknown as { name: string } | null;
+    return {
+      id: r.id,
+      work_profile_id: r.work_profile_id,
+      work_profile_name: wp?.name ?? "—",
+      effective_from: r.effective_from,
+    };
+  });
+
+  // Fetch all org work profiles for the assignment dropdown
+  const { data: orgWorkProfiles } = await supabase
+    .from("work_profiles")
+    .select("id, name")
+    .eq("organisation_id", caller.organisation_id)
+    .is("member_id", null)
+    .order("name");
 
   const fullName = [member.first_name, member.last_name].filter(Boolean).join(" ");
 
@@ -177,12 +212,30 @@ export default async function EmployeeHolidayPage({
         memberId={memberId}
         memberName={fullName}
         currentProfileName={currentProfileName}
-        currentProfileId={member.holiday_profile_id}
+        currentProfileId={currentProfileId}
         measurementMode={currentMeasurementMode}
         records={finalRecords}
         absenceProfiles={(absenceProfiles ?? []) as AbsenceProfileRow[]}
         bookingAggregates={bookingAggregates}
         profileMap={profileMap}
+        profileAllowanceMap={profileAllowanceMap}
+        carryOverMaxMap={carryOverMaxMap}
+        workProfileAssignments={workProfileAssignments}
+        orgWorkProfiles={(orgWorkProfiles ?? []) as { id: string; name: string }[]}
+        memberBookings={(bookings ?? []).map((b) => {
+          const reason = b.absence_reasons as unknown as { name: string; colour: string } | null;
+          return {
+            id: b.id,
+            start_date: b.start_date,
+            end_date: b.end_date,
+            start_half: b.start_half,
+            end_half: b.end_half,
+            days_deducted: b.days_deducted,
+            status: b.status,
+            reason_name: reason?.name ?? "—",
+            reason_colour: reason?.colour ?? "#6366f1",
+          };
+        })}
       />
     </div>
   );

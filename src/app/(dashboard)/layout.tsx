@@ -21,7 +21,7 @@ export default async function DashboardLayout({
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role, permissions, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins, holiday_year_start_type, holiday_year_start_day, holiday_year_start_month, bank_holiday_handling), admin_profiles(name), employee_profiles(name)")
+    .select("organisation_id, role, permissions, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins, holiday_year_start_type, holiday_year_start_day, holiday_year_start_month, bank_holiday_handling, default_work_profile_id), admin_profiles(name), employee_profiles(name)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -52,6 +52,7 @@ export default async function DashboardLayout({
     holiday_year_start_day: number | null;
     holiday_year_start_month: number | null;
     bank_holiday_handling: string;
+    default_work_profile_id: string | null;
   };
   const memberLabel = org?.member_label || "member";
 
@@ -196,6 +197,7 @@ export default async function DashboardLayout({
             holidayYearStartDay={org?.holiday_year_start_day ?? 1}
             holidayYearStartMonth={org?.holiday_year_start_month ?? 1}
             bankHolidayHandling={org?.bank_holiday_handling ?? "additional"}
+            defaultWorkProfileId={org?.default_work_profile_id ?? null}
             initialFavouriteIds={sidebarFavouriteIds}
             initialCustomReports={sidebarCustomReports}
             initialShiftDefs={sidebarShiftDefs}

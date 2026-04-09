@@ -64,6 +64,8 @@ export type Member = {
   custom_fields: Record<string, unknown>;
   avatar_url: string | null;
   updated_at: string | null;
+  holiday_profile_name: string | null;
+  work_pattern_name: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -188,12 +190,12 @@ export const DATE_PRESET_LABELS: Record<string, string> = {
 
 export const ALL_EMPLOYEE_COLS = [
   "avatar", "first_name", "last_name", "payroll_number", "email", "role", "profile",
-  "team", "status", "last_log_in",
+  "team", "holiday_profile", "work_pattern", "status", "last_log_in",
 ];
 
 export const DEFAULT_EMPLOYEE_COLS = [
   "avatar", "first_name", "last_name", "payroll_number", "email", "role", "profile",
-  "team", "status",
+  "team", "holiday_profile", "work_pattern", "status",
 ];
 
 export const EMPLOYEE_COL_LABELS: Record<string, string> = {
@@ -205,6 +207,8 @@ export const EMPLOYEE_COL_LABELS: Record<string, string> = {
   role: "Role",
   profile: "Profile",
   team: "Team",
+  holiday_profile: "Holiday Profile",
+  work_pattern: "Work Pattern",
   status: "Status",
   last_log_in: "Last Log-in",
 };
@@ -338,9 +342,11 @@ export function buildEmployeeColumns(opts: {
   canAdd: boolean;
   currencySymbol: string;
   customFieldDefs: FieldDef[];
+  holidayProfileNames?: string[];
+  workPatternNames?: string[];
   onDelete?: (member: Member) => void;
 }): ColumnDef<Member>[] {
-  const { teams, adminProfiles, employeeProfiles, memberLabel, canAdd, currencySymbol, customFieldDefs, onDelete } = opts;
+  const { teams, adminProfiles, employeeProfiles, memberLabel, canAdd, currencySymbol, customFieldDefs, holidayProfileNames = [], workPatternNames = [], onDelete } = opts;
   const teamMap = Object.fromEntries(teams.map((t) => [t.id, t.name]));
 
   return [
@@ -461,6 +467,56 @@ export function buildEmployeeColumns(opts: {
             <option value="">All</option>
             {teams.map((team) => (
               <option key={team.id} value={team.name}>{team.name}</option>
+            ))}
+          </select>
+        ),
+      },
+    },
+    {
+      id: "holiday_profile",
+      accessorFn: (row) => row.holiday_profile_name ?? "—",
+      sortingFn: (rowA, rowB) => {
+        const a = rowA.original.holiday_profile_name ?? "";
+        const b = rowB.original.holiday_profile_name ?? "";
+        return a.localeCompare(b, undefined, { sensitivity: "base" });
+      },
+      header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label="Holiday Profile" />,
+      cell: ({ row }) => row.original.holiday_profile_name ?? "—",
+      meta: {
+        filterElement: (column) => (
+          <select
+            className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+            value={(column.getFilterValue() as string) ?? ""}
+            onChange={(e) => column.setFilterValue(e.target.value || undefined)}
+          >
+            <option value="">All</option>
+            {holidayProfileNames.sort().map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        ),
+      },
+    },
+    {
+      id: "work_pattern",
+      accessorFn: (row) => row.work_pattern_name ?? "—",
+      sortingFn: (rowA, rowB) => {
+        const a = rowA.original.work_pattern_name ?? "";
+        const b = rowB.original.work_pattern_name ?? "";
+        return a.localeCompare(b, undefined, { sensitivity: "base" });
+      },
+      header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label="Work Pattern" />,
+      cell: ({ row }) => row.original.work_pattern_name ?? "—",
+      meta: {
+        filterElement: (column) => (
+          <select
+            className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+            value={(column.getFilterValue() as string) ?? ""}
+            onChange={(e) => column.setFilterValue(e.target.value || undefined)}
+          >
+            <option value="">All</option>
+            {workPatternNames.sort().map((name) => (
+              <option key={name} value={name}>{name}</option>
             ))}
           </select>
         ),

@@ -46,6 +46,8 @@ import {
   type AbsenceReason,
 } from "../absence-actions";
 
+type ReasonFilter = "active" | "inactive" | "all";
+
 interface AbsenceTypesClientProps {
   initialTypes: AbsenceType[];
   initialReasons: AbsenceReason[];
@@ -56,6 +58,8 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
   const [types, setTypes] = useState(initialTypes);
   const [reasons, setReasons] = useState(initialReasons);
   const [expandedTypeIds, setExpandedTypeIds] = useState<Set<string>>(new Set());
+  const [reasonFilter, setReasonFilter] = useState<ReasonFilter>("active");
+  const hasAnyInactive = reasons.some((r) => r.is_deprecated);
 
   // --- Type form state ---
   const [typeSheetOpen, setTypeSheetOpen] = useState(false);
@@ -80,6 +84,7 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
   const [reasonDeleteError, setReasonDeleteError] = useState<string | null>(null);
   const [reasonName, setReasonName] = useState("");
   const [reasonColour, setReasonColour] = useState("#6366f1");
+  const [reasonActive, setReasonActive] = useState(true);
   const [reasonFormLoading, setReasonFormLoading] = useState(false);
   const [reasonFormError, setReasonFormError] = useState<string | null>(null);
 
@@ -161,6 +166,7 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
     setReasonTypeId(typeId);
     setReasonName("");
     setReasonColour("#6366f1");
+    setReasonActive(true);
     setReasonFormError(null);
     setReasonSheetOpen(true);
   }
@@ -170,6 +176,7 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
     setReasonTypeId(reason.absence_type_id);
     setReasonName(reason.name);
     setReasonColour(reason.colour);
+    setReasonActive(!reason.is_deprecated);
     setReasonFormError(null);
     setReasonSheetOpen(true);
   }
@@ -178,8 +185,8 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
     setReasonFormLoading(true);
     setReasonFormError(null);
     const result = editingReason
-      ? await updateAbsenceReason(editingReason.id, { name: reasonName, colour: reasonColour })
-      : await createAbsenceReason({ absence_type_id: reasonTypeId!, name: reasonName, colour: reasonColour });
+      ? await updateAbsenceReason(editingReason.id, { name: reasonName, colour: reasonColour, is_deprecated: !reasonActive })
+      : await createAbsenceReason({ absence_type_id: reasonTypeId!, name: reasonName, colour: reasonColour, is_deprecated: !reasonActive });
     setReasonFormLoading(false);
     if (!result.success) { setReasonFormError(result.error ?? "An error occurred"); return; }
     if (result.reason) {
@@ -212,12 +219,32 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
       <div className="flex items-center justify-between mb-6">
         <div>
           <p className="text-sm text-muted-foreground">Absence Management</p>
-          <h1 className="text-2xl font-bold">Absence Types</h1>
+          <h1 className="text-2xl font-bold">Absence Types & Reasons</h1>
         </div>
-        <Button onClick={openCreateType}>
-          <Plus className="h-4 w-4 mr-1.5" />
-          Add Type
-        </Button>
+        <div className="flex items-center gap-3">
+          {hasAnyInactive && (
+            <div className="flex items-center gap-1">
+              {(["active", "all", "inactive"] as const).map((f) => (
+                <button
+                  key={f}
+                  className={cn(
+                    "px-2.5 py-1 rounded text-xs font-medium transition-colors",
+                    reasonFilter === f
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted"
+                  )}
+                  onClick={() => setReasonFilter(f)}
+                >
+                  {f === "active" ? "Active" : f === "inactive" ? "Inactive" : "All"}
+                </button>
+              ))}
+            </div>
+          )}
+          <Button onClick={openCreateType}>
+            <Plus className="h-4 w-4 mr-1.5" />
+            Add Type
+          </Button>
+        </div>
       </div>
 
       <div className="flex justify-center w-full">
@@ -251,6 +278,7 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
                     key={type.id}
                     type={type}
                     reasons={typeReasons}
+                    reasonFilter={reasonFilter}
                     isExpanded={isExpanded}
                     onToggle={() => toggleExpanded(type.id)}
                     onEditType={() => openEditType(type)}
@@ -355,6 +383,13 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
                 />
               </div>
             </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>Active</Label>
+                <p className="text-xs text-muted-foreground">Inactive reasons are hidden from the booking form</p>
+              </div>
+              <Switch checked={reasonActive} onCheckedChange={setReasonActive} />
+            </div>
             {reasonFormError && <p className="text-sm text-destructive">{reasonFormError}</p>}
           </div>
           <SheetFooter>
@@ -425,6 +460,7 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
 function TypeRowWithReasons({
   type,
   reasons,
+  reasonFilter,
   isExpanded,
   onToggle,
   onEditType,
@@ -435,6 +471,7 @@ function TypeRowWithReasons({
 }: {
   type: AbsenceType;
   reasons: AbsenceReason[];
+  reasonFilter: ReasonFilter;
   isExpanded: boolean;
   onToggle: () => void;
   onEditType: () => void;
@@ -443,6 +480,12 @@ function TypeRowWithReasons({
   onEditReason: (r: AbsenceReason) => void;
   onDeleteReason: (r: AbsenceReason) => void;
 }) {
+  const filteredReasons = reasons.filter((r) => {
+    if (reasonFilter === "active") return !r.is_deprecated;
+    if (reasonFilter === "inactive") return r.is_deprecated;
+    return true;
+  });
+
   return (
     <>
       {/* Type row — click row to edit, chevron to expand */}
@@ -474,8 +517,8 @@ function TypeRowWithReasons({
       {/* Expanded reasons */}
       {isExpanded && (
         <>
-          {reasons.map((reason) => (
-            <TableRow key={reason.id} className="bg-muted/30 cursor-pointer hover:bg-muted/50" onClick={() => onEditReason(reason)}>
+          {filteredReasons.map((reason) => (
+            <TableRow key={reason.id} className={cn("bg-muted/30 cursor-pointer hover:bg-muted/50", reason.is_deprecated && "opacity-50")} onClick={() => onEditReason(reason)}>
               <TableCell />
               <TableCell className="pl-8">
                 <div className="flex items-center gap-2">
@@ -485,6 +528,7 @@ function TypeRowWithReasons({
                   />
                   {reason.name}
                   {reason.is_default && <Badge variant="secondary" className="text-xs">Default</Badge>}
+                  {reason.is_deprecated && <Badge variant="outline" className="text-xs text-muted-foreground">Inactive</Badge>}
                 </div>
               </TableCell>
               <TableCell colSpan={4} />

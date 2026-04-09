@@ -77,20 +77,15 @@ async function fetchAndMapBookings(
   orgId: string,
   statusFilter?: string
 ): Promise<ApprovalRow[]> {
-  // Fetch members and profiles separately to avoid FK ambiguity issues
-  const [{ data: members }, { data: profiles }] = await Promise.all([
-    supabase.from("members").select("id, first_name, last_name, holiday_profile_id").eq("organisation_id", orgId),
-    supabase.from("absence_profiles").select("id, measurement_mode").eq("organisation_id", orgId),
-  ]);
+  // Fetch members separately to avoid FK ambiguity issues
+  const { data: members } = await supabase
+    .from("members")
+    .select("id, first_name, last_name")
+    .eq("organisation_id", orgId);
 
-  const memberMap = new Map<string, { name: string; profileId: string | null }>();
+  const memberMap = new Map<string, { name: string }>();
   for (const m of members ?? []) {
-    memberMap.set(m.id, { name: `${m.first_name} ${m.last_name}`, profileId: m.holiday_profile_id });
-  }
-
-  const profileMap = new Map<string, string>();
-  for (const p of profiles ?? []) {
-    profileMap.set(p.id, p.measurement_mode);
+    memberMap.set(m.id, { name: `${m.first_name} ${m.last_name}` });
   }
 
   let query = supabase
@@ -108,7 +103,7 @@ async function fetchAndMapBookings(
   return (data ?? []).map((b) => {
     const reason = b.absence_reasons as unknown as { name: string; colour: string } | null;
     const mem = memberMap.get(b.member_id);
-    const mode = mem?.profileId ? profileMap.get(mem.profileId) ?? "days" : "days";
+    const mode = "days";
     return {
       id: b.id,
       member_id: b.member_id,

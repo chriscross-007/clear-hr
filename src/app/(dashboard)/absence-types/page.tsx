@@ -31,7 +31,7 @@ export default async function AbsenceTypesPage() {
       .order("name"),
     supabase
       .from("absence_reasons")
-      .select("id, organisation_id, absence_type_id, name, colour, is_default")
+      .select("id, organisation_id, absence_type_id, name, colour, is_default, is_deprecated")
       .eq("organisation_id", membership.organisation_id)
       .order("is_default", { ascending: false })
       .order("name"),

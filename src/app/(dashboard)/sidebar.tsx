@@ -34,6 +34,7 @@ interface SidebarProps {
   holidayYearStartDay: number;
   holidayYearStartMonth: number;
   bankHolidayHandling: string;
+  defaultWorkProfileId: string | null;
   initialFavouriteIds?: string[];
   initialCustomReports?: { id: string; name: string }[];
   initialShiftDefs?: { id: string; name: string }[];
@@ -63,6 +64,7 @@ export function Sidebar({
   holidayYearStartDay,
   holidayYearStartMonth,
   bankHolidayHandling,
+  defaultWorkProfileId,
   initialFavouriteIds = [],
   initialCustomReports = [],
   initialShiftDefs = [],
@@ -142,6 +144,12 @@ export function Sidebar({
             <Link href="/holiday-profiles" className={linkClass("/holiday-profiles")}>
               <CalendarDays className="h-4 w-4 shrink-0" />
               Holiday Profiles
+            </Link>
+          )}
+          {(role === "owner" || role === "admin") && (
+            <Link href="/work-profiles" className={linkClass("/work-profiles")}>
+              <Clock className="h-4 w-4 shrink-0" />
+              Work Profiles
             </Link>
           )}
           {(role === "owner" || role === "admin") && (
@@ -321,6 +329,7 @@ export function Sidebar({
           holidayYearStartDay={holidayYearStartDay}
           holidayYearStartMonth={holidayYearStartMonth}
           bankHolidayHandling={bankHolidayHandling}
+          defaultWorkProfileId={defaultWorkProfileId}
         />
       )}
     </>

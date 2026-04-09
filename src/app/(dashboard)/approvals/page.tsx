@@ -22,28 +22,16 @@ export default async function ApprovalsPage() {
   if (!member) redirect("/login");
   if (member.role !== "owner" && member.role !== "admin") notFound();
 
-  // Fetch all org profiles for measurement_mode lookup
-  const { data: profiles } = await supabase
-    .from("absence_profiles")
-    .select("id, measurement_mode")
-    .eq("organisation_id", member.organisation_id);
-
-  const profileMap = new Map<string, string>();
-  for (const p of profiles ?? []) {
-    profileMap.set(p.id, p.measurement_mode);
-  }
-
   // Fetch org members for name lookup (new RLS policy allows admins to read all)
   const { data: orgMembers } = await supabase
     .from("members")
-    .select("id, first_name, last_name, holiday_profile_id")
+    .select("id, first_name, last_name")
     .eq("organisation_id", member.organisation_id);
 
-  const memberMap = new Map<string, { name: string; profileId: string | null }>();
+  const memberMap = new Map<string, { name: string }>();
   for (const m of orgMembers ?? []) {
     memberMap.set(m.id, {
       name: `${m.first_name} ${m.last_name}`,
-      profileId: m.holiday_profile_id ?? null,
     });
   }
 
@@ -67,7 +55,7 @@ export default async function ApprovalsPage() {
       const reason = b.absence_reasons as { name: string; colour: string } | null;
       const memberId = b.member_id as string;
       const mem = memberMap.get(memberId);
-      const mode = mem?.profileId ? profileMap.get(mem.profileId) ?? "days" : "days";
+      const mode = "days"; // Simplified — measurement mode derived from booking context
       return {
         id: b.id as string,
         member_id: memberId,

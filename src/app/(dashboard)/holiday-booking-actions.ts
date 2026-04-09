@@ -1,6 +1,8 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { countWorkingDays, type WorkPatternHours } from "@/lib/day-counting";
+import { calculateEntitlement } from "@/lib/entitlement";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -30,6 +32,7 @@ export type BalanceSummary = {
   booked: number;
   taken: number;
   remaining: number;
+  carryOverProjected: number;
   unit: string;
   yearStart: string;
   yearEnd: string;
@@ -39,6 +42,7 @@ export type AbsenceReasonOption = {
   id: string;
   name: string;
   colour: string;
+  is_deprecated: boolean;
   absence_type_id: string;
   absence_type_name: string;
   requires_approval: boolean;
@@ -68,13 +72,142 @@ async function getCallerMember() {
 
   const { data: member } = await supabase
     .from("members")
-    .select("id, organisation_id, role, team_id, holiday_profile_id")
+    .select("id, organisation_id, role, team_id, start_date")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!member) throw new Error("No organisation");
   return { supabase, member };
+}
+
+/** Resolve the work pattern for a member on a given date */
+async function resolveWorkPattern(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  memberId: string,
+  orgId: string,
+  bookingStartDate: string
+): Promise<WorkPatternHours | null> {
+  // 1. Check employee-specific assignment
+  const { data: assignment } = await supabase
+    .from("employee_work_profiles")
+    .select("work_profile_id")
+    .eq("member_id", memberId)
+    .lte("effective_from", bookingStartDate)
+    .order("effective_from", { ascending: false })
+    .limit(1)
+    .single();
+
+  const profileId = assignment?.work_profile_id;
+
+  // 2. Fall back to org default
+  let resolvedId = profileId;
+  if (!resolvedId) {
+    const { data: org } = await supabase
+      .from("organisations")
+      .select("default_work_profile_id")
+      .eq("id", orgId)
+      .single();
+    resolvedId = org?.default_work_profile_id;
+  }
+
+  if (!resolvedId) return null; // Will use DEFAULT_PATTERN
+
+  const { data: wp } = await supabase
+    .from("work_profiles")
+    .select("hours_monday, hours_tuesday, hours_wednesday, hours_thursday, hours_friday, hours_saturday, hours_sunday")
+    .eq("id", resolvedId)
+    .single();
+
+  return wp as WorkPatternHours | null;
+}
+
+/** Fetch bank holidays for the org's country in a date range */
+async function fetchBankHolidays(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  startDate: string,
+  endDate: string
+): Promise<Set<string>> {
+  // Get system-wide bank holidays + org-specific overrides
+  const { data } = await supabase
+    .from("bank_holidays")
+    .select("date, is_excluded, organisation_id")
+    .gte("date", startDate)
+    .lte("date", endDate)
+    .or(`organisation_id.is.null,organisation_id.eq.${orgId}`);
+
+  const holidays = new Set<string>();
+  const excluded = new Set<string>();
+
+  for (const bh of data ?? []) {
+    if (bh.organisation_id && bh.is_excluded) {
+      excluded.add(bh.date);
+    } else {
+      holidays.add(bh.date);
+    }
+  }
+
+  // Remove org-excluded dates
+  for (const d of excluded) {
+    holidays.delete(d);
+  }
+
+  return holidays;
+}
+
+/** Get bank_holiday_handling setting for the org */
+async function getOrgBankHolidayHandling(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string
+): Promise<string> {
+  const { data } = await supabase
+    .from("organisations")
+    .select("bank_holiday_handling")
+    .eq("id", orgId)
+    .single();
+  return data?.bank_holiday_handling ?? "additional";
+}
+
+/** Calculate days_deducted server-side for a booking */
+async function calculateDaysDeducted(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  memberId: string,
+  orgId: string,
+  startDate: string,
+  endDate: string,
+  startHalf: string | null,
+  endHalf: string | null
+): Promise<number> {
+  const [pattern, bankHolidays, handling] = await Promise.all([
+    resolveWorkPattern(supabase, memberId, orgId, startDate),
+    fetchBankHolidays(supabase, orgId, startDate, endDate),
+    getOrgBankHolidayHandling(supabase, orgId),
+  ]);
+
+  return countWorkingDays(
+    startDate,
+    endDate,
+    !!startHalf,
+    !!endHalf,
+    pattern,
+    bankHolidays,
+    handling
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Get my work pattern (for client-side day counting estimate)
+// ---------------------------------------------------------------------------
+
+export async function getMyWorkPattern(): Promise<WorkPatternHours | null> {
+  try {
+    const { supabase, member } = await getCallerMember();
+    const today = new Date().toISOString().slice(0, 10);
+    return resolveWorkPattern(supabase, member.id, member.organisation_id, today);
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +221,7 @@ export async function getMyBalance(): Promise<BalanceSummary | null> {
   // Get current year record
   const { data: yearRec } = await supabase
     .from("holiday_year_records")
-    .select("id, year_start, year_end, pro_rata_amount, base_amount, adjustment, carried_over")
+    .select("id, absence_type_id, year_start, year_end, pro_rata_amount, base_amount, adjustment, carried_over")
     .eq("member_id", member.id)
     .lte("year_start", today)
     .gte("year_end", today)
@@ -96,9 +229,6 @@ export async function getMyBalance(): Promise<BalanceSummary | null> {
     .single();
 
   if (!yearRec) return null;
-
-  const proRata = yearRec.pro_rata_amount ?? yearRec.base_amount;
-  const entitlement = Number(proRata) + Number(yearRec.adjustment) + Number(yearRec.carried_over);
 
   // Get bookings in this year
   const { data: bookings } = await supabase
@@ -109,37 +239,43 @@ export async function getMyBalance(): Promise<BalanceSummary | null> {
     .lte("start_date", yearRec.year_end)
     .in("status", ["pending", "approved"]);
 
-  // Determine measurement mode
+  // Determine measurement mode and carry-over cap from the absence profile
   let unit = "days";
-  if (member.holiday_profile_id) {
+  let carryOverMax: number | null = null;
+  if (yearRec) {
     const { data: profile } = await supabase
       .from("absence_profiles")
-      .select("measurement_mode")
-      .eq("id", member.holiday_profile_id)
+      .select("measurement_mode, carry_over_max")
+      .eq("absence_type_id", yearRec.absence_type_id)
+      .eq("organisation_id", member.organisation_id)
+      .limit(1)
       .single();
-    if (profile) unit = profile.measurement_mode;
-  }
-
-  let pending = 0;
-  let booked = 0;
-  let taken = 0;
-  for (const b of bookings ?? []) {
-    const val = unit === "hours" ? Number(b.hours_deducted ?? 0) : Number(b.days_deducted ?? 0);
-    if (b.status === "pending") {
-      pending += val;
-    } else if (b.status === "approved" && b.end_date < today) {
-      taken += val;
-    } else {
-      booked += val;
+    if (profile) {
+      unit = profile.measurement_mode;
+      carryOverMax = profile.carry_over_max !== null ? Number(profile.carry_over_max) : null;
     }
   }
 
+  const result = calculateEntitlement(
+    yearRec,
+    (bookings ?? []) as { days_deducted: number | null; hours_deducted: number | null; status: string; end_date: string }[],
+    member.start_date,
+    unit,
+    today
+  );
+
   return {
-    entitlement,
-    pending,
-    booked,
-    taken,
-    remaining: entitlement - pending - booked - taken,
+    entitlement: result.effective_entitlement,
+    pending: result.pending,
+    booked: result.booked,
+    taken: result.taken,
+    remaining: result.remaining,
+    carryOverProjected: (() => {
+      const balForCO = result.effective_entitlement - result.booked - result.taken;
+      return (carryOverMax === null || carryOverMax === undefined)
+        ? Math.max(balForCO, 0)
+        : Math.min(Math.max(balForCO, 0), carryOverMax);
+    })(),
     unit,
     yearStart: yearRec.year_start,
     yearEnd: yearRec.year_end,
@@ -203,7 +339,7 @@ export async function getAbsenceReasonOptions(): Promise<AbsenceReasonOption[]> 
 
   const { data } = await supabase
     .from("absence_reasons")
-    .select("id, name, colour, absence_type_id, absence_types(name, requires_approval)")
+    .select("id, name, colour, is_deprecated, absence_type_id, absence_types(name, requires_approval)")
     .eq("organisation_id", member.organisation_id)
     .order("name");
 
@@ -213,6 +349,7 @@ export async function getAbsenceReasonOptions(): Promise<AbsenceReasonOption[]> 
       id: r.id,
       name: r.name,
       colour: r.colour,
+      is_deprecated: r.is_deprecated,
       absence_type_id: r.absence_type_id,
       absence_type_name: aType?.name ?? "—",
       requires_approval: aType?.requires_approval ?? false,
@@ -291,6 +428,15 @@ export async function submitHolidayBooking(
     const requiresApproval = (reason?.absence_types as unknown as { requires_approval: boolean } | null)?.requires_approval ?? false;
     const status = requiresApproval ? "pending" : "approved";
 
+    // Server-side authoritative day counting (for days mode)
+    let daysDeducted = input.daysDeducted;
+    if (daysDeducted !== null) {
+      daysDeducted = await calculateDaysDeducted(
+        supabase, member.id, member.organisation_id,
+        input.startDate, input.endDate, input.startHalf, input.endHalf
+      );
+    }
+
     // Create the booking
     const { error: insertError } = await supabase
       .from("holiday_bookings")
@@ -302,7 +448,7 @@ export async function submitHolidayBooking(
         end_date: input.endDate,
         start_half: input.startHalf,
         end_half: input.endHalf,
-        days_deducted: input.daysDeducted,
+        days_deducted: daysDeducted,
         hours_deducted: input.hoursDeducted,
         status,
         employee_note: input.note || null,
@@ -370,13 +516,22 @@ export async function updateHolidayBooking(
       return { success: false, error: "You already have a booking on one or more of these dates." };
     }
 
+    // Server-side authoritative day counting (for days mode)
+    let daysDeducted = input.daysDeducted;
+    if (daysDeducted !== null) {
+      daysDeducted = await calculateDaysDeducted(
+        supabase, member.id, member.organisation_id,
+        input.startDate, input.endDate, input.startHalf, input.endHalf
+      );
+    }
+
     const updatePayload: Record<string, unknown> = {
       leave_reason_id: input.leaveReasonId,
       start_date: input.startDate,
       end_date: input.endDate,
       start_half: input.startHalf,
       end_half: input.endHalf,
-      days_deducted: input.daysDeducted,
+      days_deducted: daysDeducted,
       hours_deducted: input.hoursDeducted,
       employee_note: input.note || null,
     };

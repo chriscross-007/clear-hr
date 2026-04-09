@@ -23,6 +23,7 @@ export async function updateOrganisation(data: {
   holidayYearStartDay?: number | null;
   holidayYearStartMonth?: number | null;
   bankHolidayHandling?: string;
+  defaultWorkProfileId?: string | null;
 }) {
   const supabase = await createClient();
   const {
@@ -95,6 +96,11 @@ export async function updateOrganisation(data: {
   // Bank holiday handling
   if (data.bankHolidayHandling !== undefined) {
     updatePayload.bank_holiday_handling = data.bankHolidayHandling;
+  }
+
+  // Default work profile
+  if (data.defaultWorkProfileId !== undefined) {
+    updatePayload.default_work_profile_id = data.defaultWorkProfileId;
   }
 
   const { error } = await supabase

@@ -36,10 +36,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   updateHolidayBooking,
+  getMyWorkPattern,
   type HolidayBookingRow,
   type AbsenceReasonOption,
   type BalanceSummary,
 } from "../holiday-booking-actions";
+import { countWorkingDaysSimple, type WorkPatternHours } from "@/lib/day-counting";
 import { cancelMyBooking } from "../approvals-actions";
 
 interface EditBookingSheetProps {
@@ -50,19 +52,6 @@ interface EditBookingSheetProps {
   balance: BalanceSummary | null;
   measurementMode: string;
   onSuccess: () => void;
-}
-
-function countWorkingDays(start: string, end: string): number {
-  const s = new Date(start + "T00:00:00Z");
-  const e = new Date(end + "T00:00:00Z");
-  let count = 0;
-  const d = new Date(s);
-  while (d <= e) {
-    const dow = d.getUTCDay();
-    if (dow !== 0 && dow !== 6) count++;
-    d.setUTCDate(d.getUTCDate() + 1);
-  }
-  return count;
 }
 
 export function EditBookingSheet({
@@ -87,11 +76,19 @@ export function EditBookingSheet({
   const [error, setError] = useState<string | null>(null);
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [workPattern, setWorkPattern] = useState<WorkPatternHours | null>(null);
 
   const unit = measurementMode === "hours" ? "hours" : "days";
   const isHoursMode = measurementMode === "hours";
   const sameDay = startDate === endDate && startDate !== "";
   const isCancelled = booking?.status === "cancelled";
+
+  // Load work pattern on sheet open
+  useEffect(() => {
+    if (open) {
+      getMyWorkPattern().then(setWorkPattern);
+    }
+  }, [open]);
 
   // Populate form when booking changes or sheet opens
   useEffect(() => {
@@ -109,15 +106,14 @@ export function EditBookingSheet({
     }
   }, [booking, open]);
 
-  // Calculate estimated deduction
+  // Calculate estimated deduction using work pattern
   let estimatedDeduction = 0;
   if (isHoursMode) {
     estimatedDeduction = Number(hours) || 0;
   } else if (startDate && endDate && endDate >= startDate) {
-    estimatedDeduction = countWorkingDays(startDate, endDate);
-    if (startHalfEnabled) estimatedDeduction -= 0.5;
-    if (endHalfEnabled && !sameDay) estimatedDeduction -= 0.5;
-    if (sameDay && startHalfEnabled) estimatedDeduction = 0.5;
+    estimatedDeduction = countWorkingDaysSimple(
+      startDate, endDate, startHalfEnabled, endHalfEnabled && !sameDay, workPattern
+    );
   }
 
   // Add back the original booking's deduction to remaining (since it's already counted)
@@ -127,9 +123,12 @@ export function EditBookingSheet({
   const adjustedRemaining = balance ? balance.remaining + originalDeduction : null;
   const projectedRemaining = adjustedRemaining !== null ? adjustedRemaining - estimatedDeduction : null;
 
+  // Filter to Annual Leave reasons only, exclude deprecated
+  const activeReasons = reasons.filter((r) => r.absence_type_name === "Annual Leave" && !r.is_deprecated);
+
   // Group reasons by absence type
   const grouped = new Map<string, AbsenceReasonOption[]>();
-  for (const r of reasons) {
+  for (const r of activeReasons) {
     const group = grouped.get(r.absence_type_name) ?? [];
     group.push(r);
     grouped.set(r.absence_type_name, group);
@@ -201,6 +200,9 @@ export function EditBookingSheet({
                   <SelectValue placeholder="Select a reason" />
                 </SelectTrigger>
                 <SelectContent>
+                  {activeReasons.length === 0 && (
+                    <div className="px-2 py-3 text-sm text-muted-foreground text-center">No active absence reasons available.</div>
+                  )}
                   {Array.from(grouped.entries()).map(([typeName, typeReasons]) => (
                     <SelectGroup key={typeName}>
                       <SelectLabel>{typeName}</SelectLabel>

@@ -17,10 +17,19 @@ import { getCustomFieldDefs } from "./employees/custom-field-actions";
 import type { FieldDef } from "./employees/custom-field-actions";
 import { getRates } from "./rates-actions";
 import type { Rate } from "./rates-actions";
+import { getWorkProfiles } from "./work-profile-actions";
+import type { WorkProfile } from "./work-profile-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -60,6 +69,7 @@ interface OrganisationEditDialogProps {
   holidayYearStartDay: number;
   holidayYearStartMonth: number;
   bankHolidayHandling: string;
+  defaultWorkProfileId: string | null;
 }
 
 export function OrganisationEditDialog({
@@ -87,6 +97,7 @@ export function OrganisationEditDialog({
   holidayYearStartDay: initialHolidayYearStartDay,
   holidayYearStartMonth: initialHolidayYearStartMonth,
   bankHolidayHandling: initialBankHolidayHandling,
+  defaultWorkProfileId: initialDefaultWorkProfileId,
 }: OrganisationEditDialogProps) {
   const [name, setName] = useState(orgName);
   const [label, setLabel] = useState(memberLabel);
@@ -116,6 +127,8 @@ export function OrganisationEditDialog({
   const [holidayYearStartDay, setHolidayYearStartDay] = useState(initialHolidayYearStartDay);
   const [holidayYearStartMonth, setHolidayYearStartMonth] = useState(initialHolidayYearStartMonth);
   const [bankHolidayHandling, setBankHolidayHandling] = useState(initialBankHolidayHandling);
+  const [workProfiles, setWorkProfiles] = useState<WorkProfile[]>([]);
+  const [defaultWorkProfileId, setDefaultWorkProfileId] = useState<string>(initialDefaultWorkProfileId ?? "__none__");
   const [adminProfiles, setAdminProfiles] = useState<Profile[]>([]);
   const [employeeProfiles, setEmployeeProfiles] = useState<Profile[]>([]);
   const [userRightsType, setUserRightsType] = useState<"admin" | "employee">("admin");
@@ -146,12 +159,14 @@ export function OrganisationEditDialog({
     holidayYearStartDay !== initialHolidayYearStartDay ||
     holidayYearStartMonth !== initialHolidayYearStartMonth ||
     bankHolidayHandling !== initialBankHolidayHandling ||
+    defaultWorkProfileId !== (initialDefaultWorkProfileId ?? "__none__") ||
     fieldDefsModified ||
     teams.some((t) => {
       const orig = originalTeams.find((o) => o.id === t.id);
       return orig && orig.name !== t.name;
     });
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- deps must be fixed-length
   useEffect(() => {
     if (open) {
       setName(orgName);
@@ -178,6 +193,7 @@ export function OrganisationEditDialog({
       setHolidayYearStartDay(initialHolidayYearStartDay);
       setHolidayYearStartMonth(initialHolidayYearStartMonth);
       setBankHolidayHandling(initialBankHolidayHandling);
+      setDefaultWorkProfileId(initialDefaultWorkProfileId ?? "__none__");
       setFieldDefsModified(false);
       // Load teams
       getTeams().then((result) => {
@@ -201,8 +217,14 @@ export function OrganisationEditDialog({
       if (isOwner) {
         getRates().then(setRates);
       }
+      // Load work profiles for default selection
+      if (isOwner) {
+        getWorkProfiles().then((wps) => {
+          setWorkProfiles(wps);
+        });
+      }
     }
-  }, [open, orgName, memberLabel, requireMfa, showCustomFields, isOwner, initialCurrencySymbol, initialTsMaxShiftHours, initialTsMaxBreakMinutes, initialTsShiftStartVarianceMinutes, initialTsRoundFirstInMins, initialTsRoundFirstInGraceMins, initialTsRoundBreakOutMins, initialTsRoundBreakOutGraceMins, initialTsRoundBreakInMins, initialTsRoundBreakInGraceMins, initialTsRoundLastOutMins, initialTsRoundLastOutGraceMins, initialHolidayYearStartType, initialHolidayYearStartDay, initialHolidayYearStartMonth, initialBankHolidayHandling]);
+  }, [open, orgName, memberLabel, requireMfa, showCustomFields, isOwner, initialCurrencySymbol, initialTsMaxShiftHours, initialTsMaxBreakMinutes, initialTsShiftStartVarianceMinutes, initialTsRoundFirstInMins, initialTsRoundFirstInGraceMins, initialTsRoundBreakOutMins, initialTsRoundBreakOutGraceMins, initialTsRoundBreakInMins, initialTsRoundBreakInGraceMins, initialTsRoundLastOutMins, initialTsRoundLastOutGraceMins, initialHolidayYearStartType, initialHolidayYearStartDay, initialHolidayYearStartMonth, initialBankHolidayHandling, initialDefaultWorkProfileId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -246,6 +268,7 @@ export function OrganisationEditDialog({
       holidayYearStartDay,
       holidayYearStartMonth,
       bankHolidayHandling,
+      defaultWorkProfileId: defaultWorkProfileId === "__none__" ? null : defaultWorkProfileId,
     });
 
     if (!result.success) {
@@ -766,6 +789,26 @@ export function OrganisationEditDialog({
                     </label>
                   </div>
                 </div>
+
+                {workProfiles.length > 0 && (
+                  <div className="border-t pt-4 space-y-3">
+                    <Label className="text-sm font-medium">Default working pattern</Label>
+                    <Select value={defaultWorkProfileId} onValueChange={setDefaultWorkProfileId}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">No default</SelectItem>
+                        {workProfiles.map((wp) => (
+                          <SelectItem key={wp.id} value={wp.id}>{wp.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Used as the fallback working pattern for employees without an explicit assignment.
+                    </p>
+                  </div>
+                )}
               </TabsContent>
             )}
 

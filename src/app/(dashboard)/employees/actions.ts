@@ -64,6 +64,8 @@ export type MemberResult = {
   custom_fields: Record<string, unknown>;
   avatar_url: string | null;
   updated_at: string | null;
+  holiday_profile_name: string | null;
+  work_pattern_name: string | null;
 };
 
 // Add employee — creates org_member record only, no auth user
@@ -74,7 +76,6 @@ export async function addEmployee(formData: {
   teamId?: string | null;
   payrollNumber?: string | null;
   startDate?: string | null;
-  holidayProfileId?: string | null;
 }): Promise<{ success: boolean; error?: string; member?: MemberResult }> {
   try {
     const membership = await getCallerMembership();
@@ -129,7 +130,6 @@ export async function addEmployee(formData: {
         team_id: formData.teamId || null,
         payroll_number: trimmedPayroll,
         start_date: formData.startDate || null,
-        holiday_profile_id: formData.holidayProfileId || null,
         permissions: {
           can_request_holidays: true,
           can_approve_holidays: false,
@@ -203,6 +203,8 @@ export async function addEmployee(formData: {
         custom_fields: {},
         avatar_url: null,
         updated_at: null,
+        holiday_profile_name: null,
+        work_pattern_name: null,
       },
     };
   } catch (e) {
@@ -213,17 +215,17 @@ export async function addEmployee(formData: {
   }
 }
 
-// Get start_date and holiday_profile_id for a member (used by edit dialog)
+// Get start_date for a member (used by edit dialog)
 export async function getMemberHolidayFields(
   memberId: string
-): Promise<{ success: boolean; startDate?: string | null; holidayProfileId?: string | null }> {
+): Promise<{ success: boolean; startDate?: string | null }> {
   try {
     const membership = await getCallerMembership();
     const admin = createAdminClient();
 
     const { data } = await admin
       .from("members")
-      .select("start_date, holiday_profile_id")
+      .select("start_date")
       .eq("id", memberId)
       .eq("organisation_id", membership.organisation_id)
       .single();
@@ -232,7 +234,6 @@ export async function getMemberHolidayFields(
     return {
       success: true,
       startDate: data.start_date,
-      holidayProfileId: data.holiday_profile_id,
     };
   } catch {
     return { success: false };
@@ -330,7 +331,6 @@ export async function updateEmployee(formData: {
   profileId?: string;
   updatedAt?: string | null;
   startDate?: string | null;
-  holidayProfileId?: string | null;
 }): Promise<{ success: boolean; error?: string; conflict?: boolean }> {
   try {
     const membership = await getCallerMembership();
@@ -373,9 +373,6 @@ export async function updateEmployee(formData: {
 
     if (formData.startDate !== undefined) {
       updateData.start_date = formData.startDate || null;
-    }
-    if (formData.holidayProfileId !== undefined) {
-      updateData.holiday_profile_id = formData.holidayProfileId || null;
     }
 
     // Role change validation (skip if owner — owner role is immutable)
@@ -889,130 +886,6 @@ export async function bulkUpdateMembers(
 }
 
 // ---------------------------------------------------------------------------
-// Generate holiday year records for a new employee
-// ---------------------------------------------------------------------------
-
-export async function generateHolidayYearRecords(
-  memberId: string
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    const membership = await getCallerMembership();
-    const admin = createAdminClient();
-
-    // Fetch the member
-    const { data: member } = await admin
-      .from("members")
-      .select("id, organisation_id, start_date, holiday_profile_id")
-      .eq("id", memberId)
-      .eq("organisation_id", membership.organisation_id)
-      .single();
-
-    if (!member) return { success: false, error: "Member not found" };
-    if (!member.start_date) return { success: false, error: "Member has no start date" };
-    if (!member.holiday_profile_id) return { success: false, error: "Member has no holiday profile" };
-
-    // Fetch the absence profile
-    const { data: profile } = await admin
-      .from("absence_profiles")
-      .select("id, absence_type_id, allowance")
-      .eq("id", member.holiday_profile_id)
-      .single();
-
-    if (!profile) return { success: false, error: "Holiday profile not found" };
-
-    // Fetch org settings
-    const { data: org } = await admin
-      .from("organisations")
-      .select("holiday_year_start_type, holiday_year_start_day, holiday_year_start_month")
-      .eq("id", member.organisation_id)
-      .single();
-
-    if (!org) return { success: false, error: "Organisation not found" };
-
-    const startDate = new Date(member.start_date + "T00:00:00Z");
-    const allowance = Number(profile.allowance);
-
-    let year1Start: Date;
-    let year1End: Date;
-    let year2Start: Date;
-    let year2End: Date;
-    let year1Allowance: number;
-    let year2Allowance: number;
-
-    if (org.holiday_year_start_type === "employee_start_date") {
-      year1Start = startDate;
-      year1End = new Date(Date.UTC(startDate.getUTCFullYear() + 1, startDate.getUTCMonth(), startDate.getUTCDate() - 1));
-      year2Start = new Date(Date.UTC(year1End.getUTCFullYear(), year1End.getUTCMonth(), year1End.getUTCDate() + 1));
-      year2End = new Date(Date.UTC(year2Start.getUTCFullYear() + 1, year2Start.getUTCMonth(), year2Start.getUTCDate() - 1));
-      year1Allowance = allowance;
-      year2Allowance = allowance;
-    } else {
-      const fixedDay = org.holiday_year_start_day ?? 1;
-      const fixedMonth = (org.holiday_year_start_month ?? 1) - 1;
-
-      let nextYearStart = new Date(Date.UTC(startDate.getUTCFullYear(), fixedMonth, fixedDay));
-      if (nextYearStart <= startDate) {
-        nextYearStart = new Date(Date.UTC(startDate.getUTCFullYear() + 1, fixedMonth, fixedDay));
-      }
-
-      year1Start = startDate;
-      year1End = new Date(Date.UTC(nextYearStart.getUTCFullYear(), nextYearStart.getUTCMonth(), nextYearStart.getUTCDate() - 1));
-      year2Start = nextYearStart;
-      year2End = new Date(Date.UTC(year2Start.getUTCFullYear() + 1, year2Start.getUTCMonth(), year2Start.getUTCDate() - 1));
-
-      const daysInYear1 = Math.round((year1End.getTime() - year1Start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-      const fullYearStart = new Date(Date.UTC(nextYearStart.getUTCFullYear() - 1, fixedMonth, fixedDay));
-      const daysInFullYear = Math.round((nextYearStart.getTime() - fullYearStart.getTime()) / (1000 * 60 * 60 * 24));
-      year1Allowance = Math.round((allowance * daysInYear1 / daysInFullYear) * 10) / 10;
-      year2Allowance = allowance;
-    }
-
-    function fmtDate(d: Date): string {
-      return d.toISOString().slice(0, 10);
-    }
-
-    const records = [
-      {
-        organisation_id: member.organisation_id,
-        member_id: member.id,
-        absence_type_id: profile.absence_type_id,
-        year_start: fmtDate(year1Start),
-        year_end: fmtDate(year1End),
-        base_amount: year1Allowance,
-        adjustment: 0,
-        carried_over: 0,
-        borrow_forward: 0,
-        pro_rata_amount: year1Allowance,
-      },
-      {
-        organisation_id: member.organisation_id,
-        member_id: member.id,
-        absence_type_id: profile.absence_type_id,
-        year_start: fmtDate(year2Start),
-        year_end: fmtDate(year2End),
-        base_amount: year2Allowance,
-        adjustment: 0,
-        carried_over: 0,
-        borrow_forward: 0,
-        pro_rata_amount: year2Allowance,
-      },
-    ];
-
-    const { error } = await admin
-      .from("holiday_year_records")
-      .upsert(records, { onConflict: "member_id,absence_type_id,year_start" });
-
-    if (error) return { success: false, error: error.message };
-    return { success: true };
-  } catch (e) {
-    return {
-      success: false,
-      error: e instanceof Error ? e.message : "An error occurred",
-    };
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Change an employee's holiday profile
 // ---------------------------------------------------------------------------
 
@@ -1045,32 +918,90 @@ export async function changeEmployeeHolidayProfile(
 
     if (!profile) return { success: false, error: "Holiday profile not found" };
 
-    // Update member's holiday_profile_id
-    const { error: updateError } = await admin
-      .from("members")
-      .update({ holiday_profile_id: newProfileId })
-      .eq("id", memberId);
+    const fullAllowance = Number(profile.allowance);
 
-    if (updateError) return { success: false, error: updateError.message };
+    /** Count calendar days between two ISO date strings (inclusive) */
+    function daysBetween(start: string, end: string): number {
+      const s = new Date(start + "T00:00:00Z");
+      const e = new Date(end + "T00:00:00Z");
+      return Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    }
 
-    // Create a new holiday year record
-    const start = new Date(effectiveDate + "T00:00:00Z");
-    const end = new Date(Date.UTC(start.getUTCFullYear() + 1, start.getUTCMonth(), start.getUTCDate() - 1));
-    const allowance = Number(profile.allowance);
+    /** Pro-rate allowance for a partial year, rounded down to nearest 0.5 */
+    function proRate(recordDays: number, yearDays: number): number {
+      const raw = fullAllowance * (recordDays / yearDays);
+      return Math.floor(raw * 2) / 2;
+    }
 
+    // Find any existing record whose range contains the new start date
+    const { data: overlapping } = await admin
+      .from("holiday_year_records")
+      .select("id, year_start, year_end")
+      .eq("member_id", member.id)
+      .lte("year_start", effectiveDate)
+      .gte("year_end", effectiveDate)
+      .limit(1)
+      .single();
+
+    // Determine the new record's end date and pro-rated amounts
+    let newEndDate: string;
+    let fullYearDays: number;
+
+    if (overlapping) {
+      // Use the overlapping record's original year_end
+      newEndDate = overlapping.year_end;
+      fullYearDays = daysBetween(overlapping.year_start, overlapping.year_end);
+
+      // Truncate the overlapping record to end the day before the new record starts
+      const truncatedEnd = new Date(effectiveDate + "T00:00:00Z");
+      truncatedEnd.setUTCDate(truncatedEnd.getUTCDate() - 1);
+      const truncatedEndStr = truncatedEnd.toISOString().slice(0, 10);
+
+      if (truncatedEndStr >= overlapping.year_start) {
+        const truncatedDays = daysBetween(overlapping.year_start, truncatedEndStr);
+        const truncatedAmount = proRate(truncatedDays, fullYearDays);
+        await admin
+          .from("holiday_year_records")
+          .update({
+            year_end: truncatedEndStr,
+            base_amount: truncatedAmount,
+            pro_rata_amount: truncatedAmount,
+          })
+          .eq("id", overlapping.id);
+      } else {
+        // New start date is the same as existing start — delete the old record
+        await admin
+          .from("holiday_year_records")
+          .delete()
+          .eq("id", overlapping.id);
+      }
+    } else {
+      // No overlap — default to 1 year from start
+      const start = new Date(effectiveDate + "T00:00:00Z");
+      const end = new Date(Date.UTC(start.getUTCFullYear() + 1, start.getUTCMonth(), start.getUTCDate() - 1));
+      newEndDate = end.toISOString().slice(0, 10);
+      fullYearDays = daysBetween(effectiveDate, newEndDate);
+    }
+
+    // Calculate the new record's pro-rated allowance
+    const newRecordDays = daysBetween(effectiveDate, newEndDate);
+    const newAmount = newRecordDays >= fullYearDays ? fullAllowance : proRate(newRecordDays, fullYearDays);
+
+    // Insert the new record
     const { error: insertError } = await admin
       .from("holiday_year_records")
       .upsert({
         organisation_id: member.organisation_id,
         member_id: member.id,
         absence_type_id: profile.absence_type_id,
+        absence_profile_id: profile.id,
         year_start: effectiveDate,
-        year_end: end.toISOString().slice(0, 10),
-        base_amount: allowance,
+        year_end: newEndDate,
+        base_amount: newAmount,
         adjustment: 0,
         carried_over: 0,
         borrow_forward: 0,
-        pro_rata_amount: allowance,
+        pro_rata_amount: newAmount,
       }, { onConflict: "member_id,absence_type_id,year_start" });
 
     if (insertError) return { success: false, error: insertError.message };
@@ -1091,5 +1022,133 @@ export async function changeEmployeeHolidayProfile(
       success: false,
       error: e instanceof Error ? e.message : "An error occurred",
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Update a holiday year record
+// ---------------------------------------------------------------------------
+
+export async function updateHolidayYearRecord(
+  recordId: string,
+  fields: {
+    year_start?: string;
+    year_end?: string;
+    base_amount?: number;
+    adjustment?: number;
+    carried_over?: number;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const membership = await getCallerMembership();
+    const admin = createAdminClient();
+
+    const { data: record } = await admin
+      .from("holiday_year_records")
+      .select("id, organisation_id, member_id, absence_type_id, year_start")
+      .eq("id", recordId)
+      .eq("organisation_id", membership.organisation_id)
+      .single();
+
+    if (!record) return { success: false, error: "Record not found" };
+
+    const updatePayload: Record<string, unknown> = {};
+    // Only include year_start if it actually changed (avoid false unique constraint violations)
+    if (fields.year_start !== undefined && fields.year_start !== record.year_start) {
+      updatePayload.year_start = fields.year_start;
+    }
+    if (fields.year_end !== undefined) updatePayload.year_end = fields.year_end;
+    if (fields.base_amount !== undefined) {
+      updatePayload.base_amount = fields.base_amount;
+      updatePayload.pro_rata_amount = fields.base_amount;
+    }
+    if (fields.adjustment !== undefined) updatePayload.adjustment = fields.adjustment;
+    if (fields.carried_over !== undefined) updatePayload.carried_over = fields.carried_over;
+
+    const { error } = await admin
+      .from("holiday_year_records")
+      .update(updatePayload)
+      .eq("id", recordId);
+
+    if (error) return { success: false, error: error.message };
+
+    // If year_end changed, adjust next record's year_start to maintain contiguity
+    if (fields.year_end !== undefined) {
+      const newYearEnd = fields.year_end;
+      const { data: nextRecord } = await admin
+        .from("holiday_year_records")
+        .select("id, year_start")
+        .eq("member_id", record.member_id)
+        .eq("absence_type_id", record.absence_type_id)
+        .gt("year_start", record.year_start)
+        .order("year_start", { ascending: true })
+        .limit(1)
+        .single();
+
+      if (nextRecord) {
+        const expectedStart = new Date(newYearEnd + "T00:00:00Z");
+        expectedStart.setUTCDate(expectedStart.getUTCDate() + 1);
+        const expectedStartStr = expectedStart.toISOString().slice(0, 10);
+        if (nextRecord.year_start !== expectedStartStr) {
+          await admin
+            .from("holiday_year_records")
+            .update({ year_start: expectedStartStr })
+            .eq("id", nextRecord.id);
+        }
+      }
+    }
+
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Delete a holiday year record
+// ---------------------------------------------------------------------------
+
+export async function deleteHolidayYearRecord(
+  recordId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const membership = await getCallerMembership();
+    const admin = createAdminClient();
+
+    const { error } = await admin
+      .from("holiday_year_records")
+      .delete()
+      .eq("id", recordId)
+      .eq("organisation_id", membership.organisation_id);
+
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cancel a holiday booking as admin
+// ---------------------------------------------------------------------------
+
+export async function cancelBookingAsAdmin(
+  bookingId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const membership = await getCallerMembership();
+    const admin = createAdminClient();
+
+    const { error } = await admin
+      .from("holiday_bookings")
+      .update({ status: "cancelled" })
+      .eq("id", bookingId)
+      .eq("organisation_id", membership.organisation_id)
+      .in("status", ["pending", "approved"]);
+
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }
 }

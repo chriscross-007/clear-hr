@@ -59,17 +59,20 @@ export type AbsenceReason = {
   name: string;
   colour: string;
   is_default: boolean;
+  is_deprecated: boolean;
 };
 
 type AbsenceReasonCreateInput = {
   absence_type_id: string;
   name: string;
   colour: string;
+  is_deprecated?: boolean;
 };
 
 type AbsenceReasonUpdateInput = {
   name: string;
   colour: string;
+  is_deprecated?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -248,8 +251,9 @@ export async function createAbsenceReason(
         name: input.name.trim(),
         colour: input.colour.trim(),
         is_default: false,
+        is_deprecated: input.is_deprecated ?? false,
       })
-      .select("id, organisation_id, absence_type_id, name, colour, is_default")
+      .select("id, organisation_id, absence_type_id, name, colour, is_default, is_deprecated")
       .single();
 
     if (error) return { success: false, error: error.message };
@@ -283,7 +287,10 @@ export async function updateAbsenceReason(
 
     if (!existing) return { success: false, error: "Absence reason not found" };
 
-    const updatePayload: Record<string, string> = { colour: input.colour.trim() };
+    const updatePayload: Record<string, string | boolean> = { colour: input.colour.trim() };
+    if (input.is_deprecated !== undefined) {
+      updatePayload.is_deprecated = input.is_deprecated;
+    }
     if (!existing.is_default) {
       updatePayload.name = input.name.trim();
     } else if (input.name.trim() !== existing.name) {
@@ -295,7 +302,7 @@ export async function updateAbsenceReason(
       .update(updatePayload)
       .eq("id", id)
       .eq("organisation_id", membership.organisation_id)
-      .select("id, organisation_id, absence_type_id, name, colour, is_default")
+      .select("id, organisation_id, absence_type_id, name, colour, is_default, is_deprecated")
       .single();
 
     if (error) return { success: false, error: error.message };

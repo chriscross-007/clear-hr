@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,9 +26,11 @@ import {
 } from "@/components/ui/select";
 import {
   submitHolidayBooking,
+  getMyWorkPattern,
   type AbsenceReasonOption,
   type BalanceSummary,
 } from "../holiday-booking-actions";
+import { countWorkingDaysSimple, type WorkPatternHours } from "@/lib/day-counting";
 
 interface BookHolidaySheetProps {
   open: boolean;
@@ -39,20 +41,6 @@ interface BookHolidaySheetProps {
   onSuccess: () => void;
 }
 
-/** Count weekdays (Mon–Fri) between two dates inclusive */
-function countWorkingDays(start: string, end: string): number {
-  const s = new Date(start + "T00:00:00Z");
-  const e = new Date(end + "T00:00:00Z");
-  let count = 0;
-  const d = new Date(s);
-  while (d <= e) {
-    const dow = d.getUTCDay();
-    if (dow !== 0 && dow !== 6) count++;
-    d.setUTCDate(d.getUTCDate() + 1);
-  }
-  return count;
-}
-
 export function BookHolidaySheet({
   open,
   onOpenChange,
@@ -61,7 +49,8 @@ export function BookHolidaySheet({
   measurementMode,
   onSuccess,
 }: BookHolidaySheetProps) {
-  const [reasonId, setReasonId] = useState("");
+  const defaultReasonId = reasons.find((r) => r.absence_type_name === "Annual Leave" && !r.is_deprecated)?.id ?? "";
+  const [reasonId, setReasonId] = useState(defaultReasonId);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [startHalfEnabled, setStartHalfEnabled] = useState(false);
@@ -73,27 +62,37 @@ export function BookHolidaySheet({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  const [workPattern, setWorkPattern] = useState<WorkPatternHours | null>(null);
+
+  // Load work pattern on sheet open
+  useEffect(() => {
+    if (open) {
+      getMyWorkPattern().then(setWorkPattern);
+    }
+  }, [open]);
 
   const unit = measurementMode === "hours" ? "hours" : "days";
   const isHoursMode = measurementMode === "hours";
   const sameDay = startDate === endDate && startDate !== "";
 
-  // Calculate estimated deduction
+  // Calculate estimated deduction using work pattern
   let estimatedDeduction = 0;
   if (isHoursMode) {
     estimatedDeduction = Number(hours) || 0;
   } else if (startDate && endDate && endDate >= startDate) {
-    estimatedDeduction = countWorkingDays(startDate, endDate);
-    if (startHalfEnabled) estimatedDeduction -= 0.5;
-    if (endHalfEnabled && !sameDay) estimatedDeduction -= 0.5;
-    if (sameDay && startHalfEnabled) estimatedDeduction = 0.5;
+    estimatedDeduction = countWorkingDaysSimple(
+      startDate, endDate, startHalfEnabled, endHalfEnabled && !sameDay, workPattern
+    );
   }
 
   const projectedRemaining = balance ? balance.remaining - estimatedDeduction : null;
 
+  // Filter to Annual Leave reasons only, exclude deprecated
+  const activeReasons = reasons.filter((r) => r.absence_type_name === "Annual Leave" && !r.is_deprecated);
+
   // Group reasons by absence type
   const grouped = new Map<string, AbsenceReasonOption[]>();
-  for (const r of reasons) {
+  for (const r of activeReasons) {
     const group = grouped.get(r.absence_type_name) ?? [];
     group.push(r);
     grouped.set(r.absence_type_name, group);
@@ -104,7 +103,7 @@ export function BookHolidaySheet({
   const requiresApproval = selectedReason ? selectedReason.requires_approval : true;
 
   function resetForm() {
-    setReasonId("");
+    setReasonId(defaultReasonId);
     setStartDate("");
     setEndDate("");
     setStartHalfEnabled(false);
@@ -172,6 +171,9 @@ export function BookHolidaySheet({
                 <SelectValue placeholder="Select a reason" />
               </SelectTrigger>
               <SelectContent>
+                {activeReasons.length === 0 && (
+                  <div className="px-2 py-3 text-sm text-muted-foreground text-center">No active absence reasons available.</div>
+                )}
                 {Array.from(grouped.entries()).map(([typeName, typeReasons]) => (
                   <SelectGroup key={typeName}>
                     <SelectLabel>{typeName}</SelectLabel>
