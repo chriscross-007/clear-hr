@@ -3,6 +3,7 @@ import invitedReport from "./employees/invited";
 import activeReport from "./employees/active";
 import lastLogInReport from "./employees/last-log-in";
 import customFieldsReport from "./employees/custom-fields";
+import holidayBookingsReport from "./holiday/bookings";
 
 export interface StandardReport {
   id: string;
@@ -20,6 +21,7 @@ export const ALL_STANDARD_REPORTS: StandardReport[] = [
   activeReport,
   lastLogInReport,
   customFieldsReport,
+  holidayBookingsReport,
 ];
 
 /** Reports grouped by their `group` key, preserving insertion order */

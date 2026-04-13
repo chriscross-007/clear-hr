@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { calculateEntitlement } from "@/lib/entitlement";
+import type { CalendarBooking, CalendarBankHoliday } from "@/components/holiday-calendar";
 import { MyHolidayClient } from "./my-holiday-client";
 import type {
   HolidayBookingRow,
@@ -57,6 +58,7 @@ export default async function MyHolidayPage() {
 
   // Compute balance using centralised entitlement calculation
   let balance: BalanceSummary | null = null;
+  let currentPeriodProjectedCO = 0;
   if (yearRec) {
     const { data: bookings } = await supabase
       .from("holiday_bookings")
@@ -74,14 +76,16 @@ export default async function MyHolidayPage() {
       today
     );
 
-    // Projected carry-over: min(balance, cap) where balance excludes pending
-    const balanceForCO = result.effective_entitlement - result.booked - result.taken;
+    // Projected carry-over: min(remaining, cap)
     const projectedCO = (carryOverMax === null || carryOverMax === undefined)
-      ? Math.max(balanceForCO, 0)
-      : Math.min(Math.max(balanceForCO, 0), carryOverMax);
+      ? Math.max(result.remaining, 0)
+      : Math.min(Math.max(result.remaining, 0), carryOverMax);
+
+    currentPeriodProjectedCO = projectedCO;
 
     balance = {
       entitlement: result.effective_entitlement,
+      carriedOver: Number(yearRec.carried_over) || 0,
       pending: result.pending,
       booked: result.booked,
       taken: result.taken,
@@ -125,17 +129,24 @@ export default async function MyHolidayPage() {
         today
       );
 
-      const nextBalForCO = nextResult.effective_entitlement - nextResult.booked - nextResult.taken;
+      // Use the DB value if populated, otherwise project from the current period
+      const nextCarriedOver = Number(nextYearRec.carried_over) || 0;
+      const effectiveNextCO = nextCarriedOver > 0 ? nextCarriedOver : currentPeriodProjectedCO;
+      // If projecting carry-over (DB was 0), add the projected amount to entitlement and remaining
+      const coAdjustment = nextCarriedOver > 0 ? 0 : effectiveNextCO;
+
+      const nextRemainingWithCO = nextResult.remaining + coAdjustment;
       const nextCO = (carryOverMax === null || carryOverMax === undefined)
-        ? Math.max(nextBalForCO, 0)
-        : Math.min(Math.max(nextBalForCO, 0), carryOverMax);
+        ? Math.max(nextRemainingWithCO, 0)
+        : Math.min(Math.max(nextRemainingWithCO, 0), carryOverMax);
 
       nextBalance = {
-        entitlement: nextResult.effective_entitlement,
+        entitlement: nextResult.effective_entitlement + coAdjustment,
+        carriedOver: effectiveNextCO,
         pending: nextResult.pending,
         booked: nextResult.booked,
         taken: nextResult.taken,
-        remaining: nextResult.remaining,
+        remaining: nextResult.remaining + coAdjustment,
         carryOverProjected: nextCO,
         unit: measurementMode,
         yearStart: nextYearRec.year_start,
@@ -205,15 +216,65 @@ export default async function MyHolidayPage() {
     };
   });
 
+  // Calendar data — 13-month range from current year record
+  let calendarYearStart: string | null = null;
+  let calendarBookings: CalendarBooking[] = [];
+  let calendarBankHolidays: CalendarBankHoliday[] = [];
+
+  if (yearRec) {
+    calendarYearStart = yearRec.year_start;
+    const calStart = new Date(yearRec.year_start + "T00:00:00Z");
+    const calEnd = new Date(Date.UTC(calStart.getUTCFullYear(), calStart.getUTCMonth() + 13, 0));
+    const calEndStr = calEnd.toISOString().slice(0, 10);
+
+    const { data: calBookingsData } = await supabase
+      .from("holiday_bookings")
+      .select("id, start_date, end_date, status, days_deducted, absence_reasons(name, colour)")
+      .eq("member_id", member.id)
+      .lte("start_date", calEndStr)
+      .gte("end_date", yearRec.year_start)
+      .in("status", ["pending", "approved"]);
+
+    calendarBookings = (calBookingsData ?? []).map((b) => {
+      const reason = b.absence_reasons as unknown as { name: string; colour: string } | null;
+      return {
+        id: b.id,
+        start_date: b.start_date,
+        end_date: b.end_date,
+        status: b.status,
+        days_deducted: b.days_deducted,
+        reason_name: reason?.name ?? "—",
+        reason_colour: reason?.colour ?? "#6366f1",
+      };
+    });
+
+    const { data: bhData } = await supabase
+      .from("bank_holidays")
+      .select("date, name, is_excluded, organisation_id")
+      .gte("date", yearRec.year_start)
+      .lte("date", calEndStr)
+      .or(`organisation_id.is.null,organisation_id.eq.${member.organisation_id}`);
+
+    const excluded = new Set<string>();
+    for (const bh of bhData ?? []) {
+      if (bh.organisation_id && bh.is_excluded) excluded.add(bh.date);
+      else if (!excluded.has(bh.date)) calendarBankHolidays.push({ date: bh.date, name: bh.name });
+    }
+  }
+
   return (
     <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
       <MyHolidayClient
         memberId={member.id}
+        role={member.role}
         balance={balance}
         nextBalance={nextBalance}
         bookings={bookings}
         reasons={reasons}
         measurementMode={measurementMode}
+        calendarYearStart={calendarYearStart}
+        calendarBookings={calendarBookings}
+        calendarBankHolidays={calendarBankHolidays}
       />
     </div>
   );

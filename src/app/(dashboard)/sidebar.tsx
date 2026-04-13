@@ -153,6 +153,12 @@ export function Sidebar({
             </Link>
           )}
           {(role === "owner" || role === "admin") && (
+            <Link href="/availability" className={linkClass("/availability")}>
+              <Calendar className="h-4 w-4 shrink-0" />
+              Availability
+            </Link>
+          )}
+          {(role === "owner" || role === "admin") && (
             <Link href="/approvals" className={linkClass("/approvals")}>
               <ClipboardCheck className="h-4 w-4 shrink-0" />
               Approvals

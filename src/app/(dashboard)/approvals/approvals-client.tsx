@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, X, Loader2 } from "lucide-react";
+import { Check, X, Loader2, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -36,15 +36,26 @@ import {
   rejectBooking,
   type ApprovalRow,
 } from "../approvals-actions";
+import { TeamCalendar, type TeamMember, type TeamBooking, type TeamBankHoliday } from "@/components/team-calendar";
 
 interface ApprovalsClientProps {
   pendingRows: ApprovalRow[];
   allRows: ApprovalRow[];
+  calendarMembers: (TeamMember & { teamId: string | null })[];
+  calendarBookings: TeamBooking[];
+  calendarBankHolidays: TeamBankHoliday[];
 }
 
 function fmtDate(dateStr: string): string {
   const d = new Date(dateStr + "T00:00:00Z");
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+function fmtDateTime(iso: string): string {
+  const d = new Date(iso);
+  const date = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${date} ${time}`;
 }
 
 function fmtDateRange(start: string, end: string, startHalf: string | null, endHalf: string | null): string {
@@ -62,7 +73,7 @@ const STATUS_BADGE: Record<string, { label: string; variant: "default" | "second
   cancelled: { label: "Cancelled", variant: "secondary" },
 };
 
-export function ApprovalsClient({ pendingRows, allRows }: ApprovalsClientProps) {
+export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calendarBookings, calendarBankHolidays }: ApprovalsClientProps) {
   const router = useRouter();
   const [approvingRow, setApprovingRow] = useState<ApprovalRow | null>(null);
   const [approveNote, setApproveNote] = useState("");
@@ -71,6 +82,7 @@ export function ApprovalsClient({ pendingRows, allRows }: ApprovalsClientProps) 
   const [rejectNote, setRejectNote] = useState("");
   const [rejectLoading, setRejectLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
 
   async function handleApprove() {
     if (!approvingRow) return;
@@ -123,6 +135,11 @@ export function ApprovalsClient({ pendingRows, allRows }: ApprovalsClientProps) 
             onApprove={(row) => { setApproveNote(""); setApprovingRow(row); }}
             onReject={(row) => { setRejectNote(""); setRejectingRow(row); }}
             emptyMessage="No pending requests."
+            expandedRowId={expandedRowId}
+            onToggleCalendar={(rowId) => setExpandedRowId((prev) => prev === rowId ? null : rowId)}
+            calendarMembers={calendarMembers}
+            calendarBookings={calendarBookings}
+            calendarBankHolidays={calendarBankHolidays}
           />
         </TabsContent>
 
@@ -238,6 +255,90 @@ export function ApprovalsClient({ pendingRows, allRows }: ApprovalsClientProps) 
 }
 
 // ---------------------------------------------------------------------------
+// Overlap-sorted members for inline calendar
+// ---------------------------------------------------------------------------
+
+function getOverlapDays(aStart: string, aEnd: string, bStart: string, bEnd: string): number {
+  const s = aStart > bStart ? aStart : bStart;
+  const e = aEnd < bEnd ? aEnd : bEnd;
+  if (s > e) return 0;
+  const ms = Date.parse(e + "T00:00:00Z") - Date.parse(s + "T00:00:00Z");
+  return Math.floor(ms / 86_400_000) + 1;
+}
+
+function sortMembersForApproval(
+  row: ApprovalRow,
+  members: (TeamMember & { teamId: string | null })[],
+  bookings: TeamBooking[],
+): (TeamMember & { teamId: string | null })[] {
+  const requestor = members.find((m) => m.id === row.member_id);
+  const teamId = requestor?.teamId ?? null;
+
+  // Filter to same team (if requestor has a team), otherwise show all
+  const teamMembers = teamId
+    ? members.filter((m) => m.teamId === teamId)
+    : members;
+
+  // For each member, compute: approved overlap days, pending overlap days,
+  // and earliest overlapping pending booking created_at
+  const approvedOverlap = new Map<string, number>();
+  const pendingOverlap = new Map<string, number>();
+  const earliestPendingCreatedAt = new Map<string, string>();
+
+  for (const m of teamMembers) {
+    let approvedDays = 0;
+    let pendingDays = 0;
+    let earliestCa: string | null = null;
+
+    for (const b of bookings) {
+      if (b.member_id !== m.id) continue;
+      const overlap = getOverlapDays(row.start_date, row.end_date, b.start_date, b.end_date);
+      if (overlap === 0) continue;
+
+      if (b.status === "approved") {
+        approvedDays += overlap;
+      } else if (b.status === "pending") {
+        pendingDays += overlap;
+        if (b.created_at && (!earliestCa || b.created_at < earliestCa)) {
+          earliestCa = b.created_at;
+        }
+      }
+    }
+
+    approvedOverlap.set(m.id, approvedDays);
+    pendingOverlap.set(m.id, pendingDays);
+    if (earliestCa) earliestPendingCreatedAt.set(m.id, earliestCa);
+  }
+
+  // Assign each member to a group:
+  // 1 = approved overlap, 2 = pending overlap (no approved), 3 = no overlap
+  function getGroup(id: string): number {
+    if ((approvedOverlap.get(id) ?? 0) > 0) return 1;
+    if ((pendingOverlap.get(id) ?? 0) > 0) return 2;
+    return 3;
+  }
+
+  return [...teamMembers].sort((a, b) => {
+    const gA = getGroup(a.id);
+    const gB = getGroup(b.id);
+    if (gA !== gB) return gA - gB;
+
+    if (gA === 1) {
+      // Group 1: descending by approved overlap days
+      return (approvedOverlap.get(b.id) ?? 0) - (approvedOverlap.get(a.id) ?? 0);
+    }
+    if (gA === 2) {
+      // Group 2: ascending by earliest pending created_at
+      const caA = earliestPendingCreatedAt.get(a.id) ?? "";
+      const caB = earliestPendingCreatedAt.get(b.id) ?? "";
+      return caA < caB ? -1 : caA > caB ? 1 : 0;
+    }
+    // Group 3: alphabetical by name
+    return a.name.localeCompare(b.name);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Shared table component
 // ---------------------------------------------------------------------------
 
@@ -247,12 +348,22 @@ function ApprovalsTable({
   onApprove,
   onReject,
   emptyMessage,
+  expandedRowId,
+  onToggleCalendar,
+  calendarMembers,
+  calendarBookings,
+  calendarBankHolidays,
 }: {
   rows: ApprovalRow[];
   showActions: boolean;
   onApprove: (row: ApprovalRow) => void;
   onReject: (row: ApprovalRow) => void;
   emptyMessage: string;
+  expandedRowId?: string | null;
+  onToggleCalendar?: (rowId: string) => void;
+  calendarMembers?: (TeamMember & { teamId: string | null })[];
+  calendarBookings?: TeamBooking[];
+  calendarBankHolidays?: TeamBankHoliday[];
 }) {
   return (
     <div className="flex justify-center w-full">
@@ -261,12 +372,12 @@ function ApprovalsTable({
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>Requested</TableHead>
                 <TableHead>Employee</TableHead>
                 <TableHead>Reason</TableHead>
                 <TableHead>Dates</TableHead>
                 <TableHead>Days/Hours</TableHead>
                 <TableHead>Notes</TableHead>
-                <TableHead>Submitted</TableHead>
                 <TableHead>Status</TableHead>
                 {showActions && <TableHead className="w-32">Actions</TableHead>}
               </TableRow>
@@ -284,7 +395,9 @@ function ApprovalsTable({
                   const val = row.measurement_mode === "hours" ? row.hours_deducted : row.days_deducted;
                   const badge = STATUS_BADGE[row.status] ?? STATUS_BADGE.pending;
                   return (
-                    <TableRow key={row.id}>
+                    <React.Fragment key={row.id}>
+                    <TableRow>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">{fmtDateTime(row.created_at)}</TableCell>
                       <TableCell className="font-medium">{row.member_name}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
@@ -306,7 +419,6 @@ function ApprovalsTable({
                           {!row.employee_note && !row.approver_note && ""}
                         </div>
                       </TableCell>
-                      <TableCell>{fmtDate(row.created_at.slice(0, 10))}</TableCell>
                       <TableCell>
                         <Badge variant={badge.variant}>{badge.label}</Badge>
                       </TableCell>
@@ -314,6 +426,14 @@ function ApprovalsTable({
                         <TableCell>
                           {row.status === "pending" && (
                             <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                              <Button
+                                size="sm"
+                                variant={expandedRowId === row.id ? "secondary" : "ghost"}
+                                title="View team availability"
+                                onClick={() => onToggleCalendar?.(row.id)}
+                              >
+                                <Info className="h-3.5 w-3.5" />
+                              </Button>
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -337,6 +457,27 @@ function ApprovalsTable({
                         </TableCell>
                       )}
                     </TableRow>
+                    {expandedRowId === row.id && calendarMembers && calendarBookings && calendarBankHolidays && (() => {
+                      const sorted = sortMembersForApproval(row, calendarMembers, calendarBookings);
+                      return (
+                        <TableRow>
+                          <TableCell colSpan={showActions ? 8 : 7} className="p-4 bg-muted/30">
+                            <div className="flex justify-center">
+                              <div className="w-fit overflow-x-auto">
+                                <TeamCalendar
+                                  members={sorted}
+                                  bookings={calendarBookings}
+                                  bankHolidays={calendarBankHolidays}
+                                  highlightMemberId={row.member_id}
+                                  focusRange={{ startDate: row.start_date, endDate: row.end_date }}
+                                />
+                              </div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })()}
+                  </React.Fragment>
                   );
                 })
               )}

@@ -97,6 +97,17 @@ src/
 - `updateEmployee()` — updates names on `members`.
 - `getInviteDetails(token)` — public (no auth required), returns email/name/orgName for the accept-invite page.
 
+### Cross-user server-side queries: always use getAdminClient()
+Any server action that needs to read data belonging to other members in the same org (e.g. team member lists, colleague bookings, team sizes) must use `getAdminClient()` (service role client) for those queries — NOT the caller's Supabase session client.
+
+Using the caller's session client for cross-user queries will silently fail due to RLS. The employee can only see their own rows, so counts like `teammates.length` or `onLeaveCount` will come back as 0/1 and any validation logic will silently pass when it should be blocking.
+
+**Rule:**
+- Cross-user queries (team members, colleague bookings, org-wide data not readable by employees) → `getAdminClient()`
+- User-scoped queries (own bookings, org settings readable by all, notice period rules) → caller's session client
+
+**Example:** `validateBookingRules()` in `holiday-booking-actions.ts` — team cover queries use `getAdminClient()`, notice period queries use the caller's client.
+
 ### Supabase
 - Use MCP tool `mcp__supabase__search_docs` to look up current documentation before implementing unfamiliar patterns
 - Browser client: `createClient()` from `@/lib/supabase/client`

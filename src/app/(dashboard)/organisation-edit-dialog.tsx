@@ -19,6 +19,8 @@ import { getRates } from "./rates-actions";
 import type { Rate } from "./rates-actions";
 import { getWorkProfiles } from "./work-profile-actions";
 import type { WorkProfile } from "./work-profile-actions";
+import { getNoticePeriodRules, saveNoticePeriodRules, checkBookingsInBreach, type NoticePeriodRule } from "./notice-period-actions";
+import { updateTeamMinCover } from "./employees/team-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -104,8 +106,8 @@ export function OrganisationEditDialog({
   const [currencySymbol, setCurrencySymbol] = useState(initialCurrencySymbol);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
-  const [originalTeams, setOriginalTeams] = useState<{ id: string; name: string }[]>([]);
+  const [teams, setTeams] = useState<{ id: string; name: string; min_cover: number | null }[]>([]);
+  const [originalTeams, setOriginalTeams] = useState<{ id: string; name: string; min_cover: number | null }[]>([]);
   const [newTeamName, setNewTeamName] = useState("");
   const [teamLoading, setTeamLoading] = useState(false);
   const [teamError, setTeamError] = useState<string | null>(null);
@@ -135,6 +137,9 @@ export function OrganisationEditDialog({
   const [fieldDefs, setFieldDefs] = useState<FieldDef[]>([]);
   const [fieldDefsModified, setFieldDefsModified] = useState(false);
   const [rates, setRates] = useState<Rate[]>([]);
+  const [noticePeriodRules, setNoticePeriodRules] = useState<{ id?: string; min_booking_days: number; notice_days: number }[]>([]);
+  const [noticePeriodRulesOriginal, setNoticePeriodRulesOriginal] = useState<string>("[]");
+  const [breachWarning, setBreachWarning] = useState<string | null>(null);
   const router = useRouter();
   const isOwner = role === "owner";
   const showCustomFields = isOwner || canDefineCustomFields;
@@ -161,9 +166,10 @@ export function OrganisationEditDialog({
     bankHolidayHandling !== initialBankHolidayHandling ||
     defaultWorkProfileId !== (initialDefaultWorkProfileId ?? "__none__") ||
     fieldDefsModified ||
+    JSON.stringify(noticePeriodRules) !== noticePeriodRulesOriginal ||
     teams.some((t) => {
       const orig = originalTeams.find((o) => o.id === t.id);
-      return orig && orig.name !== t.name;
+      return orig && (orig.name !== t.name || orig.min_cover !== t.min_cover);
     });
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- deps must be fixed-length
@@ -173,6 +179,7 @@ export function OrganisationEditDialog({
       setLabel(memberLabel);
       setError(null);
       setTeamError(null);
+      setBreachWarning(null);
       setNewTeamName("");
       setEditingTeamId(null);
       setEditingTeamName("");
@@ -223,6 +230,15 @@ export function OrganisationEditDialog({
           setWorkProfiles(wps);
         });
       }
+      // Load notice period rules
+      if (isOwner) {
+        getNoticePeriodRules().then((result) => {
+          if (result.success && result.rules) {
+            setNoticePeriodRules(result.rules);
+            setNoticePeriodRulesOriginal(JSON.stringify(result.rules));
+          }
+        });
+      }
     }
   }, [open, orgName, memberLabel, requireMfa, showCustomFields, isOwner, initialCurrencySymbol, initialTsMaxShiftHours, initialTsMaxBreakMinutes, initialTsShiftStartVarianceMinutes, initialTsRoundFirstInMins, initialTsRoundFirstInGraceMins, initialTsRoundBreakOutMins, initialTsRoundBreakOutGraceMins, initialTsRoundBreakInMins, initialTsRoundBreakInGraceMins, initialTsRoundLastOutMins, initialTsRoundLastOutGraceMins, initialHolidayYearStartType, initialHolidayYearStartDay, initialHolidayYearStartMonth, initialBankHolidayHandling, initialDefaultWorkProfileId]);
 
@@ -243,6 +259,20 @@ export function OrganisationEditDialog({
       const renameResult = await renameTeams(pendingRenames);
       if (!renameResult.success) {
         setTeamError(renameResult.error ?? "Failed to rename teams");
+        setLoading(false);
+        return;
+      }
+    }
+
+    // Save any pending min_cover changes
+    const pendingMinCoverChanges = teams.filter((t) => {
+      const orig = originalTeams.find((o) => o.id === t.id);
+      return orig && orig.min_cover !== t.min_cover;
+    });
+    for (const t of pendingMinCoverChanges) {
+      const coverResult = await updateTeamMinCover(t.id, t.min_cover === 0 ? null : t.min_cover);
+      if (!coverResult.success) {
+        setTeamError(coverResult.error ?? "Failed to update team min cover");
         setLoading(false);
         return;
       }
@@ -274,12 +304,39 @@ export function OrganisationEditDialog({
     if (!result.success) {
       setError(result.error ?? "Failed to update organisation");
       setLoading(false);
-    } else {
-      setLoading(false);
-      setFieldDefsModified(false);
-      onOpenChange(false);
-      router.refresh();
+      return;
     }
+
+    // Save notice period rules if changed
+    const rulesChanged = JSON.stringify(noticePeriodRules) !== noticePeriodRulesOriginal;
+    if (rulesChanged) {
+      const rulesResult = await saveNoticePeriodRules(noticePeriodRules);
+      if (!rulesResult.success) {
+        setError(rulesResult.error ?? "Failed to save notice period rules");
+        setLoading(false);
+        return;
+      }
+    }
+
+    // Check for bookings in breach of updated rules
+    if (rulesChanged && noticePeriodRules.length > 0) {
+      const breachResult = await checkBookingsInBreach();
+      if (breachResult.success && breachResult.breachedCount && breachResult.breachedCount > 0) {
+        setBreachWarning(
+          `Warning: ${breachResult.breachedCount} existing booking(s) are now in breach of the updated notice period rules. Review them on the affected employees' Holiday pages.`
+        );
+        setNoticePeriodRulesOriginal(JSON.stringify(noticePeriodRules));
+        setLoading(false);
+        setFieldDefsModified(false);
+        router.refresh();
+        return; // Keep dialog open to show warning
+      }
+    }
+
+    setLoading(false);
+    setFieldDefsModified(false);
+    onOpenChange(false);
+    router.refresh();
   }
 
   async function handleAddTeam() {
@@ -292,7 +349,7 @@ export function OrganisationEditDialog({
     if (!result.success) {
       setTeamError(result.error ?? "Failed to create team");
     } else if (result.team) {
-      setTeams((prev) => [...prev, result.team!].sort((a, b) => a.name.localeCompare(b.name)));
+      setTeams((prev) => [...prev, { ...result.team!, min_cover: null }].sort((a, b) => a.name.localeCompare(b.name)));
       setNewTeamName("");
     }
     setTeamLoading(false);
@@ -361,6 +418,11 @@ export function OrganisationEditDialog({
 
             {/* General tab */}
             <TabsContent value="general" className="space-y-4 mt-4">
+              {breachWarning && (
+                <div className="rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3 text-sm text-amber-800 dark:text-amber-200">
+                  {breachWarning}
+                </div>
+              )}
               {error && (
                 <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
                   {error}
@@ -450,6 +512,12 @@ export function OrganisationEditDialog({
               {teams.length === 0 && (
                 <p className="text-sm text-muted-foreground">No teams yet</p>
               )}
+              {teams.length > 0 && (
+                <div className="flex items-center justify-between px-3">
+                  <span className="text-xs text-muted-foreground font-medium">Team name</span>
+                  <span className="text-xs text-muted-foreground font-medium mr-8">Min cover</span>
+                </div>
+              )}
               {teams.map((team) => (
                 <div
                   key={team.id}
@@ -478,7 +546,20 @@ export function OrganisationEditDialog({
                   ) : (
                     <span className="text-sm">{team.name}</span>
                   )}
-                  <div className="flex items-center shrink-0 ml-2">
+                  <div className="flex items-center shrink-0 ml-2 gap-1">
+                    <Input
+                      type="number"
+                      min={0}
+                      placeholder="No min"
+                      className="w-20 h-7 text-xs"
+                      title="Minimum team cover"
+                      value={team.min_cover ?? ""}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        const val = e.target.value === "" ? null : parseInt(e.target.value, 10);
+                        setTeams((prev) => prev.map((t) => t.id === team.id ? { ...t, min_cover: val } : t));
+                      }}
+                    />
                     <Button
                       type="button"
                       variant="ghost"
@@ -809,6 +890,65 @@ export function OrganisationEditDialog({
                     </p>
                   </div>
                 )}
+
+                <div className="border-t pt-4 space-y-3">
+                  <Label className="text-sm font-medium">Notice period rules</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Require minimum notice for holiday bookings based on their length. Longer bookings can require more notice.
+                  </p>
+                  {noticePeriodRules.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Label className="text-xs text-muted-foreground w-24">Booking length (days+)</Label>
+                        <Label className="text-xs text-muted-foreground w-24">Notice (days)</Label>
+                      </div>
+                      {noticePeriodRules.map((rule, i) => (
+                        <div key={rule.id ?? `new-${i}`} className="flex items-center gap-2">
+                          <Input
+                            type="number"
+                            min={1}
+                            className="w-24 h-8 text-sm"
+                            value={rule.min_booking_days}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value, 10);
+                              if (isNaN(val)) return;
+                              setNoticePeriodRules((prev) => prev.map((r, j) => j === i ? { ...r, min_booking_days: val } : r));
+                            }}
+                          />
+                          <Input
+                            type="number"
+                            min={1}
+                            className="w-24 h-8 text-sm"
+                            value={rule.notice_days}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value, 10);
+                              if (isNaN(val)) return;
+                              setNoticePeriodRules((prev) => prev.map((r, j) => j === i ? { ...r, notice_days: val } : r));
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 shrink-0"
+                            onClick={() => setNoticePeriodRules((prev) => prev.filter((_, j) => j !== i))}
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setNoticePeriodRules((prev) => [...prev, { min_booking_days: 1, notice_days: 7 }])}
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1.5" />
+                    Add rule
+                  </Button>
+                </div>
               </TabsContent>
             )}
 

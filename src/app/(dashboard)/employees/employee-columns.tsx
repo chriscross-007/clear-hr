@@ -189,12 +189,12 @@ export const DATE_PRESET_LABELS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 export const ALL_EMPLOYEE_COLS = [
-  "avatar", "first_name", "last_name", "payroll_number", "email", "role", "profile",
+  "avatar", "payroll_number", "first_name", "last_name", "email", "role", "profile",
   "team", "holiday_profile", "work_pattern", "status", "last_log_in",
 ];
 
 export const DEFAULT_EMPLOYEE_COLS = [
-  "avatar", "first_name", "last_name", "payroll_number", "email", "role", "profile",
+  "avatar", "payroll_number", "first_name", "last_name", "email", "role", "profile",
   "team", "holiday_profile", "work_pattern", "status",
 ];
 

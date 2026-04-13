@@ -1,8 +1,17 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { countWorkingDays, type WorkPatternHours } from "@/lib/day-counting";
 import { calculateEntitlement } from "@/lib/entitlement";
+
+function getAdminClient() {
+  return createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,6 +37,7 @@ export type HolidayBookingRow = {
 
 export type BalanceSummary = {
   entitlement: number;
+  carriedOver: number;
   pending: number;
   booked: number;
   taken: number;
@@ -266,15 +276,15 @@ export async function getMyBalance(): Promise<BalanceSummary | null> {
 
   return {
     entitlement: result.effective_entitlement,
+    carriedOver: Number(yearRec.carried_over) || 0,
     pending: result.pending,
     booked: result.booked,
     taken: result.taken,
     remaining: result.remaining,
     carryOverProjected: (() => {
-      const balForCO = result.effective_entitlement - result.booked - result.taken;
       return (carryOverMax === null || carryOverMax === undefined)
-        ? Math.max(balForCO, 0)
-        : Math.min(Math.max(balForCO, 0), carryOverMax);
+        ? Math.max(result.remaining, 0)
+        : Math.min(Math.max(result.remaining, 0), carryOverMax);
     })(),
     unit,
     yearStart: yearRec.year_start,
@@ -358,6 +368,111 @@ export async function getAbsenceReasonOptions(): Promise<AbsenceReasonOption[]> 
 }
 
 // ---------------------------------------------------------------------------
+// Shared validation: notice period + team cover
+// ---------------------------------------------------------------------------
+
+async function validateBookingRules(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  memberId: string,
+  teamId: string | null,
+  startDate: string,
+  endDate: string,
+  daysDeducted: number | null,
+  excludeBookingId?: string,
+): Promise<{ error?: string }> {
+  // Notice period validation
+  const { data: noticePeriodRules } = await supabase
+    .from("notice_period_rules")
+    .select("min_booking_days, notice_days")
+    .eq("organisation_id", orgId)
+    .order("min_booking_days", { ascending: false });
+
+  if (noticePeriodRules && noticePeriodRules.length > 0) {
+    const bookingDays = daysDeducted ?? 1;
+    const matchingRule = noticePeriodRules.find((r) => bookingDays >= r.min_booking_days);
+    if (matchingRule) {
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const start = new Date(startDate + "T00:00:00Z");
+      const diffMs = start.getTime() - today.getTime();
+      const diffDays = Math.floor(diffMs / 86_400_000);
+      if (diffDays < matchingRule.notice_days) {
+        return {
+          error: `This booking requires at least ${matchingRule.notice_days} days' notice (applies to bookings of ${matchingRule.min_booking_days}+ days).`,
+        };
+      }
+    }
+  }
+
+  // Team cover validation (uses admin client to bypass RLS — employees may not
+  // have permission to read teammates, but the server must count them for validation)
+  if (teamId) {
+    const admin = getAdminClient();
+
+    const { data: teamRow } = await admin
+      .from("teams")
+      .select("min_cover")
+      .eq("id", teamId)
+      .single();
+
+    const minCover = teamRow?.min_cover as number | null;
+    if (minCover && minCover > 0) {
+      const { count: teamMemberCount } = await admin
+        .from("members")
+        .select("id", { count: "exact", head: true })
+        .eq("organisation_id", orgId)
+        .eq("team_id", teamId);
+
+      const teamSize = teamMemberCount ?? 0;
+
+      const { data: teammates } = await admin
+        .from("members")
+        .select("id")
+        .eq("organisation_id", orgId)
+        .eq("team_id", teamId)
+        .neq("id", memberId);
+
+      if (teammates && teammates.length > 0) {
+        const teammateIds = teammates.map((t) => t.id);
+        const coverStart = new Date(startDate + "T00:00:00Z");
+        const coverEnd = new Date(endDate + "T00:00:00Z");
+        const cur = new Date(coverStart);
+        while (cur <= coverEnd) {
+          const dow = cur.getUTCDay();
+          if (dow !== 0 && dow !== 6) {
+            const dateStr = cur.toISOString().slice(0, 10);
+            let query = admin
+              .from("holiday_bookings")
+              .select("id", { count: "exact", head: true })
+              .in("member_id", teammateIds)
+              .in("status", ["approved", "pending"])
+              .lte("start_date", dateStr)
+              .gte("end_date", dateStr);
+
+            if (excludeBookingId) {
+              query = query.neq("id", excludeBookingId);
+            }
+
+            const { count: onLeaveCount } = await query;
+
+            const present = teamSize - (onLeaveCount ?? 0) - 1; // -1 for the requesting employee
+            if (present < minCover) {
+              return {
+                error: `Minimum team cover of ${minCover} would not be met on ${dateStr}.`,
+              };
+            }
+          }
+          cur.setUTCDate(cur.getUTCDate() + 1);
+        }
+      }
+    }
+  }
+
+  return {};
+}
+
+// ---------------------------------------------------------------------------
 // Check team overlap (warning, non-blocking)
 // ---------------------------------------------------------------------------
 
@@ -436,6 +551,13 @@ export async function submitHolidayBooking(
         input.startDate, input.endDate, input.startHalf, input.endHalf
       );
     }
+
+    // Notice period + team cover validation
+    const ruleCheck = await validateBookingRules(
+      supabase, member.organisation_id, member.id, member.team_id,
+      input.startDate, input.endDate, daysDeducted
+    );
+    if (ruleCheck.error) return { success: false, error: ruleCheck.error };
 
     // Create the booking
     const { error: insertError } = await supabase
@@ -524,6 +646,13 @@ export async function updateHolidayBooking(
         input.startDate, input.endDate, input.startHalf, input.endHalf
       );
     }
+
+    // Notice period + team cover validation (exclude this booking from cover count)
+    const ruleCheck = await validateBookingRules(
+      supabase, member.organisation_id, member.id, member.team_id,
+      input.startDate, input.endDate, daysDeducted, bookingId
+    );
+    if (ruleCheck.error) return { success: false, error: ruleCheck.error };
 
     const updatePayload: Record<string, unknown> = {
       leave_reason_id: input.leaveReasonId,

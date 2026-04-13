@@ -2,10 +2,11 @@
 
 import { useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Star, Save, Plus } from "lucide-react";
+import { Star, Save, Plus, FileDown, Download } from "lucide-react";
 import { saveGridPrefs } from "@/lib/grid-prefs-actions";
 import type { GridPrefs } from "@/lib/grid-prefs";
-import { DataGrid } from "@/components/data-grid/data-grid";
+import { DataGrid, type DataGridToolbarHandle } from "@/components/data-grid/data-grid";
+import { ColumnCustomiserTrigger } from "@/components/ui/column-customiser";
 import {
   buildEmployeeColumns,
   type Member,
@@ -19,6 +20,7 @@ import type { Profile } from "@/app/(dashboard)/employees/profile-actions";
 import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
 import type { StandardReport } from "../definitions";
 import { toggleFavourite, createCustomReport } from "../actions";
+import { formatMemberForPdf } from "@/lib/format-member-pdf-row";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -95,6 +97,7 @@ export function ReportClient({
   const [saveAsError, setSaveAsError] = useState<string | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
   const currentPrefsRef = useRef<GridPrefs | null>(null);
+  const gridToolbarRef = useRef<DataGridToolbarHandle | null>(null);
 
   const customFieldColIds = customFieldDefs.map((d) => `cf_${d.field_key}`);
   // For "custom-fields" report, default to showing all custom field columns
@@ -210,7 +213,31 @@ export function ReportClient({
     }
   }
 
-  const toolbar = (
+  function handleExportCsv(rows: Member[], prefs: ColPref[], csvColLabels: Record<string, string>) {
+    const visibleCols = prefs.filter((c) => c.visible && c.id !== "avatar");
+    const headers = visibleCols.map((c) => csvColLabels[c.id] ?? c.id);
+    const formattedRows = rows.map((m) =>
+      formatMemberForPdf(m, { teams, customFieldDefs, currencySymbol, memberLabel })
+    );
+    const csvRows = [
+      headers.join(","),
+      ...formattedRows.map((row) =>
+        visibleCols.map((c) => {
+          const val = row[c.id] ?? "";
+          return `"${String(val).replace(/"/g, '""')}"`;
+        }).join(",")
+      ),
+    ];
+    const blob = new Blob([csvRows.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `members-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const toolbar2 = (
     <div className="flex items-center gap-2">
       <Button
         variant="ghost"
@@ -249,10 +276,38 @@ export function ReportClient({
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-6">
-        <p className="text-sm text-muted-foreground">{report.groupLabel} · Report</p>
-        <h1 className="text-2xl font-bold">{report.name}</h1>
-        <p className="text-sm text-muted-foreground mt-1">{report.description}</p>
+      {/* Row 1: Title + Customise / Show PDF / Export CSV */}
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <p className="text-sm text-muted-foreground">{report.groupLabel} · Report</p>
+          <h1 className="text-2xl font-bold">{report.name}</h1>
+          <p className="text-sm text-muted-foreground mt-1">{report.description}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <ColumnCustomiserTrigger onClick={() => gridToolbarRef.current?.openCustomiser()} />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => gridToolbarRef.current?.openPdfDialog()}
+            disabled={gridToolbarRef.current?.pdfLoading}
+          >
+            <FileDown className="h-4 w-4 mr-2" />
+            {gridToolbarRef.current?.pdfLoading ? "Generating..." : "Show PDF"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => gridToolbarRef.current?.exportCsv()}
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Export CSV
+          </Button>
+        </div>
+      </div>
+
+      {/* Row 2: Favourite / Save / Save As */}
+      <div className="flex justify-end mb-4">
+        {toolbar2}
       </div>
 
       <DataGrid<Member>
@@ -269,11 +324,13 @@ export function ReportClient({
         initialPdfRepeatHeaders={initialPdfRepeatHeaders}
         initialAggregateMetrics={initialAggregateMetrics}
         userId={userId}
-        toolbar={toolbar}
         emptyMessage={`No ${pluralize(memberLabel)} found.`}
         initialFilters={initialFilters}
         onExportPdf={handleExportPdf}
+        onExportCsv={handleExportCsv}
         onPrefsChange={(snap) => { currentPrefsRef.current = snap; }}
+        hideToolbarActions
+        toolbarRef={gridToolbarRef}
       />
 
       {/* Save As dialog */}

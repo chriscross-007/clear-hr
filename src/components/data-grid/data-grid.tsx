@@ -39,7 +39,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { FileDown } from "lucide-react";
+import { FileDown, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Ensure the ColumnMeta augmentation from employee-columns is available here too
@@ -55,6 +55,17 @@ declare module "@tanstack/react-table" {
     aggregateCurrencySymbol?: string;
     aggregateDecimals?: number | null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Toolbar handle — lets parent render action buttons externally
+// ---------------------------------------------------------------------------
+
+export interface DataGridToolbarHandle {
+  openCustomiser: () => void;
+  openPdfDialog: () => void;
+  exportCsv: () => void;
+  pdfLoading: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +105,8 @@ interface DataGridProps<T> {
     pdfRepeatHeaders?: boolean,
     aggregateMetrics?: string[]
   ) => Promise<void>;
+  /** If provided, an "Export CSV" button is shown and this is called with the visible rows + prefs */
+  onExportCsv?: (rows: T[], prefs: ColPref[], colLabels: Record<string, string>) => void;
   /** Called whenever the current page's rows change (e.g. for card view rendering) */
   onPageRowsChange?: (rows: T[]) => void;
   /** Initial filter state (applied once on mount) */
@@ -102,6 +115,10 @@ interface DataGridProps<T> {
   onPrefsChange?: (snapshot: GridPrefs) => void;
   /** Column IDs to pin before the prefs-managed columns (e.g. ["select"]) */
   leadingColumnIds?: string[];
+  /** When true, hide Customise/PDF/CSV buttons from DataGrid toolbar (caller renders them externally via toolbarRef) */
+  hideToolbarActions?: boolean;
+  /** Ref populated with handlers to trigger customiser/PDF/CSV from outside DataGrid */
+  toolbarRef?: React.MutableRefObject<DataGridToolbarHandle | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -125,10 +142,13 @@ export function DataGrid<T extends object>({
   onRowClick,
   emptyMessage,
   onExportPdf,
+  onExportCsv,
   onPageRowsChange,
   initialFilters,
   onPrefsChange,
   leadingColumnIds,
+  hideToolbarActions,
+  toolbarRef,
 }: DataGridProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(initialFilters ?? []);
@@ -233,6 +253,21 @@ export function DataGrid<T extends object>({
     }
   }
 
+  // Expose toolbar actions to parent via ref
+  useEffect(() => {
+    if (!toolbarRef) return;
+    toolbarRef.current = {
+      openCustomiser: () => setShowCustomiser(true),
+      openPdfDialog: () => setShowPdfDialog(true),
+      exportCsv: () => {
+        if (!onExportCsv) return;
+        const rows = table.getPrePaginationRowModel().rows.map((r) => r.original);
+        onExportCsv(rows, prefs, colLabels);
+      },
+      pdfLoading,
+    };
+  });
+
   // ---------------------------------------------------------------------------
   // Aggregate helpers
   // ---------------------------------------------------------------------------
@@ -325,13 +360,13 @@ export function DataGrid<T extends object>({
       {/* Toolbar */}
       <div className="mb-4 flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
-          <ColumnCustomiserTrigger onClick={() => setShowCustomiser(true)} />
+          {!hideToolbarActions && <ColumnCustomiserTrigger onClick={() => setShowCustomiser(true)} />}
           {columnFilters.length > 0 && (
             <Button variant="outline" size="sm" onClick={() => setColumnFilters([])}>
               Clear Filters
             </Button>
           )}
-          {onExportPdf && (
+          {!hideToolbarActions && onExportPdf && (
             <Button
               variant="outline"
               size="sm"
@@ -339,7 +374,20 @@ export function DataGrid<T extends object>({
               disabled={pdfLoading}
             >
               <FileDown className="h-4 w-4 mr-2" />
-              {pdfLoading ? "Generating..." : "Download PDF"}
+              {pdfLoading ? "Generating..." : "Show PDF"}
+            </Button>
+          )}
+          {!hideToolbarActions && onExportCsv && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const rows = table.getPrePaginationRowModel().rows.map((r) => r.original);
+                onExportCsv(rows, prefs, colLabels);
+              }}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Export CSV
             </Button>
           )}
         </div>
@@ -548,7 +596,7 @@ export function DataGrid<T extends object>({
         <Dialog open={showPdfDialog} onOpenChange={setShowPdfDialog}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Download PDF</DialogTitle>
+              <DialogTitle>Show PDF</DialogTitle>
               <DialogDescription>
                 Choose the page orientation for your report.
               </DialogDescription>

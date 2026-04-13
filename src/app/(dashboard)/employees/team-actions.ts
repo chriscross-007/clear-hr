@@ -41,7 +41,7 @@ async function getCallerMembership() {
 export async function getTeams(): Promise<{
   success: boolean;
   error?: string;
-  teams?: { id: string; name: string }[];
+  teams?: { id: string; name: string; min_cover: number | null }[];
 }> {
   try {
     const membership = await getCallerMembership();
@@ -49,7 +49,7 @@ export async function getTeams(): Promise<{
 
     const { data: teams, error } = await admin
       .from("teams")
-      .select("id, name")
+      .select("id, name, min_cover")
       .eq("organisation_id", membership.organisation_id)
       .order("name");
 
@@ -61,6 +61,32 @@ export async function getTeams(): Promise<{
       success: false,
       error: e instanceof Error ? e.message : "An error occurred",
     };
+  }
+}
+
+export async function updateTeamMinCover(
+  teamId: string,
+  minCover: number | null
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const membership = await getCallerMembership();
+
+    if (membership.role !== "owner" && membership.role !== "admin") {
+      return { success: false, error: "Only owners and admins can update team settings" };
+    }
+
+    const admin = createAdminClient();
+
+    const { error } = await admin
+      .from("teams")
+      .update({ min_cover: minCover })
+      .eq("id", teamId)
+      .eq("organisation_id", membership.organisation_id);
+
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }
 }
 

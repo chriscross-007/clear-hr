@@ -2,10 +2,22 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Plus } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { cancelBookingAsAdmin } from "../employees/actions";
+import { cancelMyBooking } from "../approvals-actions";
 import {
   Table,
   TableBody,
@@ -14,8 +26,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { BookHolidaySheet } from "./book-holiday-sheet";
 import { EditBookingSheet } from "./edit-booking-sheet";
+import { HolidayCalendar, type CalendarBooking, type CalendarBankHoliday } from "@/components/holiday-calendar";
 import type {
   HolidayBookingRow,
   BalanceSummary,
@@ -24,11 +44,15 @@ import type {
 
 interface MyHolidayClientProps {
   memberId: string;
+  role: string;
   balance: BalanceSummary | null;
   nextBalance: BalanceSummary | null;
   bookings: HolidayBookingRow[];
   reasons: AbsenceReasonOption[];
   measurementMode: string;
+  calendarYearStart: string | null;
+  calendarBookings: CalendarBooking[];
+  calendarBankHolidays: CalendarBankHoliday[];
 }
 
 function fmtDate(dateStr: string): string {
@@ -58,11 +82,28 @@ const STATUS_CHECKBOX_CLASS: Record<string, string> = {
   cancelled: "data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500",
 };
 
-export function MyHolidayClient({ memberId, balance, nextBalance, bookings, reasons, measurementMode }: MyHolidayClientProps) {
+export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings, reasons, measurementMode, calendarYearStart, calendarBookings, calendarBankHolidays }: MyHolidayClientProps) {
   const router = useRouter();
   const [bookSheetOpen, setBookSheetOpen] = useState(false);
   const [editingBooking, setEditingBooking] = useState<HolidayBookingRow | null>(null);
+  const [cancellingBooking, setCancellingBooking] = useState<HolidayBookingRow | null>(null);
+  const [cancelBookingLoading, setCancelBookingLoading] = useState(false);
+  const isAdmin = role === "owner" || role === "admin";
   const unit = measurementMode === "hours" ? "hours" : "days";
+
+  async function handleCancelBooking() {
+    if (!cancellingBooking) return;
+    const bookingId = cancellingBooking.id;
+    setCancelBookingLoading(true);
+    const result = isAdmin
+      ? await cancelBookingAsAdmin(bookingId)
+      : await cancelMyBooking(bookingId);
+    setCancelBookingLoading(false);
+    setCancellingBooking(null);
+    if (result.success) {
+      router.refresh();
+    }
+  }
 
   // Status filter for bookings table
   const storageKey = `holiday-status-filter-${memberId}`;
@@ -98,6 +139,13 @@ export function MyHolidayClient({ memberId, balance, nextBalance, bookings, reas
         </Button>
       </div>
 
+      <Tabs defaultValue="overview" className="w-full mb-6">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="calendar">Calendar</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="mt-4">
       {/* Balance summary — current period */}
       {balance && (
         <div className="mb-6">
@@ -105,7 +153,7 @@ export function MyHolidayClient({ memberId, balance, nextBalance, bookings, reas
             {fmtDate(balance.yearStart)} – {fmtDate(balance.yearEnd)}
           </h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <BalanceCard label="Entitlement" value={balance.entitlement} unit={unit} />
+            <BalanceCard label="Entitlement" value={balance.entitlement - balance.carriedOver} unit={unit} carriedOver={balance.carriedOver} />
             <BalanceCard label="Taken" value={balance.taken} unit={unit} />
             <BalanceCard label="Booked" value={balance.booked} unit={unit} />
             <BalanceCard label="Pending" value={balance.pending} unit={unit} />
@@ -122,7 +170,7 @@ export function MyHolidayClient({ memberId, balance, nextBalance, bookings, reas
             {fmtDate(nextBalance.yearStart)} – {fmtDate(nextBalance.yearEnd)}
           </h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <BalanceCard label="Entitlement" value={nextBalance.entitlement} unit={unit} />
+            <BalanceCard label="Entitlement" value={nextBalance.entitlement - nextBalance.carriedOver} unit={unit} carriedOver={nextBalance.carriedOver} />
             <BalanceCard label="Taken" value={nextBalance.taken} unit={unit} />
             <BalanceCard label="Booked" value={nextBalance.booked} unit={unit} />
             <BalanceCard label="Pending" value={nextBalance.pending} unit={unit} />
@@ -168,12 +216,13 @@ export function MyHolidayClient({ memberId, balance, nextBalance, bookings, reas
                   <TableHead>{measurementMode === "hours" ? "Hours" : "Days"}</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Notes</TableHead>
+                  <TableHead className="w-24">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {futureBookings.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                    <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
                       No upcoming bookings.
                     </TableCell>
                   </TableRow>
@@ -206,6 +255,29 @@ export function MyHolidayClient({ memberId, balance, nextBalance, bookings, reas
                             {!b.employee_note && !b.approver_note && "—"}
                           </div>
                         </TableCell>
+                        <TableCell>
+                          {isAdmin && (b.status === "pending" || b.status === "approved") && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-red-600 border-red-200 hover:bg-red-50 dark:hover:bg-red-950/30"
+                              onClick={(e) => { e.stopPropagation(); setCancellingBooking(b); }}
+                            >
+                              <X className="h-3.5 w-3.5 mr-1" />
+                              Cancel
+                            </Button>
+                          )}
+                          {!isAdmin && b.status === "pending" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(e) => { e.stopPropagation(); setCancellingBooking(b); }}
+                            >
+                              <X className="h-3.5 w-3.5 mr-1" />
+                              Cancel
+                            </Button>
+                          )}
+                        </TableCell>
                       </TableRow>
                     );
                   })
@@ -215,6 +287,20 @@ export function MyHolidayClient({ memberId, balance, nextBalance, bookings, reas
           </div>
         </div>
       </div>
+        </TabsContent>
+
+        <TabsContent value="calendar" className="mt-4">
+          {calendarYearStart ? (
+            <HolidayCalendar
+              yearStart={calendarYearStart}
+              bookings={calendarBookings}
+              bankHolidays={calendarBankHolidays}
+            />
+          ) : (
+            <p className="text-muted-foreground">No active holiday year record found.</p>
+          )}
+        </TabsContent>
+      </Tabs>
 
       {/* Edit Booking Sheet (pending only) */}
       <EditBookingSheet
@@ -242,16 +328,58 @@ export function MyHolidayClient({ memberId, balance, nextBalance, bookings, reas
           router.refresh();
         }}
       />
+
+      {/* Admin cancel booking dialog */}
+      <AlertDialog open={!!cancellingBooking} onOpenChange={(open) => { if (!open) setCancellingBooking(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel Holiday Request</AlertDialogTitle>
+            <AlertDialogDescription>
+              {cancellingBooking && (
+                <>
+                  Are you sure you want to cancel this {cancellingBooking.status} booking for{" "}
+                  <strong>{fmtDate(cancellingBooking.start_date)}</strong>
+                  {cancellingBooking.start_date !== cancellingBooking.end_date && <> – <strong>{fmtDate(cancellingBooking.end_date)}</strong></>}
+                  {" "}({cancellingBooking.reason_name})? The days will be returned to your balance.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cancelBookingLoading}>Keep Booking</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={cancelBookingLoading}
+              onClick={handleCancelBooking}
+            >
+              {cancelBookingLoading ? "Cancelling..." : "Cancel Booking"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
 
-function BalanceCard({ label, value, unit, highlight, negative, muted }: { label: string; value: number; unit: string; highlight?: boolean; negative?: boolean; muted?: boolean }) {
+function BalanceCard({ label, value, unit, highlight, negative, muted, carriedOver }: { label: string; value: number; unit: string; highlight?: boolean; negative?: boolean; muted?: boolean; carriedOver?: number }) {
   return (
     <div className={`rounded-lg border p-4 ${highlight ? (negative ? "bg-destructive/5 border-destructive/20" : "bg-primary/5 border-primary/20") : ""}`}>
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className={`text-2xl font-bold tabular-nums ${negative ? "text-destructive" : highlight ? "text-primary" : muted ? "text-muted-foreground" : ""}`}>
         {value} <span className="text-sm font-normal text-muted-foreground">{unit}</span>
+        {carriedOver != null && carriedOver > 0 && (
+          <span className="text-sm font-normal text-muted-foreground">
+            {" "}+ {carriedOver}{" "}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="underline decoration-dotted cursor-help">{unit} BF</span>
+                </TooltipTrigger>
+                <TooltipContent>Brought Forward from previous period</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </span>
+        )}
       </p>
     </div>
   );
