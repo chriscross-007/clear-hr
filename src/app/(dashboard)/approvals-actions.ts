@@ -1,6 +1,17 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { headers } from "next/headers";
+import { sendRequestApprovedEmail, sendRequestRejectedEmail } from "@/lib/email";
+
+function getAdminClient() {
+  return createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -149,6 +160,30 @@ export async function approveBooking(
       .eq("status", "pending");
 
     if (error) return { success: false, error: error.message };
+
+    // Fire-and-forget email to employee
+    const admin = getAdminClient();
+    const { data: booking } = await admin
+      .from("holiday_bookings")
+      .select("member_id, start_date, end_date, days_deducted, employee_note, absence_reasons(name)")
+      .eq("id", bookingId)
+      .single();
+    if (booking) {
+      const reasonName = (booking.absence_reasons as unknown as { name: string } | null)?.name ?? "Holiday";
+      const headersList = await headers();
+      const host = headersList.get("host") ?? "localhost:3000";
+      const baseUrl = `${host.includes("localhost") ? "http" : "https"}://${host}`;
+      const emailData = {
+        bookingId, memberId: booking.member_id,
+        startDate: booking.start_date, endDate: booking.end_date,
+        days: booking.days_deducted ? Number(booking.days_deducted) : null,
+        leaveType: reasonName, approverId: member.id,
+        employeeNote: booking.employee_note,
+        approverNote: note?.trim() || null, baseUrl,
+      };
+      await sendRequestApprovedEmail(emailData);
+    }
+
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
@@ -178,6 +213,29 @@ export async function rejectBooking(
       .eq("status", "pending");
 
     if (error) return { success: false, error: error.message };
+
+    // Fire-and-forget email to employee
+    const admin = getAdminClient();
+    const { data: booking } = await admin
+      .from("holiday_bookings")
+      .select("member_id, start_date, end_date, days_deducted, employee_note, absence_reasons(name)")
+      .eq("id", bookingId)
+      .single();
+    if (booking) {
+      const reasonName = (booking.absence_reasons as unknown as { name: string } | null)?.name ?? "Holiday";
+      const headersList = await headers();
+      const host = headersList.get("host") ?? "localhost:3000";
+      const baseUrl = `${host.includes("localhost") ? "http" : "https"}://${host}`;
+      await sendRequestRejectedEmail({
+        bookingId, memberId: booking.member_id,
+        startDate: booking.start_date, endDate: booking.end_date,
+        days: booking.days_deducted ? Number(booking.days_deducted) : null,
+        leaveType: reasonName, approverId: member.id,
+        employeeNote: booking.employee_note,
+        approverNote: note?.trim() || null, baseUrl,
+      });
+    }
+
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };

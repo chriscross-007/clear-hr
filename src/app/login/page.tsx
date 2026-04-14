@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Eye, EyeOff } from "lucide-react";
@@ -22,6 +22,7 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const welcome = searchParams.get("welcome");
   const welcomeName = searchParams.get("name");
+  const nextPath = searchParams.get("next");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +30,17 @@ function LoginForm() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const supabase = createClient();
+
+  // If already authenticated and a next path is specified, redirect immediately
+  useEffect(() => {
+    if (!nextPath) return;
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) {
+        router.replace(nextPath);
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -65,8 +77,8 @@ function LoginForm() {
             .single()
         : { data: null };
 
-      const home = membership?.role === "employee" ? "/dashboard" : "/employees";
-      router.push(home);
+      const defaultHome = membership?.role === "employee" ? "/dashboard" : "/employees";
+      router.push(nextPath || defaultHome);
       router.refresh();
     }
   }

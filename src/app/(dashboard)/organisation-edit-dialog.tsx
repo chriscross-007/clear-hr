@@ -20,7 +20,7 @@ import type { Rate } from "./rates-actions";
 import { getWorkProfiles } from "./work-profile-actions";
 import type { WorkProfile } from "./work-profile-actions";
 import { getNoticePeriodRules, saveNoticePeriodRules, checkBookingsInBreach, type NoticePeriodRule } from "./notice-period-actions";
-import { updateTeamMinCover } from "./employees/team-actions";
+import { updateTeamMinCover, updateTeamApprover, getApproverMembers } from "./employees/team-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -106,8 +106,9 @@ export function OrganisationEditDialog({
   const [currencySymbol, setCurrencySymbol] = useState(initialCurrencySymbol);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [teams, setTeams] = useState<{ id: string; name: string; min_cover: number | null }[]>([]);
-  const [originalTeams, setOriginalTeams] = useState<{ id: string; name: string; min_cover: number | null }[]>([]);
+  const [teams, setTeams] = useState<{ id: string; name: string; min_cover: number | null; approver_id: string | null }[]>([]);
+  const [originalTeams, setOriginalTeams] = useState<{ id: string; name: string; min_cover: number | null; approver_id: string | null }[]>([]);
+  const [approverMembers, setApproverMembers] = useState<{ id: string; name: string }[]>([]);
   const [newTeamName, setNewTeamName] = useState("");
   const [teamLoading, setTeamLoading] = useState(false);
   const [teamError, setTeamError] = useState<string | null>(null);
@@ -169,7 +170,7 @@ export function OrganisationEditDialog({
     JSON.stringify(noticePeriodRules) !== noticePeriodRulesOriginal ||
     teams.some((t) => {
       const orig = originalTeams.find((o) => o.id === t.id);
-      return orig && (orig.name !== t.name || orig.min_cover !== t.min_cover);
+      return orig && (orig.name !== t.name || orig.min_cover !== t.min_cover || orig.approver_id !== t.approver_id);
     });
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- deps must be fixed-length
@@ -208,6 +209,10 @@ export function OrganisationEditDialog({
           setTeams(result.teams);
           setOriginalTeams(result.teams);
         }
+      });
+      // Load approver candidates (admin/owner members)
+      getApproverMembers().then((result) => {
+        if (result.success && result.members) setApproverMembers(result.members);
       });
       // Load profiles
       getProfiles("admin").then((result) => {
@@ -273,6 +278,20 @@ export function OrganisationEditDialog({
       const coverResult = await updateTeamMinCover(t.id, t.min_cover === 0 ? null : t.min_cover);
       if (!coverResult.success) {
         setTeamError(coverResult.error ?? "Failed to update team min cover");
+        setLoading(false);
+        return;
+      }
+    }
+
+    // Save any pending approver_id changes
+    const pendingApproverChanges = teams.filter((t) => {
+      const orig = originalTeams.find((o) => o.id === t.id);
+      return orig && orig.approver_id !== t.approver_id;
+    });
+    for (const t of pendingApproverChanges) {
+      const approverResult = await updateTeamApprover(t.id, t.approver_id);
+      if (!approverResult.success) {
+        setTeamError(approverResult.error ?? "Failed to update team approver");
         setLoading(false);
         return;
       }
@@ -349,7 +368,7 @@ export function OrganisationEditDialog({
     if (!result.success) {
       setTeamError(result.error ?? "Failed to create team");
     } else if (result.team) {
-      setTeams((prev) => [...prev, { ...result.team!, min_cover: null }].sort((a, b) => a.name.localeCompare(b.name)));
+      setTeams((prev) => [...prev, { ...result.team!, min_cover: null, approver_id: null }].sort((a, b) => a.name.localeCompare(b.name)));
       setNewTeamName("");
     }
     setTeamLoading(false);
@@ -513,15 +532,17 @@ export function OrganisationEditDialog({
                 <p className="text-sm text-muted-foreground">No teams yet</p>
               )}
               {teams.length > 0 && (
-                <div className="flex items-center justify-between px-3">
-                  <span className="text-xs text-muted-foreground font-medium">Team name</span>
-                  <span className="text-xs text-muted-foreground font-medium mr-8">Min cover</span>
+                <div className="flex items-center px-3 gap-2">
+                  <span className="text-xs text-muted-foreground font-medium flex-1">Team name</span>
+                  <span className="text-xs text-muted-foreground font-medium w-36">Holiday approver</span>
+                  <span className="text-xs text-muted-foreground font-medium w-20">Min cover</span>
+                  <span className="w-7" />
                 </div>
               )}
               {teams.map((team) => (
                 <div
                   key={team.id}
-                  className={`flex items-center justify-between rounded-md border px-3 py-1.5 ${editingTeamId !== team.id ? "cursor-pointer hover:bg-muted/50" : ""}`}
+                  className={`flex items-center rounded-md border px-3 py-1.5 gap-2 ${editingTeamId !== team.id ? "cursor-pointer hover:bg-muted/50" : ""}`}
                   onClick={() => editingTeamId !== team.id && startEditingTeam(team)}
                 >
                   {editingTeamId === team.id ? (
@@ -541,12 +562,26 @@ export function OrganisationEditDialog({
                       }}
                       onBlur={() => handleRenameTeam(team.id)}
                       autoFocus
-                      className="h-7 text-sm"
+                      className="h-7 text-sm flex-1"
                     />
                   ) : (
-                    <span className="text-sm">{team.name}</span>
+                    <span className="text-sm flex-1">{team.name}</span>
                   )}
                   <div className="flex items-center shrink-0 ml-2 gap-1">
+                    <select
+                      className="h-7 w-36 rounded-md border border-input bg-background px-2 text-xs"
+                      value={team.approver_id ?? "__none__"}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        const val = e.target.value === "__none__" ? null : e.target.value;
+                        setTeams((prev) => prev.map((t) => t.id === team.id ? { ...t, approver_id: val } : t));
+                      }}
+                    >
+                      <option value="__none__">No approver</option>
+                      {approverMembers.map((m) => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
                     <Input
                       type="number"
                       min={0}

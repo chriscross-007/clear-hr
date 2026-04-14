@@ -2,8 +2,10 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { headers } from "next/headers";
 import { countWorkingDays, type WorkPatternHours } from "@/lib/day-counting";
 import { calculateEntitlement } from "@/lib/entitlement";
+import { sendRequestPendingEmail, sendBookingConfirmedEmail } from "@/lib/email";
 
 function getAdminClient() {
   return createSupabaseClient(
@@ -536,11 +538,12 @@ export async function submitHolidayBooking(
     // Determine workflow from the absence reason's parent type
     const { data: reason } = await supabase
       .from("absence_reasons")
-      .select("absence_type_id, absence_types(requires_approval)")
+      .select("name, absence_type_id, absence_types(requires_approval)")
       .eq("id", input.leaveReasonId)
       .single();
 
     const requiresApproval = (reason?.absence_types as unknown as { requires_approval: boolean } | null)?.requires_approval ?? false;
+    const leaveTypeName = reason?.name ?? "Holiday";
     const status = requiresApproval ? "pending" : "approved";
 
     // Server-side authoritative day counting (for days mode)
@@ -559,6 +562,18 @@ export async function submitHolidayBooking(
     );
     if (ruleCheck.error) return { success: false, error: ruleCheck.error };
 
+    // Fetch team approver (cross-user query — use admin client)
+    let teamApproverId: string | null = null;
+    if (member.team_id) {
+      const admin = getAdminClient();
+      const { data: teamRow } = await admin
+        .from("teams")
+        .select("approver_id")
+        .eq("id", member.team_id)
+        .single();
+      teamApproverId = teamRow?.approver_id ?? null;
+    }
+
     // Create the booking
     const { error: insertError } = await supabase
       .from("holiday_bookings")
@@ -574,9 +589,31 @@ export async function submitHolidayBooking(
         hours_deducted: input.hoursDeducted,
         status,
         employee_note: input.note || null,
+        approver1_id: teamApproverId,
       });
 
     if (insertError) return { success: false, error: insertError.message };
+
+    // Fire-and-forget email notification
+    const headersList = await headers();
+    const host = headersList.get("host") ?? "localhost:3000";
+    const baseUrl = `${host.includes("localhost") ? "http" : "https"}://${host}`;
+    const emailData = {
+      bookingId: "",
+      memberId: member.id,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      days: daysDeducted,
+      leaveType: leaveTypeName,
+      approverId: teamApproverId,
+      employeeNote: input.note || null,
+      baseUrl,
+    };
+    if (status === "pending") {
+      void sendRequestPendingEmail(emailData);
+    } else {
+      void sendBookingConfirmedEmail(emailData);
+    }
 
     // Check team overlap (warning only)
     const hasTeamOverlap = await checkTeamOverlap(

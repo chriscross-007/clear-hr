@@ -5,6 +5,7 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import { headers } from "next/headers";
 import { logAudit, diffChanges } from "@/lib/audit";
+import { sendBookingCancelledEmail } from "@/lib/email";
 
 function createAdminClient() {
   return createSupabaseClient(
@@ -1139,6 +1140,14 @@ export async function cancelBookingAsAdmin(
     const membership = await getCallerMembership();
     const admin = createAdminClient();
 
+    // Fetch booking details before cancelling (for email)
+    const { data: booking } = await admin
+      .from("holiday_bookings")
+      .select("member_id, start_date, end_date, days_deducted, absence_reasons(name)")
+      .eq("id", bookingId)
+      .eq("organisation_id", membership.organisation_id)
+      .single();
+
     const { error } = await admin
       .from("holiday_bookings")
       .update({ status: "cancelled" })
@@ -1147,6 +1156,21 @@ export async function cancelBookingAsAdmin(
       .in("status", ["pending", "approved"]);
 
     if (error) return { success: false, error: error.message };
+
+    // Fire-and-forget email to employee (only if admin cancelled someone else's booking)
+    if (booking && booking.member_id !== membership.id) {
+      const reasonName = (booking.absence_reasons as unknown as { name: string } | null)?.name ?? "Holiday";
+      const headersList = await headers();
+      const host = headersList.get("host") ?? "localhost:3000";
+      const baseUrl = `${host.includes("localhost") ? "http" : "https"}://${host}`;
+      void sendBookingCancelledEmail({
+        bookingId, memberId: booking.member_id,
+        startDate: booking.start_date, endDate: booking.end_date,
+        days: booking.days_deducted ? Number(booking.days_deducted) : null,
+        leaveType: reasonName, cancelledByAdmin: true, baseUrl,
+      });
+    }
+
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
