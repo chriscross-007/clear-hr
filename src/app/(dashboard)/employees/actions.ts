@@ -1163,7 +1163,7 @@ export async function cancelBookingAsAdmin(
       const headersList = await headers();
       const host = headersList.get("host") ?? "localhost:3000";
       const baseUrl = `${host.includes("localhost") ? "http" : "https"}://${host}`;
-      void sendBookingCancelledEmail({
+      await sendBookingCancelledEmail({
         bookingId, memberId: booking.member_id,
         startDate: booking.start_date, endDate: booking.end_date,
         days: booking.days_deducted ? Number(booking.days_deducted) : null,

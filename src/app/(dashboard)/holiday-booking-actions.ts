@@ -610,9 +610,9 @@ export async function submitHolidayBooking(
       baseUrl,
     };
     if (status === "pending") {
-      void sendRequestPendingEmail(emailData);
+      await sendRequestPendingEmail(emailData);
     } else {
-      void sendBookingConfirmedEmail(emailData);
+      await sendBookingConfirmedEmail(emailData);
     }
 
     // Check team overlap (warning only)
