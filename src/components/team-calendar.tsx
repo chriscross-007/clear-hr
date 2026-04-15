@@ -24,6 +24,7 @@ export type TeamBooking = {
   reason_name: string;
   reason_colour: string;
   created_at?: string;
+  days_deducted?: number | null;
 };
 
 export type TeamBankHoliday = {
@@ -37,10 +38,21 @@ export type FocusRange = {
   endDate: string;
 };
 
+function textColorForBg(hex: string): string {
+  const h = hex.replace("#", "");
+  if (h.length !== 6) return "#ffffff";
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? "#000000" : "#ffffff";
+}
+
 interface TeamCalendarProps {
   members: TeamMember[];
   bookings: TeamBooking[];
   bankHolidays: TeamBankHoliday[];
+  bankHolidayColour?: string;
   /** Initial month to display (ISO date, e.g. "2026-04-01"). Defaults to current month. */
   initialMonth?: string;
   /** Member ID to highlight (e.g. the requesting employee in approvals view) */
@@ -141,7 +153,7 @@ function buildRollingWindow(startDate: string, endDate: string): { days: DayEntr
 // Component
 // ---------------------------------------------------------------------------
 
-export function TeamCalendar({ members, bookings, bankHolidays, initialMonth, highlightMemberId, focusRange }: TeamCalendarProps) {
+export function TeamCalendar({ members, bookings, bankHolidays, bankHolidayColour = "#EF4444", initialMonth, highlightMemberId, focusRange }: TeamCalendarProps) {
   const initDate = initialMonth ? new Date(initialMonth + "T00:00:00Z") : new Date();
   const [year, setYear] = useState(initDate.getUTCFullYear());
   const [month, setMonth] = useState(initDate.getUTCMonth());
@@ -303,7 +315,9 @@ export function TeamCalendar({ members, bookings, bankHolidays, initialMonth, hi
                     const working = isWorkingDay(m, de.dow);
 
                     let bgStyle: React.CSSProperties | undefined;
-                    if (booking) {
+                    if (bh) {
+                      bgStyle = { backgroundColor: bankHolidayColour, color: textColorForBg(bankHolidayColour) };
+                    } else if (booking) {
                       bgStyle = {
                         backgroundColor: booking.reason_colour,
                         opacity: booking.status === "pending" ? 0.4 : 1,
@@ -311,7 +325,7 @@ export function TeamCalendar({ members, bookings, bankHolidays, initialMonth, hi
                     }
 
                     const tooltipParts: string[] = [];
-                    if (booking) tooltipParts.push(`${booking.reason_name} (${booking.status})`);
+                    if (booking) tooltipParts.push(`${booking.reason_name} (${booking.status})${booking.days_deducted ? ` — ${booking.days_deducted}d` : ""}`);
                     if (booking?.status === "pending" && booking.created_at) tooltipParts.push(`Requested: ${fmtDateTime(booking.created_at)}`);
                     if (bh) tooltipParts.push(`Bank Holiday: ${bh}`);
                     if (!working && !de.isWeekend) tooltipParts.push("Non-working day");

@@ -75,7 +75,7 @@ export default async function AvailabilityPage({
 
   const { data: bookingsData } = await supabase
     .from("holiday_bookings")
-    .select("member_id, start_date, end_date, status, absence_reasons(name, colour)")
+    .select("member_id, start_date, end_date, status, days_deducted, absence_reasons(name, colour)")
     .eq("organisation_id", member.organisation_id)
     .lte("start_date", rangeEndStr)
     .gte("end_date", rangeStartStr)
@@ -88,15 +88,26 @@ export default async function AvailabilityPage({
       start_date: b.start_date,
       end_date: b.end_date,
       status: b.status,
+      days_deducted: b.days_deducted ? Number(b.days_deducted) : null,
       reason_name: reason?.name ?? "—",
       reason_colour: reason?.colour ?? "#6366f1",
     };
   });
 
+  // Fetch org country code for bank holiday filtering
+  const { data: orgRow } = await supabase
+    .from("organisations")
+    .select("country_code, bank_holiday_colour")
+    .eq("id", member.organisation_id)
+    .single();
+  const orgCountryCode = (orgRow as { country_code?: string; bank_holiday_colour?: string } | null)?.country_code ?? "england-and-wales";
+  const bankHolidayColour = (orgRow as { country_code?: string; bank_holiday_colour?: string } | null)?.bank_holiday_colour ?? "#EF4444";
+
   // Fetch bank holidays
   const { data: bhData } = await supabase
     .from("bank_holidays")
     .select("date, name, is_excluded, organisation_id")
+    .eq("country_code", orgCountryCode)
     .gte("date", rangeStartStr)
     .lte("date", rangeEndStr)
     .or(`organisation_id.is.null,organisation_id.eq.${member.organisation_id}`);
@@ -115,6 +126,7 @@ export default async function AvailabilityPage({
         members={teamMembers}
         bookings={teamBookings}
         bankHolidays={bhList}
+        bankHolidayColour={bankHolidayColour}
         initialMonth={monthParam ? `${monthParam}-01` : undefined}
       />
     </div>

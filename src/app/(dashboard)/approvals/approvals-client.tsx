@@ -44,6 +44,7 @@ interface ApprovalsClientProps {
   calendarMembers: (TeamMember & { teamId: string | null })[];
   calendarBookings: TeamBooking[];
   calendarBankHolidays: TeamBankHoliday[];
+  bankHolidayColour?: string;
 }
 
 function fmtDate(dateStr: string): string {
@@ -73,7 +74,7 @@ const STATUS_BADGE: Record<string, { label: string; variant: "default" | "second
   cancelled: { label: "Cancelled", variant: "secondary" },
 };
 
-export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calendarBookings, calendarBankHolidays }: ApprovalsClientProps) {
+export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calendarBookings, calendarBankHolidays, bankHolidayColour }: ApprovalsClientProps) {
   const router = useRouter();
   const [approvingRow, setApprovingRow] = useState<ApprovalRow | null>(null);
   const [approveNote, setApproveNote] = useState("");
@@ -140,6 +141,7 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
             calendarMembers={calendarMembers}
             calendarBookings={calendarBookings}
             calendarBankHolidays={calendarBankHolidays}
+            bankHolidayColour={bankHolidayColour}
           />
         </TabsContent>
 
@@ -353,6 +355,7 @@ function ApprovalsTable({
   calendarMembers,
   calendarBookings,
   calendarBankHolidays,
+  bankHolidayColour,
 }: {
   rows: ApprovalRow[];
   showActions: boolean;
@@ -364,6 +367,7 @@ function ApprovalsTable({
   calendarMembers?: (TeamMember & { teamId: string | null })[];
   calendarBookings?: TeamBooking[];
   calendarBankHolidays?: TeamBankHoliday[];
+  bankHolidayColour?: string;
 }) {
   return (
     <div className="flex justify-center w-full">
@@ -468,6 +472,7 @@ function ApprovalsTable({
                                   members={sorted}
                                   bookings={calendarBookings}
                                   bankHolidays={calendarBankHolidays}
+                                  bankHolidayColour={bankHolidayColour}
                                   highlightMemberId={row.member_id}
                                   focusRange={{ startDate: row.start_date, endDate: row.end_date }}
                                 />

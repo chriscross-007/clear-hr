@@ -91,6 +91,14 @@ export default async function EmployeeCalendarPage({
     };
   });
 
+  // Fetch org bank holiday colour
+  const { data: orgRow } = await supabase
+    .from("organisations")
+    .select("bank_holiday_colour")
+    .eq("id", caller.organisation_id)
+    .single();
+  const bankHolidayColour = (orgRow as { bank_holiday_colour?: string } | null)?.bank_holiday_colour ?? "#EF4444";
+
   // Fetch bank holidays in range
   const { data: bhData } = await supabase
     .from("bank_holidays")
@@ -120,6 +128,7 @@ export default async function EmployeeCalendarPage({
         yearStart={rangeStart}
         bookings={bookings}
         bankHolidays={bhList}
+        bankHolidayColour={bankHolidayColour}
       />
     </div>
   );

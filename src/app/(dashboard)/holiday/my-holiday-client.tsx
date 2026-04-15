@@ -53,6 +53,7 @@ interface MyHolidayClientProps {
   calendarYearStart: string | null;
   calendarBookings: CalendarBooking[];
   calendarBankHolidays: CalendarBankHoliday[];
+  bankHolidayColour?: string;
 }
 
 function fmtDate(dateStr: string): string {
@@ -82,7 +83,7 @@ const STATUS_CHECKBOX_CLASS: Record<string, string> = {
   cancelled: "data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500",
 };
 
-export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings, reasons, measurementMode, calendarYearStart, calendarBookings, calendarBankHolidays }: MyHolidayClientProps) {
+export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings, reasons, measurementMode, calendarYearStart, calendarBookings, calendarBankHolidays, bankHolidayColour }: MyHolidayClientProps) {
   const router = useRouter();
   const [bookSheetOpen, setBookSheetOpen] = useState(false);
   const [editingBooking, setEditingBooking] = useState<HolidayBookingRow | null>(null);
@@ -295,6 +296,7 @@ export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings
               yearStart={calendarYearStart}
               bookings={calendarBookings}
               bankHolidays={calendarBankHolidays}
+              bankHolidayColour={bankHolidayColour}
             />
           ) : (
             <p className="text-muted-foreground">No active holiday year record found.</p>

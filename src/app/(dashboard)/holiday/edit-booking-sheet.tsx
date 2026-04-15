@@ -37,6 +37,7 @@ import {
 import {
   updateHolidayBooking,
   getMyWorkPattern,
+  getMyBankHolidayContext,
   type HolidayBookingRow,
   type AbsenceReasonOption,
   type BalanceSummary,
@@ -77,16 +78,22 @@ export function EditBookingSheet({
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [workPattern, setWorkPattern] = useState<WorkPatternHours | null>(null);
+  const [bankHolidays, setBankHolidays] = useState<Set<string>>(new Set());
+  const [bankHolidayHandling, setBankHolidayHandling] = useState<string>("deducted");
 
   const unit = measurementMode === "hours" ? "hours" : "days";
   const isHoursMode = measurementMode === "hours";
   const sameDay = startDate === endDate && startDate !== "";
   const isCancelled = booking?.status === "cancelled";
 
-  // Load work pattern on sheet open
+  // Load work pattern + bank holidays on sheet open
   useEffect(() => {
     if (open) {
       getMyWorkPattern().then(setWorkPattern);
+      getMyBankHolidayContext().then((ctx) => {
+        setBankHolidays(new Set(ctx.dates));
+        setBankHolidayHandling(ctx.handling);
+      });
     }
   }, [open]);
 
@@ -112,7 +119,8 @@ export function EditBookingSheet({
     estimatedDeduction = Number(hours) || 0;
   } else if (startDate && endDate && endDate >= startDate) {
     estimatedDeduction = countWorkingDaysSimple(
-      startDate, endDate, startHalfEnabled, endHalfEnabled && !sameDay, workPattern
+      startDate, endDate, startHalfEnabled, endHalfEnabled && !sameDay, workPattern,
+      bankHolidays, bankHolidayHandling
     );
   }
 

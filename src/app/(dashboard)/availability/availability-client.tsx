@@ -15,10 +15,11 @@ interface AvailabilityClientProps {
   members: (TeamMember & { teamId: string | null })[];
   bookings: TeamBooking[];
   bankHolidays: TeamBankHoliday[];
+  bankHolidayColour?: string;
   initialMonth?: string;
 }
 
-export function AvailabilityClient({ teams, members, bookings, bankHolidays, initialMonth }: AvailabilityClientProps) {
+export function AvailabilityClient({ teams, members, bookings, bankHolidays, bankHolidayColour, initialMonth }: AvailabilityClientProps) {
   const [selectedTeamId, setSelectedTeamId] = useState<string>("__all__");
 
   const selectedTeam = teams.find((t) => t.id === selectedTeamId);
@@ -61,6 +62,7 @@ export function AvailabilityClient({ teams, members, bookings, bankHolidays, ini
             members={filteredMembers}
             bookings={bookings}
             bankHolidays={bankHolidays}
+            bankHolidayColour={bankHolidayColour}
             initialMonth={initialMonth}
           />
         </div>

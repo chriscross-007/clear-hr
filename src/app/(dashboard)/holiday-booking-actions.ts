@@ -141,10 +141,21 @@ async function fetchBankHolidays(
   startDate: string,
   endDate: string
 ): Promise<Set<string>> {
-  // Get system-wide bank holidays + org-specific overrides
-  const { data } = await supabase
+  const admin = getAdminClient();
+
+  // Get org's country_code
+  const { data: org } = await admin
+    .from("organisations")
+    .select("country_code")
+    .eq("id", orgId)
+    .single();
+  const countryCode = org?.country_code ?? "england-and-wales";
+
+  // Get bank holidays for the country + org-specific overrides
+  const { data } = await admin
     .from("bank_holidays")
     .select("date, is_excluded, organisation_id")
+    .eq("country_code", countryCode)
     .gte("date", startDate)
     .lte("date", endDate)
     .or(`organisation_id.is.null,organisation_id.eq.${orgId}`);
@@ -219,6 +230,24 @@ export async function getMyWorkPattern(): Promise<WorkPatternHours | null> {
     return resolveWorkPattern(supabase, member.id, member.organisation_id, today);
   } catch {
     return null;
+  }
+}
+
+export async function getMyBankHolidayContext(): Promise<{
+  handling: string;
+  dates: string[];
+}> {
+  try {
+    const { supabase, member } = await getCallerMember();
+    const handling = await getOrgBankHolidayHandling(supabase, member.organisation_id);
+    // Fetch a wide range (current year ± 2 years) — enough for any booking preview
+    const now = new Date();
+    const rangeStart = `${now.getUTCFullYear() - 1}-01-01`;
+    const rangeEnd = `${now.getUTCFullYear() + 2}-12-31`;
+    const dates = await fetchBankHolidays(supabase, member.organisation_id, rangeStart, rangeEnd);
+    return { handling, dates: Array.from(dates) };
+  } catch {
+    return { handling: "additional", dates: [] };
   }
 }
 

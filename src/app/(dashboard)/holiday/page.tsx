@@ -27,6 +27,15 @@ export default async function MyHolidayPage() {
 
   if (!member) redirect("/login");
 
+  // Fetch org country code for bank holiday filtering
+  const { data: orgRow } = await supabase
+    .from("organisations")
+    .select("country_code, bank_holiday_colour")
+    .eq("id", member.organisation_id)
+    .single();
+  const orgCountryCode = (orgRow as { country_code?: string; bank_holiday_colour?: string } | null)?.country_code ?? "england-and-wales";
+  const bankHolidayColour = (orgRow as { country_code?: string; bank_holiday_colour?: string } | null)?.bank_holiday_colour ?? "#EF4444";
+
   const today = new Date().toISOString().slice(0, 10);
 
   // Fetch current year record
@@ -251,6 +260,7 @@ export default async function MyHolidayPage() {
     const { data: bhData } = await supabase
       .from("bank_holidays")
       .select("date, name, is_excluded, organisation_id")
+      .eq("country_code", orgCountryCode)
       .gte("date", yearRec.year_start)
       .lte("date", calEndStr)
       .or(`organisation_id.is.null,organisation_id.eq.${member.organisation_id}`);
@@ -275,6 +285,7 @@ export default async function MyHolidayPage() {
         calendarYearStart={calendarYearStart}
         calendarBookings={calendarBookings}
         calendarBankHolidays={calendarBankHolidays}
+        bankHolidayColour={bankHolidayColour}
       />
     </div>
   );

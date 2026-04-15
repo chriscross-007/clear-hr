@@ -26,6 +26,17 @@ interface HolidayCalendarProps {
   yearStart: string;
   bookings: CalendarBooking[];
   bankHolidays: CalendarBankHoliday[];
+  bankHolidayColour?: string;
+}
+
+function textColorForBg(hex: string): string {
+  const h = hex.replace("#", "");
+  if (h.length !== 6) return "#ffffff";
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? "#000000" : "#ffffff";
 }
 
 // ---------------------------------------------------------------------------
@@ -90,7 +101,7 @@ function buildGrid(yearStart: string) {
 // Component
 // ---------------------------------------------------------------------------
 
-export function HolidayCalendar({ yearStart, bookings, bankHolidays }: HolidayCalendarProps) {
+export function HolidayCalendar({ yearStart, bookings, bankHolidays, bankHolidayColour = "#EF4444" }: HolidayCalendarProps) {
   const { months, totalCols } = useMemo(() => buildGrid(yearStart), [yearStart]);
 
   const bookingMap = useMemo(() => {
@@ -196,7 +207,9 @@ export function HolidayCalendar({ yearStart, bookings, bankHolidays }: HolidayCa
 
                   let bgStyle: React.CSSProperties | undefined;
                   let textClass = "";
-                  if (topBooking) {
+                  if (bh) {
+                    bgStyle = { backgroundColor: bankHolidayColour, color: textColorForBg(bankHolidayColour) };
+                  } else if (topBooking) {
                     bgStyle = {
                       backgroundColor: topBooking.reason_colour,
                       opacity: topBooking.status === "pending" ? 0.4 : 1,
@@ -221,14 +234,12 @@ export function HolidayCalendar({ yearStart, bookings, bankHolidays }: HolidayCa
                       style={bgStyle}
                       title={tooltipParts.length > 0 ? tooltipParts.join("\n") : undefined}
                     >
-                      <span className={cn("text-[10px] leading-none", textClass, !topBooking && isWeekend && "text-red-500")}>
+                      <span
+                        className={cn("text-[10px] leading-none", textClass, !topBooking && !bh && isWeekend && "text-red-500")}
+                        style={bh ? { color: textColorForBg(bankHolidayColour) } : undefined}
+                      >
                         {dayNum}
                       </span>
-                      {bh && !topBooking && (
-                        <span className="absolute bottom-0 right-0 text-[6px] text-muted-foreground leading-none">
-                          BH
-                        </span>
-                      )}
                     </td>
                   );
                 })}

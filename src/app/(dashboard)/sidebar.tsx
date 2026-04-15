@@ -34,6 +34,7 @@ interface SidebarProps {
   holidayYearStartDay: number;
   holidayYearStartMonth: number;
   bankHolidayHandling: string;
+  bankHolidayColour: string;
   defaultWorkProfileId: string | null;
   initialFavouriteIds?: string[];
   initialCustomReports?: { id: string; name: string }[];
@@ -64,6 +65,7 @@ export function Sidebar({
   holidayYearStartDay,
   holidayYearStartMonth,
   bankHolidayHandling,
+  bankHolidayColour,
   defaultWorkProfileId,
   initialFavouriteIds = [],
   initialCustomReports = [],
@@ -335,6 +337,7 @@ export function Sidebar({
           holidayYearStartDay={holidayYearStartDay}
           holidayYearStartMonth={holidayYearStartMonth}
           bankHolidayHandling={bankHolidayHandling}
+          bankHolidayColour={bankHolidayColour}
           defaultWorkProfileId={defaultWorkProfileId}
         />
       )}

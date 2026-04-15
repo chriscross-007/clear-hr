@@ -10,7 +10,7 @@
  * 2. Weekends (Sat/Sun) never count, regardless of work pattern hours.
  * 3. A half day (AM or PM) on a working day counts as 0.5.
  * 4. A half day on a non-working day or weekend counts as 0.
- * 5. Bank holiday logic is deferred — see TODO below.
+ * 5. Bank holidays with handling = 'additional' are skipped (free days, not deducted).
  */
 
 export type WorkPatternHours = {
@@ -53,8 +53,8 @@ const DAY_KEYS: (keyof WorkPatternHours)[] = [
  * @param startHalf  true if only half the first day should be deducted
  * @param endHalf    true if only half the last day should be deducted
  * @param pattern    Work pattern hours per day (null = use default Mon–Fri 8h)
- * @param bankHolidays  Set of ISO date strings that are bank holidays (currently unused — see TODO)
- * @param bankHolidayHandling  'additional' = skip bank hols, 'deducted' = count them (currently unused)
+ * @param bankHolidays  Set of ISO date strings that are bank holidays
+ * @param bankHolidayHandling  'additional' = skip bank hols (free days), 'deducted' = count them normally
  * @returns Number of days to deduct
  */
 export function countWorkingDays(
@@ -90,17 +90,13 @@ export function countWorkingDays(
     // Rule 1: Day must be a weekday AND have hours > 0 in the work pattern
     const isWorkingDay = !isWeekend && hoursForDay > 0;
 
-    // TODO (CLE - Bank Holidays): When bank holiday admin UI is built,
-    // uncomment and implement the following logic:
-    //
-    // const dateStr = d.toISOString().slice(0, 10);
-    // const isBankHoliday = bankHolidays.has(dateStr);
-    // if (isWorkingDay && isBankHoliday && bankHolidayHandling === "additional") {
-    //   // Don't deduct — bank holiday is additional to allowance
-    //   d.setUTCDate(d.getUTCDate() + 1);
-    //   dayIndex++;
-    //   continue;
-    // }
+    // Bank holiday: if handling = 'additional', skip bank holidays (free days)
+    const dateStr = d.toISOString().slice(0, 10);
+    if (isWorkingDay && bankHolidays.has(dateStr) && bankHolidayHandling === "additional") {
+      d.setUTCDate(d.getUTCDate() + 1);
+      dayIndex++;
+      continue;
+    }
 
     if (isWorkingDay) {
       let dayValue = 1;
@@ -121,10 +117,6 @@ export function countWorkingDays(
     dayIndex++;
   }
 
-  // Suppress unused parameter warnings until bank holiday logic is enabled
-  void bankHolidays;
-  void bankHolidayHandling;
-
   return total;
 }
 
@@ -137,7 +129,9 @@ export function countWorkingDaysSimple(
   endDate: string,
   startHalf: boolean,
   endHalf: boolean,
-  pattern: WorkPatternHours | null
+  pattern: WorkPatternHours | null,
+  bankHolidays: Set<string> = new Set(),
+  bankHolidayHandling: string = "deducted"
 ): number {
   return countWorkingDays(
     startDate,
@@ -145,8 +139,8 @@ export function countWorkingDaysSimple(
     startHalf,
     endHalf,
     pattern,
-    new Set(),
-    "deducted"
+    bankHolidays,
+    bankHolidayHandling
   );
 }
 

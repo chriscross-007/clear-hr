@@ -23,6 +23,8 @@ export async function updateOrganisation(data: {
   holidayYearStartDay?: number | null;
   holidayYearStartMonth?: number | null;
   bankHolidayHandling?: string;
+  bankHolidayColour?: string;
+  countryCode?: string;
   defaultWorkProfileId?: string | null;
 }) {
   const supabase = await createClient();
@@ -96,6 +98,16 @@ export async function updateOrganisation(data: {
   // Bank holiday handling
   if (data.bankHolidayHandling !== undefined) {
     updatePayload.bank_holiday_handling = data.bankHolidayHandling;
+  }
+
+  // Bank holiday colour
+  if (data.bankHolidayColour !== undefined) {
+    updatePayload.bank_holiday_colour = data.bankHolidayColour;
+  }
+
+  // Country code
+  if (data.countryCode !== undefined) {
+    updatePayload.country_code = data.countryCode;
   }
 
   // Default work profile

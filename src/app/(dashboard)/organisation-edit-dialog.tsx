@@ -20,6 +20,7 @@ import type { Rate } from "./rates-actions";
 import { getWorkProfiles } from "./work-profile-actions";
 import type { WorkProfile } from "./work-profile-actions";
 import { getNoticePeriodRules, saveNoticePeriodRules, checkBookingsInBreach, type NoticePeriodRule } from "./notice-period-actions";
+import { seedBankHolidays, getBankHolidays, getOrgCountryCode, type BankHolidayEntry } from "./bank-holiday-actions";
 import { updateTeamMinCover, updateTeamApprover, getApproverMembers } from "./employees/team-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -71,6 +72,7 @@ interface OrganisationEditDialogProps {
   holidayYearStartDay: number;
   holidayYearStartMonth: number;
   bankHolidayHandling: string;
+  bankHolidayColour: string;
   defaultWorkProfileId: string | null;
 }
 
@@ -99,6 +101,7 @@ export function OrganisationEditDialog({
   holidayYearStartDay: initialHolidayYearStartDay,
   holidayYearStartMonth: initialHolidayYearStartMonth,
   bankHolidayHandling: initialBankHolidayHandling,
+  bankHolidayColour: initialBankHolidayColour,
   defaultWorkProfileId: initialDefaultWorkProfileId,
 }: OrganisationEditDialogProps) {
   const [name, setName] = useState(orgName);
@@ -130,6 +133,7 @@ export function OrganisationEditDialog({
   const [holidayYearStartDay, setHolidayYearStartDay] = useState(initialHolidayYearStartDay);
   const [holidayYearStartMonth, setHolidayYearStartMonth] = useState(initialHolidayYearStartMonth);
   const [bankHolidayHandling, setBankHolidayHandling] = useState(initialBankHolidayHandling);
+  const [bankHolidayColour, setBankHolidayColour] = useState(initialBankHolidayColour);
   const [workProfiles, setWorkProfiles] = useState<WorkProfile[]>([]);
   const [defaultWorkProfileId, setDefaultWorkProfileId] = useState<string>(initialDefaultWorkProfileId ?? "__none__");
   const [adminProfiles, setAdminProfiles] = useState<Profile[]>([]);
@@ -141,6 +145,10 @@ export function OrganisationEditDialog({
   const [noticePeriodRules, setNoticePeriodRules] = useState<{ id?: string; min_booking_days: number; notice_days: number }[]>([]);
   const [noticePeriodRulesOriginal, setNoticePeriodRulesOriginal] = useState<string>("[]");
   const [breachWarning, setBreachWarning] = useState<string | null>(null);
+  const [countryCode, setCountryCode] = useState("england-and-wales");
+  const [originalCountryCode, setOriginalCountryCode] = useState("england-and-wales");
+  const [bankHolidaysList, setBankHolidaysList] = useState<BankHolidayEntry[]>([]);
+  const [seedingBankHolidays, setSeedingBankHolidays] = useState(false);
   const router = useRouter();
   const isOwner = role === "owner";
   const showCustomFields = isOwner || canDefineCustomFields;
@@ -165,6 +173,8 @@ export function OrganisationEditDialog({
     holidayYearStartDay !== initialHolidayYearStartDay ||
     holidayYearStartMonth !== initialHolidayYearStartMonth ||
     bankHolidayHandling !== initialBankHolidayHandling ||
+    bankHolidayColour !== initialBankHolidayColour ||
+    countryCode !== originalCountryCode ||
     defaultWorkProfileId !== (initialDefaultWorkProfileId ?? "__none__") ||
     fieldDefsModified ||
     JSON.stringify(noticePeriodRules) !== noticePeriodRulesOriginal ||
@@ -201,6 +211,7 @@ export function OrganisationEditDialog({
       setHolidayYearStartDay(initialHolidayYearStartDay);
       setHolidayYearStartMonth(initialHolidayYearStartMonth);
       setBankHolidayHandling(initialBankHolidayHandling);
+      setBankHolidayColour(initialBankHolidayColour);
       setDefaultWorkProfileId(initialDefaultWorkProfileId ?? "__none__");
       setFieldDefsModified(false);
       // Load teams
@@ -235,6 +246,13 @@ export function OrganisationEditDialog({
           setWorkProfiles(wps);
         });
       }
+      // Load country code and bank holidays
+      if (isOwner) {
+        getOrgCountryCode().then((cc) => { setCountryCode(cc); setOriginalCountryCode(cc); });
+        getBankHolidays().then((result) => {
+          if (result.success && result.holidays) setBankHolidaysList(result.holidays);
+        });
+      }
       // Load notice period rules
       if (isOwner) {
         getNoticePeriodRules().then((result) => {
@@ -245,7 +263,7 @@ export function OrganisationEditDialog({
         });
       }
     }
-  }, [open, orgName, memberLabel, requireMfa, showCustomFields, isOwner, initialCurrencySymbol, initialTsMaxShiftHours, initialTsMaxBreakMinutes, initialTsShiftStartVarianceMinutes, initialTsRoundFirstInMins, initialTsRoundFirstInGraceMins, initialTsRoundBreakOutMins, initialTsRoundBreakOutGraceMins, initialTsRoundBreakInMins, initialTsRoundBreakInGraceMins, initialTsRoundLastOutMins, initialTsRoundLastOutGraceMins, initialHolidayYearStartType, initialHolidayYearStartDay, initialHolidayYearStartMonth, initialBankHolidayHandling, initialDefaultWorkProfileId]);
+  }, [open, orgName, memberLabel, requireMfa, showCustomFields, isOwner, initialCurrencySymbol, initialTsMaxShiftHours, initialTsMaxBreakMinutes, initialTsShiftStartVarianceMinutes, initialTsRoundFirstInMins, initialTsRoundFirstInGraceMins, initialTsRoundBreakOutMins, initialTsRoundBreakOutGraceMins, initialTsRoundBreakInMins, initialTsRoundBreakInGraceMins, initialTsRoundLastOutMins, initialTsRoundLastOutGraceMins, initialHolidayYearStartType, initialHolidayYearStartDay, initialHolidayYearStartMonth, initialBankHolidayHandling, initialBankHolidayColour, initialDefaultWorkProfileId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -317,6 +335,8 @@ export function OrganisationEditDialog({
       holidayYearStartDay,
       holidayYearStartMonth,
       bankHolidayHandling,
+      bankHolidayColour,
+      countryCode,
       defaultWorkProfileId: defaultWorkProfileId === "__none__" ? null : defaultWorkProfileId,
     });
 
@@ -492,6 +512,18 @@ export function OrganisationEditDialog({
                   value={currencySymbol}
                   onChange={(e) => setCurrencySymbol(e.target.value)}
                 />
+              </div>
+              <div className="space-y-2">
+                <Label>Country / Region</Label>
+                <select
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={countryCode}
+                  onChange={(e) => setCountryCode(e.target.value)}
+                >
+                  <option value="england-and-wales">England &amp; Wales</option>
+                  <option value="scotland">Scotland</option>
+                  <option value="northern-ireland">Northern Ireland</option>
+                </select>
               </div>
               <div className="flex items-center justify-between rounded-md border px-3 py-3">
                 <div className="space-y-0.5">
@@ -808,7 +840,7 @@ export function OrganisationEditDialog({
 
             {/* Holiday Year tab */}
             {isOwner && (
-              <TabsContent value="holiday-year" className="space-y-4 mt-4">
+              <TabsContent value="holiday-year" className="space-y-4 mt-4 max-h-[400px] overflow-y-auto">
                 <div className="space-y-3">
                   <Label className="text-sm font-medium">Holiday year starts on</Label>
                   <div className="space-y-2">
@@ -904,6 +936,30 @@ export function OrganisationEditDialog({
                       </div>
                     </label>
                   </div>
+
+                  <div className="pt-2 space-y-2">
+                    <Label className="text-sm font-medium">Bank Holiday Colour</Label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={bankHolidayColour}
+                        onChange={(e) => setBankHolidayColour(e.target.value)}
+                        className="h-9 w-12 cursor-pointer rounded-md border border-input bg-background p-1"
+                      />
+                      <Input
+                        type="text"
+                        value={bankHolidayColour}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setBankHolidayColour(v);
+                        }}
+                        maxLength={7}
+                        placeholder="#EF4444"
+                        className="w-28 font-mono text-sm uppercase"
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">Used to highlight bank holidays on calendar views.</p>
+                  </div>
                 </div>
 
                 {workProfiles.length > 0 && (
@@ -983,6 +1039,59 @@ export function OrganisationEditDialog({
                     <Plus className="h-3.5 w-3.5 mr-1.5" />
                     Add rule
                   </Button>
+                </div>
+
+                <div className="border-t pt-4 space-y-3">
+                  <Label className="text-sm font-medium">Bank Holidays</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Bank holidays for your country/region. These are used in day counting when bank holiday handling is set to &quot;Additional&quot;.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={seedingBankHolidays}
+                    onClick={async () => {
+                      setSeedingBankHolidays(true);
+                      const result = await seedBankHolidays();
+                      if (result.success) {
+                        const bh = await getBankHolidays();
+                        if (bh.success && bh.holidays) setBankHolidaysList(bh.holidays);
+                      }
+                      setSeedingBankHolidays(false);
+                    }}
+                  >
+                    {seedingBankHolidays ? "Loading..." : "Load Bank Holidays"}
+                  </Button>
+                  {bankHolidaysList.length > 0 && (() => {
+                    const byYear = new Map<string, BankHolidayEntry[]>();
+                    for (const bh of bankHolidaysList) {
+                      const year = bh.date.slice(0, 4);
+                      if (!byYear.has(year)) byYear.set(year, []);
+                      byYear.get(year)!.push(bh);
+                    }
+                    return (
+                      <div className="max-h-48 overflow-y-auto space-y-3">
+                        {Array.from(byYear.entries()).map(([year, holidays]) => (
+                          <div key={year}>
+                            <p className="text-xs font-semibold text-muted-foreground mb-1">{year}</p>
+                            <div className="space-y-0.5">
+                              {holidays.map((bh) => {
+                                const d = new Date(bh.date + "T00:00:00Z");
+                                const formatted = d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+                                return (
+                                  <div key={bh.id} className="flex items-center justify-between text-sm px-2 py-0.5 rounded hover:bg-muted/50">
+                                    <span>{formatted}</span>
+                                    <span className="text-muted-foreground">{bh.name}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
               </TabsContent>
             )}

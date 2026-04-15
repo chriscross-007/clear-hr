@@ -23,6 +23,15 @@ export default async function ApprovalsPage() {
   if (!member) redirect("/login");
   if (member.role !== "owner" && member.role !== "admin") notFound();
 
+  // Fetch org country code
+  const { data: orgRow } = await supabase
+    .from("organisations")
+    .select("country_code, bank_holiday_colour")
+    .eq("id", member.organisation_id)
+    .single();
+  const orgCountryCode = (orgRow as { country_code?: string; bank_holiday_colour?: string } | null)?.country_code ?? "england-and-wales";
+  const bankHolidayColour = (orgRow as { country_code?: string; bank_holiday_colour?: string } | null)?.bank_holiday_colour ?? "#EF4444";
+
   // Fetch org members for name lookup and calendar
   const { data: orgMembers } = await supabase
     .from("members")
@@ -89,7 +98,7 @@ export default async function ApprovalsPage() {
 
   const { data: calBookingsData } = await supabase
     .from("holiday_bookings")
-    .select("member_id, start_date, end_date, status, created_at, absence_reasons(name, colour)")
+    .select("member_id, start_date, end_date, status, created_at, days_deducted, absence_reasons(name, colour)")
     .eq("organisation_id", member.organisation_id)
     .lte("start_date", rangeEndStr)
     .gte("end_date", rangeStartStr)
@@ -103,6 +112,7 @@ export default async function ApprovalsPage() {
       end_date: b.end_date,
       status: b.status,
       created_at: b.created_at,
+      days_deducted: b.days_deducted ? Number(b.days_deducted) : null,
       reason_name: reason?.name ?? "—",
       reason_colour: reason?.colour ?? "#6366f1",
     };
@@ -112,6 +122,7 @@ export default async function ApprovalsPage() {
   const { data: bhData } = await supabase
     .from("bank_holidays")
     .select("date, name, is_excluded, organisation_id")
+    .eq("country_code", orgCountryCode)
     .gte("date", rangeStartStr)
     .lte("date", rangeEndStr)
     .or(`organisation_id.is.null,organisation_id.eq.${member.organisation_id}`);
@@ -159,6 +170,7 @@ export default async function ApprovalsPage() {
         calendarMembers={calendarMembers}
         calendarBookings={calendarBookings}
         calendarBankHolidays={calendarBankHolidays}
+        bankHolidayColour={bankHolidayColour}
       />
     </div>
   );
