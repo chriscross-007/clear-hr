@@ -113,6 +113,8 @@ export default async function EmployeesPage({
       initialPdfPageBreak={gridPrefs.pdfPageBreak}
       initialPdfRepeatHeaders={gridPrefs.pdfRepeatHeaders}
       initialAggregateMetrics={gridPrefs.aggregateMetrics}
+      initialFilters={gridPrefs.filters}
+      initialSorting={gridPrefs.sorting}
       customFieldDefs={visibleDefs}
       currencySymbol={currencySymbol}
       canSeeCurrency={canSeeCurrency}

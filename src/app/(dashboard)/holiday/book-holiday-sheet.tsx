@@ -124,7 +124,19 @@ export function BookHolidaySheet({
     setWarning(null);
   }
 
-  async function handleSubmit() {
+  const [showOverBookWarning, setShowOverBookWarning] = useState(false);
+
+  function handleSubmit() {
+    if (!reasonId || !startDate || !endDate) return;
+    if (projectedRemaining !== null && projectedRemaining < 0 && !showOverBookWarning) {
+      setShowOverBookWarning(true);
+      return;
+    }
+    setShowOverBookWarning(false);
+    doSubmit();
+  }
+
+  async function doSubmit() {
     if (!reasonId || !startDate || !endDate) return;
     setLoading(true);
     setError(null);
@@ -330,6 +342,20 @@ export function BookHolidaySheet({
           )}
 
           {/* Error */}
+          {showOverBookWarning && projectedRemaining !== null && (
+            <div className="rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3 space-y-2">
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1.5">
+                <AlertTriangle className="h-4 w-4" /> Exceeds allowance
+              </p>
+              <p className="text-sm text-amber-700 dark:text-amber-300">
+                This request would take your remaining balance to <strong>{projectedRemaining} {measurementMode === "hours" ? "hours" : "days"}</strong>. Do you want to submit anyway?
+              </p>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => setShowOverBookWarning(false)}>Go Back</Button>
+                <Button size="sm" variant="destructive" onClick={doSubmit} disabled={loading}>Submit Anyway</Button>
+              </div>
+            </div>
+          )}
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
 

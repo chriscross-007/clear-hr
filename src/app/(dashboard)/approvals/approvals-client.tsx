@@ -34,9 +34,14 @@ import {
 import {
   approveBooking,
   rejectBooking,
+  bulkApproveBookings,
+  bulkRejectBookings,
   type ApprovalRow,
 } from "../approvals-actions";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TeamCalendar, type TeamMember, type TeamBooking, type TeamBankHoliday } from "@/components/team-calendar";
+import { useMemberLabel } from "@/contexts/member-label-context";
+import { capitalize, pluralize } from "@/lib/label-utils";
 
 interface ApprovalsClientProps {
   pendingRows: ApprovalRow[];
@@ -76,6 +81,9 @@ const STATUS_BADGE: Record<string, { label: string; variant: "default" | "second
 
 export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calendarBookings, calendarBankHolidays, bankHolidayColour }: ApprovalsClientProps) {
   const router = useRouter();
+  const { memberLabel } = useMemberLabel();
+  const singularLabel = memberLabel.toLowerCase();
+  const pluralLabel = pluralize(memberLabel).toLowerCase();
   const [approvingRow, setApprovingRow] = useState<ApprovalRow | null>(null);
   const [approveNote, setApproveNote] = useState("");
   const [approveLoading, setApproveLoading] = useState(false);
@@ -84,6 +92,65 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
   const [rejectLoading, setRejectLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+
+  // Bulk selection (Pending tab only)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
+  const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
+  const [bulkNote, setBulkNote] = useState("");
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === pendingRows.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(pendingRows.map((r) => r.id)));
+    }
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const selectedRows = pendingRows.filter((r) => selectedIds.has(r.id));
+
+  async function handleBulkApprove() {
+    setBulkLoading(true);
+    const ids = Array.from(selectedIds);
+    const result = await bulkApproveBookings(ids, bulkNote);
+    setBulkLoading(false);
+    if (result.success) {
+      setBulkApproveOpen(false);
+      setBulkNote("");
+      setToastMessage(`${result.processed ?? ids.length} request${(result.processed ?? ids.length) === 1 ? "" : "s"} approved`);
+      clearSelection();
+      router.refresh();
+      setTimeout(() => setToastMessage(null), 4000);
+    }
+  }
+
+  async function handleBulkReject() {
+    setBulkLoading(true);
+    const ids = Array.from(selectedIds);
+    const result = await bulkRejectBookings(ids, bulkNote);
+    setBulkLoading(false);
+    if (result.success) {
+      setBulkRejectOpen(false);
+      setBulkNote("");
+      setToastMessage(`${result.processed ?? ids.length} request${(result.processed ?? ids.length) === 1 ? "" : "s"} rejected`);
+      clearSelection();
+      router.refresh();
+      setTimeout(() => setToastMessage(null), 4000);
+    }
+  }
 
   async function handleApprove() {
     if (!approvingRow) return;
@@ -122,17 +189,59 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
       </div>
 
       <Tabs defaultValue="pending" className="w-full">
-        <TabsList>
-          <TabsTrigger value="pending">
-            Pending{pendingCount > 0 && ` (${pendingCount})`}
-          </TabsTrigger>
-          <TabsTrigger value="all">All Requests</TabsTrigger>
-        </TabsList>
+        <div className="flex items-center justify-between gap-4">
+          <TabsList>
+            <TabsTrigger value="pending">
+              Pending{pendingCount > 0 && ` (${pendingCount})`}
+            </TabsTrigger>
+            <TabsTrigger value="all">All Requests</TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="pending" className="mt-4">
+          <div
+            className={`flex items-center gap-2 transition-opacity duration-150 ${selectedIds.size > 0 ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+            aria-hidden={selectedIds.size === 0}
+          >
+            <span className="text-sm">
+              <strong>{selectedIds.size}</strong> request{selectedIds.size === 1 ? "" : "s"} selected
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-green-600 border-green-200 hover:bg-green-50 dark:hover:bg-green-950/30"
+              onClick={() => { setBulkNote(""); setBulkApproveOpen(true); }}
+            >
+              <Check className="h-3.5 w-3.5 mr-1" />
+              Approve Selected
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-red-600 border-red-200 hover:bg-red-50 dark:hover:bg-red-950/30"
+              onClick={() => { setBulkNote(""); setBulkRejectOpen(true); }}
+            >
+              <X className="h-3.5 w-3.5 mr-1" />
+              Reject Selected
+            </Button>
+            <Button size="sm" variant="ghost" onClick={clearSelection}>
+              Clear selection
+            </Button>
+          </div>
+        </div>
+
+        <TabsContent value="pending" className="mt-4 space-y-3">
+          {toastMessage && (
+            <div className="rounded-md bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-3 text-sm text-green-800 dark:text-green-200">
+              {toastMessage}
+            </div>
+          )}
           <ApprovalsTable
             rows={pendingRows}
             showActions
+            selectable
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            onToggleSelectAll={toggleSelectAll}
+            allSelected={pendingRows.length > 0 && selectedIds.size === pendingRows.length}
             onApprove={(row) => { setApproveNote(""); setApprovingRow(row); }}
             onReject={(row) => { setRejectNote(""); setRejectingRow(row); }}
             emptyMessage="No pending requests."
@@ -187,7 +296,7 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="approve-note">Add a note for the employee (optional)</Label>
+            <Label htmlFor="approve-note">Add a note for the {singularLabel} (optional)</Label>
             <Textarea
               id="approve-note"
               value={approveNote}
@@ -228,7 +337,7 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="reject-note">Reason for rejection (shown to employee)</Label>
+            <Label htmlFor="reject-note">Reason for rejection (shown to {singularLabel})</Label>
             <Textarea
               id="reject-note"
               value={rejectNote}
@@ -248,6 +357,98 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
             >
               {rejectLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Reject Request
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Approve dialog */}
+      <Dialog open={bulkApproveOpen} onOpenChange={setBulkApproveOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Approve {selectedRows.length} Holiday Request{selectedRows.length === 1 ? "" : "s"}</DialogTitle>
+            <DialogDescription>
+              You are about to approve the following requests. An approval email will be sent to each {singularLabel}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <ul className="text-sm space-y-1 max-h-40 overflow-y-auto">
+              {selectedRows.slice(0, 5).map((r) => (
+                <li key={r.id} className="text-muted-foreground">
+                  <strong className="text-foreground">{r.member_name}</strong> — {fmtDateRange(r.start_date, r.end_date, r.start_half, r.end_half)}
+                </li>
+              ))}
+              {selectedRows.length > 5 && (
+                <li className="text-muted-foreground italic">...and {selectedRows.length - 5} more</li>
+              )}
+            </ul>
+            <div className="space-y-2 pt-1">
+              <Label htmlFor="bulk-approve-note">Add a note (shown to all {pluralLabel})</Label>
+              <Textarea
+                id="bulk-approve-note"
+                value={bulkNote}
+                onChange={(e) => setBulkNote(e.target.value)}
+                rows={3}
+                placeholder="Optional"
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkApproveOpen(false)} disabled={bulkLoading}>Cancel</Button>
+            <Button
+              className="bg-green-600 hover:bg-green-700 text-white"
+              onClick={handleBulkApprove}
+              disabled={bulkLoading}
+            >
+              {bulkLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Approve All
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Reject dialog */}
+      <Dialog open={bulkRejectOpen} onOpenChange={setBulkRejectOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject {selectedRows.length} Holiday Request{selectedRows.length === 1 ? "" : "s"}</DialogTitle>
+            <DialogDescription>
+              You are about to reject the following requests. A rejection email will be sent to each {singularLabel}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <ul className="text-sm space-y-1 max-h-40 overflow-y-auto">
+              {selectedRows.slice(0, 5).map((r) => (
+                <li key={r.id} className="text-muted-foreground">
+                  <strong className="text-foreground">{r.member_name}</strong> — {fmtDateRange(r.start_date, r.end_date, r.start_half, r.end_half)}
+                </li>
+              ))}
+              {selectedRows.length > 5 && (
+                <li className="text-muted-foreground italic">...and {selectedRows.length - 5} more</li>
+              )}
+            </ul>
+            <div className="space-y-2 pt-1">
+              <Label htmlFor="bulk-reject-note">Reason for rejection (shown to all {pluralLabel})</Label>
+              <Textarea
+                id="bulk-reject-note"
+                value={bulkNote}
+                onChange={(e) => setBulkNote(e.target.value)}
+                rows={3}
+                placeholder="Optional"
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkRejectOpen(false)} disabled={bulkLoading}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={handleBulkReject}
+              disabled={bulkLoading}
+            >
+              {bulkLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Reject All
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -347,6 +548,11 @@ function sortMembersForApproval(
 function ApprovalsTable({
   rows,
   showActions,
+  selectable,
+  selectedIds,
+  onToggleSelect,
+  onToggleSelectAll,
+  allSelected,
   onApprove,
   onReject,
   emptyMessage,
@@ -359,6 +565,11 @@ function ApprovalsTable({
 }: {
   rows: ApprovalRow[];
   showActions: boolean;
+  selectable?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
+  onToggleSelectAll?: () => void;
+  allSelected?: boolean;
   onApprove: (row: ApprovalRow) => void;
   onReject: (row: ApprovalRow) => void;
   emptyMessage: string;
@@ -369,6 +580,9 @@ function ApprovalsTable({
   calendarBankHolidays?: TeamBankHoliday[];
   bankHolidayColour?: string;
 }) {
+  const { memberLabel } = useMemberLabel();
+  const baseCols = selectable ? 8 : 7;
+  const colSpanTotal = showActions ? baseCols + 1 : baseCols;
   return (
     <div className="flex justify-center w-full">
       <div className="w-auto max-w-[90%] min-w-0">
@@ -376,8 +590,17 @@ function ApprovalsTable({
           <Table>
             <TableHeader>
               <TableRow>
+                {selectable && (
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={allSelected}
+                      onCheckedChange={() => onToggleSelectAll?.()}
+                      aria-label="Select all"
+                    />
+                  </TableHead>
+                )}
                 <TableHead>Requested</TableHead>
-                <TableHead>Employee</TableHead>
+                <TableHead>{capitalize(memberLabel)}</TableHead>
                 <TableHead>Reason</TableHead>
                 <TableHead>Dates</TableHead>
                 <TableHead>Days/Hours</TableHead>
@@ -389,7 +612,7 @@ function ApprovalsTable({
             <TableBody>
               {rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={showActions ? 8 : 7} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={colSpanTotal} className="h-24 text-center text-muted-foreground">
                     {emptyMessage}
                   </TableCell>
                 </TableRow>
@@ -401,6 +624,15 @@ function ApprovalsTable({
                   return (
                     <React.Fragment key={row.id}>
                     <TableRow>
+                      {selectable && (
+                        <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            checked={selectedIds?.has(row.id) ?? false}
+                            onCheckedChange={() => onToggleSelect?.(row.id)}
+                            aria-label={`Select request from ${row.member_name}`}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell className="whitespace-nowrap text-muted-foreground">{fmtDateTime(row.created_at)}</TableCell>
                       <TableCell className="font-medium">{row.member_name}</TableCell>
                       <TableCell>
@@ -465,7 +697,7 @@ function ApprovalsTable({
                       const sorted = sortMembersForApproval(row, calendarMembers, calendarBookings);
                       return (
                         <TableRow>
-                          <TableCell colSpan={showActions ? 8 : 7} className="p-4 bg-muted/30">
+                          <TableCell colSpan={colSpanTotal} className="p-4 bg-muted/30">
                             <div className="flex justify-center">
                               <div className="w-fit overflow-x-auto">
                                 <TeamCalendar

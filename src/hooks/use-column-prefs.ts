@@ -17,7 +17,9 @@ export function useColumnPrefs(
   initialGroupBy?: string,
   initialPdfPageBreak?: boolean,
   initialPdfRepeatHeaders?: boolean,
-  initialAggregateMetrics?: string[]
+  initialAggregateMetrics?: string[],
+  /** Returns the latest filters + sorting to include in save, so they are not lost when columns change */
+  getExtras?: () => { filters?: Record<string, unknown>; sorting?: { id: string; desc: boolean }[] }
 ) {
   const [prefs, setPrefs] = useState<ColPref[]>(() => {
     if (initialPrefs.length === 0) return buildDefaultPrefs(defaultCols);
@@ -51,11 +53,17 @@ export function useColumnPrefs(
   const aggregateMetricsRef = useRef(aggregateMetrics);
   aggregateMetricsRef.current = aggregateMetrics;
 
+  const getExtrasRef = useRef(getExtras);
+  getExtrasRef.current = getExtras;
+
   function scheduleSave() {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
+      const extras = getExtrasRef.current ? getExtrasRef.current() : {};
       saveGridPrefs(gridId, {
         columns: prefsRef.current,
+        filters: extras.filters,
+        sorting: extras.sorting,
         groupBy: groupByRef.current || undefined,
         pdfPageBreak: pdfPageBreakRef.current || undefined,
         pdfRepeatHeaders: pdfRepeatHeadersRef.current || undefined,

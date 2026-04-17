@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { type ColPref } from "@/lib/grid-prefs-actions";
+import { type ColPref, saveGridPrefs } from "@/lib/grid-prefs-actions";
+import type { GridPrefs } from "@/lib/grid-prefs";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataGrid } from "@/components/data-grid/data-grid";
 import {
@@ -64,6 +65,8 @@ interface EmployeesClientProps {
   initialPdfPageBreak?: boolean;
   initialPdfRepeatHeaders?: boolean;
   initialAggregateMetrics?: string[];
+  initialFilters?: Record<string, unknown>;
+  initialSorting?: { id: string; desc: boolean }[];
   customFieldDefs: FieldDef[];
   currencySymbol: string;
   canSeeCurrency: boolean;
@@ -86,12 +89,28 @@ export function EmployeesClient({
   initialPdfPageBreak,
   initialPdfRepeatHeaders,
   initialAggregateMetrics,
+  initialFilters,
+  initialSorting,
   customFieldDefs,
   currencySymbol,
   userId,
 }: EmployeesClientProps) {
   const { memberLabel } = useMemberLabel();
   const router = useRouter();
+
+  // Debounced auto-save of filters + sorting (column prefs are saved by the hook separately)
+  const prefsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handlePrefsChange = (snap: GridPrefs) => {
+    if (prefsSaveTimer.current) clearTimeout(prefsSaveTimer.current);
+    prefsSaveTimer.current = setTimeout(() => {
+      saveGridPrefs("employees", snap);
+    }, 800);
+  };
+
+  const initialFiltersArray = useMemo(
+    () => initialFilters ? Object.entries(initialFilters).map(([id, value]) => ({ id, value })) : undefined,
+    [initialFilters]
+  );
 
   const [members, setMembers] = useState(initialMembers);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
@@ -391,6 +410,9 @@ export function EmployeesClient({
           onExportPdf={handleExportPdf}
           onPageRowsChange={setCardRows}
           leadingColumnIds={["select"]}
+          initialFilters={initialFiltersArray}
+          initialSorting={initialSorting}
+          onPrefsChange={handlePrefsChange}
         />
         </div>
       </div>

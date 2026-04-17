@@ -126,8 +126,9 @@ export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const futureBookings = bookings.filter((b) =>
-    b.start_date >= today && statusFilters[b.status]
+  const yearStart = balance?.yearStart ?? today;
+  const filteredBookings = bookings.filter((b) =>
+    (b.start_date >= yearStart || b.end_date >= today) && statusFilters[b.status]
   );
 
   return (
@@ -192,7 +193,7 @@ export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings
         <h2 className="text-lg font-semibold">Holiday Bookings</h2>
         <div className="flex items-center gap-4">
           {(["pending", "approved", "rejected", "cancelled"] as const).map((s) => {
-            const count = bookings.filter((b) => b.start_date >= today && b.status === s).length;
+            const count = bookings.filter((b) => (b.start_date >= yearStart || b.end_date >= today) && b.status === s).length;
             return (
               <label key={s} className="flex items-center gap-1.5 cursor-pointer">
                 <Checkbox
@@ -221,14 +222,14 @@ export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {futureBookings.length === 0 ? (
+                {filteredBookings.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
                       No upcoming bookings.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  futureBookings.map((b) => {
+                  filteredBookings.map((b) => {
                     const val = measurementMode === "hours" ? b.hours_deducted : b.days_deducted;
                     const badge = STATUS_STYLE[b.status] ?? STATUS_STYLE.pending;
                     const isEditable = b.status === "pending" || b.status === "cancelled";

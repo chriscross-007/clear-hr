@@ -87,6 +87,7 @@ src/
 - `MemberLabelProvider` in `(dashboard)/layout.tsx` provides the label via React context
 - Client components use `useMemberLabel()` hook from `@/contexts/member-label-context`
 - Use `capitalize()` and `pluralize()` from `@/lib/label-utils` for display
+- **Standing rule:** never hardcode the words "employee" / "employees" (or "Employee" / "Employees") in any UI-facing string. Always resolve via `useMemberLabel()` and format with `capitalize()` / `pluralize()`. This applies to labels, placeholders, button text, dialog copy, tooltips, table headers, and any other user-visible strings. DB column names (e.g. `employee_note`) and TypeScript identifiers are exempt.
 
 ### Server Actions
 - Server actions that modify other users' data use a service role client (bypasses RLS)

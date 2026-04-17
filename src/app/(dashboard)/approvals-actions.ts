@@ -243,6 +243,89 @@ export async function rejectBooking(
 }
 
 // ---------------------------------------------------------------------------
+// Bulk approve / reject
+// ---------------------------------------------------------------------------
+
+async function bulkDecision(
+  bookingIds: string[],
+  status: "approved" | "rejected",
+  note?: string
+): Promise<{ success: boolean; error?: string; processed?: number }> {
+  try {
+    if (!bookingIds || bookingIds.length === 0) return { success: true, processed: 0 };
+    const { supabase, member } = await getCallerAdmin();
+
+    const trimmedNote = note?.trim() || null;
+
+    const { error } = await supabase
+      .from("holiday_bookings")
+      .update({
+        status,
+        approver1_id: member.id,
+        approver_note: trimmedNote,
+      })
+      .in("id", bookingIds)
+      .eq("organisation_id", member.organisation_id)
+      .eq("status", "pending");
+
+    if (error) return { success: false, error: error.message };
+
+    // Fetch booking details for emails (after update; note the status column now reflects new status)
+    const admin = getAdminClient();
+    const { data: bookings } = await admin
+      .from("holiday_bookings")
+      .select("id, member_id, start_date, end_date, days_deducted, employee_note, absence_reasons(name)")
+      .in("id", bookingIds)
+      .eq("organisation_id", member.organisation_id);
+
+    if (bookings && bookings.length > 0) {
+      const headersList = await headers();
+      const host = headersList.get("host") ?? "localhost:3000";
+      const baseUrl = `${host.includes("localhost") ? "http" : "https"}://${host}`;
+
+      for (const b of bookings) {
+        const reasonName = (b.absence_reasons as unknown as { name: string } | null)?.name ?? "Holiday";
+        const payload = {
+          bookingId: b.id,
+          memberId: b.member_id,
+          startDate: b.start_date,
+          endDate: b.end_date,
+          days: b.days_deducted ? Number(b.days_deducted) : null,
+          leaveType: reasonName,
+          approverId: member.id,
+          employeeNote: b.employee_note,
+          approverNote: trimmedNote,
+          baseUrl,
+        };
+        if (status === "approved") {
+          await sendRequestApprovedEmail(payload);
+        } else {
+          await sendRequestRejectedEmail(payload);
+        }
+      }
+    }
+
+    return { success: true, processed: bookings?.length ?? 0 };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+export async function bulkApproveBookings(
+  bookingIds: string[],
+  note?: string
+): Promise<{ success: boolean; error?: string; processed?: number }> {
+  return bulkDecision(bookingIds, "approved", note);
+}
+
+export async function bulkRejectBookings(
+  bookingIds: string[],
+  note?: string
+): Promise<{ success: boolean; error?: string; processed?: number }> {
+  return bulkDecision(bookingIds, "rejected", note);
+}
+
+// ---------------------------------------------------------------------------
 // Cancel own booking (employee action)
 // ---------------------------------------------------------------------------
 

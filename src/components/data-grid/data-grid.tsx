@@ -111,6 +111,8 @@ interface DataGridProps<T> {
   onPageRowsChange?: (rows: T[]) => void;
   /** Initial filter state (applied once on mount) */
   initialFilters?: ColumnFiltersState;
+  /** Initial sort state (applied once on mount) */
+  initialSorting?: SortingState;
   /** Called whenever any saveable prefs change (columns, filters, groupBy, etc.) */
   onPrefsChange?: (snapshot: GridPrefs) => void;
   /** Column IDs to pin before the prefs-managed columns (e.g. ["select"]) */
@@ -145,12 +147,13 @@ export function DataGrid<T extends object>({
   onExportCsv,
   onPageRowsChange,
   initialFilters,
+  initialSorting,
   onPrefsChange,
   leadingColumnIds,
   hideToolbarActions,
   toolbarRef,
 }: DataGridProps<T>) {
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const [sorting, setSorting] = useState<SortingState>(initialSorting ?? []);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(initialFilters ?? []);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(50);
@@ -173,8 +176,21 @@ export function DataGrid<T extends object>({
   // Reset to page 0 whenever filters change
   useEffect(() => { setPageIndex(0); }, [columnFilters]);
 
+  const columnFiltersLiveRef = useRef(columnFilters);
+  columnFiltersLiveRef.current = columnFilters;
+  const sortingLiveRef = useRef(sorting);
+  sortingLiveRef.current = sorting;
+
   const { prefs, updatePrefs, columnOrder, columnVisibility, groupBy, updateGroupBy, pdfPageBreak, updatePdfPageBreak, pdfRepeatHeaders, updatePdfRepeatHeaders, aggregateMetrics, updateAggregateMetrics } = useColumnPrefs(
-    gridId, initialColPrefs, allCols, defaultCols, initialGroupBy, initialPdfPageBreak, initialPdfRepeatHeaders, initialAggregateMetrics
+    gridId, initialColPrefs, allCols, defaultCols, initialGroupBy, initialPdfPageBreak, initialPdfRepeatHeaders, initialAggregateMetrics,
+    () => ({
+      filters: columnFiltersLiveRef.current.length > 0
+        ? Object.fromEntries(columnFiltersLiveRef.current.map((f) => [f.id, f.value]))
+        : undefined,
+      sorting: sortingLiveRef.current.length > 0
+        ? sortingLiveRef.current.map((s) => ({ id: s.id, desc: s.desc }))
+        : undefined,
+    })
   );
 
   // When groupBy is set, keep it as the primary sort so groups are contiguous
@@ -230,16 +246,18 @@ export function DataGrid<T extends object>({
     const filters = columnFilters.length > 0
       ? Object.fromEntries(columnFilters.map((f) => [f.id, f.value]))
       : undefined;
+    const sortingSnapshot = sorting.length > 0 ? sorting.map((s) => ({ id: s.id, desc: s.desc })) : undefined;
     onPrefsChangeRef.current({
       columns: prefs,
       filters,
+      sorting: sortingSnapshot,
       groupBy: groupBy || undefined,
       pdfPageBreak: pdfPageBreak || undefined,
       pdfRepeatHeaders: pdfRepeatHeaders || undefined,
       aggregateMetrics,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs, columnFilters, groupBy, pdfPageBreak, pdfRepeatHeaders, aggregateMetrics]);
+  }, [prefs, columnFilters, sorting, groupBy, pdfPageBreak, pdfRepeatHeaders, aggregateMetrics]);
 
   async function handleExportPdf(orientation: "portrait" | "landscape") {
     if (!onExportPdf) return;

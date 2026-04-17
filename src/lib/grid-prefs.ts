@@ -1,8 +1,11 @@
 export type ColPref = { id: string; visible: boolean };
 
+export type SortPref = { id: string; desc: boolean };
+
 export type GridPrefs = {
   columns: ColPref[];
   filters?: Record<string, unknown>;
+  sorting?: SortPref[];
   groupBy?: string;
   pdfPageBreak?: boolean;
   pdfRepeatHeaders?: boolean;
@@ -18,6 +21,10 @@ export function parseGridPrefs(raw: unknown): GridPrefs {
     return {
       columns: Array.isArray(obj.columns) ? (obj.columns as ColPref[]) : [],
       filters: obj.filters && typeof obj.filters === "object" && !Array.isArray(obj.filters) ? (obj.filters as Record<string, unknown>) : undefined,
+      sorting: Array.isArray(obj.sorting)
+        ? (obj.sorting as unknown[])
+            .filter((s): s is { id: string; desc: boolean } => !!s && typeof s === "object" && typeof (s as { id?: unknown }).id === "string" && typeof (s as { desc?: unknown }).desc === "boolean")
+        : undefined,
       groupBy: typeof obj.groupBy === "string" && obj.groupBy ? obj.groupBy : undefined,
       pdfPageBreak: obj.pdfPageBreak === true ? true : undefined,
       pdfRepeatHeaders: obj.pdfRepeatHeaders === true ? true : undefined,
