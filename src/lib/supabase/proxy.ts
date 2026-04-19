@@ -53,6 +53,7 @@ export async function updateSession(request: NextRequest) {
     "/accept-invite",
     "/api/webhooks",
     "/api/trigger-inference",
+    "/api/mobile",
     "/mfa-setup",
     "/mfa-verify",
   ];
