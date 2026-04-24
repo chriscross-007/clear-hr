@@ -6,6 +6,7 @@ import { headers } from "next/headers";
 import { countWorkingDays, type WorkPatternHours } from "@/lib/day-counting";
 import { calculateEntitlement } from "@/lib/entitlement";
 import { sendRequestPendingEmail, sendBookingConfirmedEmail } from "@/lib/email";
+import { logAudit, diffChanges } from "@/lib/audit";
 
 function getAdminClient() {
   return createSupabaseClient(
@@ -84,7 +85,7 @@ async function getCallerMember() {
 
   const { data: member } = await supabase
     .from("members")
-    .select("id, organisation_id, role, team_id, start_date")
+    .select("id, organisation_id, role, team_id, start_date, first_name, last_name")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -786,11 +787,12 @@ export async function adminBookAbsence(
     const admin = getAdminClient();
     const { data: target } = await admin
       .from("members")
-      .select("id, organisation_id")
+      .select("id, organisation_id, first_name, last_name")
       .eq("id", input.memberId)
       .eq("organisation_id", caller.organisation_id)
       .single();
     if (!target) return { success: false, error: "Member not found" };
+    const memberName = `${target.first_name ?? ""} ${target.last_name ?? ""}`.trim();
 
     // Overlap check against the target's existing non-cancelled bookings
     const { count: overlap } = await admin
@@ -807,7 +809,7 @@ export async function adminBookAbsence(
     // Verify the reason belongs to the org
     const { data: reason } = await supabase
       .from("absence_reasons")
-      .select("id, organisation_id")
+      .select("id, name, organisation_id")
       .eq("id", input.leaveReasonId)
       .eq("organisation_id", caller.organisation_id)
       .single();
@@ -824,7 +826,7 @@ export async function adminBookAbsence(
       input.endHalf,
     );
 
-    const { error: insertError } = await admin
+    const { data: inserted, error: insertError } = await admin
       .from("holiday_bookings")
       .insert({
         organisation_id: target.organisation_id,
@@ -839,9 +841,33 @@ export async function adminBookAbsence(
         status: "approved",
         employee_note: input.note?.trim() || null,
         approver1_id: caller.id,
-      });
+      })
+      .select("id")
+      .single();
 
     if (insertError) return { success: false, error: insertError.message };
+
+    logAudit({
+      organisationId: target.organisation_id,
+      actorId: caller.id,
+      actorName: `${caller.first_name ?? ""} ${caller.last_name ?? ""}`.trim(),
+      action: "booking.created",
+      targetType: "booking",
+      targetId: inserted?.id as string | undefined,
+      targetLabel: `${memberName} — ${reason.name}`,
+      changes: {
+        start_date: { old: null, new: input.startDate },
+        end_date: { old: null, new: input.endDate },
+        leave_reason: { old: null, new: reason.name },
+        days_deducted: { old: null, new: daysDeducted },
+        status: { old: null, new: "approved" },
+        start_half: { old: null, new: input.startHalf },
+        end_half: { old: null, new: input.endHalf },
+        note: { old: null, new: input.note?.trim() || null },
+      },
+      metadata: { member_id: target.id, member_name: memberName },
+    });
+
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
@@ -911,9 +937,11 @@ export async function adminUpdateBooking(
     }
 
     const admin = getAdminClient();
+    // Fetch the full existing row — needed both for the overlap/update flow
+    // and to build the audit diff after the update succeeds.
     const { data: existing } = await admin
       .from("holiday_bookings")
-      .select("id, member_id, organisation_id")
+      .select("id, member_id, organisation_id, leave_reason_id, start_date, end_date, start_half, end_half, days_deducted, employee_note")
       .eq("id", input.bookingId)
       .eq("organisation_id", caller.organisation_id)
       .single();
@@ -967,6 +995,57 @@ export async function adminUpdateBooking(
       .eq("id", input.bookingId);
 
     if (updateError) return { success: false, error: updateError.message };
+
+    // --- Audit log ----------------------------------------------------------
+    // Resolve the old + new reason names so the log reads in human terms
+    // rather than UUIDs, and grab the target member's name for context.
+    const reasonIds = [existing.leave_reason_id, input.leaveReasonId].filter(
+      (v, i, a) => a.indexOf(v) === i,
+    ) as string[];
+    const [{ data: reasonRows }, { data: targetRow }] = await Promise.all([
+      admin.from("absence_reasons").select("id, name").in("id", reasonIds),
+      admin.from("members").select("first_name, last_name").eq("id", existing.member_id).single(),
+    ]);
+    const reasonMap = new Map<string, string>((reasonRows ?? []).map((r) => [r.id as string, r.name as string]));
+    const memberName = `${targetRow?.first_name ?? ""} ${targetRow?.last_name ?? ""}`.trim();
+    const newReasonName = reasonMap.get(input.leaveReasonId) ?? null;
+    const oldReasonName = reasonMap.get(existing.leave_reason_id as string) ?? null;
+
+    const changes = diffChanges(
+      {
+        start_date: existing.start_date,
+        end_date: existing.end_date,
+        start_half: existing.start_half,
+        end_half: existing.end_half,
+        days_deducted: Number(existing.days_deducted),
+        note: existing.employee_note,
+        leave_reason: oldReasonName,
+      },
+      {
+        start_date: input.startDate,
+        end_date: input.endDate,
+        start_half: input.startHalf,
+        end_half: input.endHalf,
+        days_deducted: daysDeducted,
+        note: input.note?.trim() || null,
+        leave_reason: newReasonName,
+      },
+    );
+
+    if (changes) {
+      logAudit({
+        organisationId: caller.organisation_id,
+        actorId: caller.id,
+        actorName: `${caller.first_name ?? ""} ${caller.last_name ?? ""}`.trim(),
+        action: "booking.updated",
+        targetType: "booking",
+        targetId: input.bookingId,
+        targetLabel: `${memberName} — ${newReasonName ?? ""}`.trim(),
+        changes,
+        metadata: { member_id: existing.member_id, member_name: memberName },
+      });
+    }
+
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
@@ -987,12 +1066,52 @@ export async function adminDeleteBooking(
       return { success: false, error: "Only admins or owners can delete bookings." };
     }
     const admin = getAdminClient();
+
+    // Snapshot the booking + related names BEFORE deleting — the audit log
+    // captures what was removed, so we need this data intact.
+    const { data: existing } = await admin
+      .from("holiday_bookings")
+      .select("id, member_id, leave_reason_id, start_date, end_date, start_half, end_half, days_deducted, status, employee_note")
+      .eq("id", bookingId)
+      .eq("organisation_id", caller.organisation_id)
+      .single();
+    if (!existing) return { success: false, error: "Booking not found" };
+
+    const [{ data: reasonRow }, { data: targetRow }] = await Promise.all([
+      admin.from("absence_reasons").select("name").eq("id", existing.leave_reason_id as string).maybeSingle(),
+      admin.from("members").select("first_name, last_name").eq("id", existing.member_id as string).single(),
+    ]);
+    const reasonName = (reasonRow?.name as string | undefined) ?? "Booking";
+    const memberName = `${targetRow?.first_name ?? ""} ${targetRow?.last_name ?? ""}`.trim();
+
     const { error } = await admin
       .from("holiday_bookings")
       .delete()
       .eq("id", bookingId)
       .eq("organisation_id", caller.organisation_id);
     if (error) return { success: false, error: error.message };
+
+    logAudit({
+      organisationId: caller.organisation_id,
+      actorId: caller.id,
+      actorName: `${caller.first_name ?? ""} ${caller.last_name ?? ""}`.trim(),
+      action: "booking.deleted",
+      targetType: "booking",
+      targetId: bookingId,
+      targetLabel: `${memberName} — ${reasonName}`,
+      changes: {
+        start_date: { old: existing.start_date, new: null },
+        end_date: { old: existing.end_date, new: null },
+        leave_reason: { old: reasonName, new: null },
+        days_deducted: { old: Number(existing.days_deducted), new: null },
+        status: { old: existing.status, new: null },
+        start_half: { old: existing.start_half, new: null },
+        end_half: { old: existing.end_half, new: null },
+        note: { old: existing.employee_note, new: null },
+      },
+      metadata: { member_id: existing.member_id, member_name: memberName },
+    });
+
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
