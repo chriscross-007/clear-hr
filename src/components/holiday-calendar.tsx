@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
+import type { WorkPatternHours } from "@/lib/day-counting";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -15,6 +16,10 @@ export type CalendarBooking = {
   reason_name: string;
   reason_colour: string;
   days_deducted: number | null;
+  /** True if this booking's absence type requires manager approval. */
+  requires_approval: boolean;
+  /** Parent absence_type id (used by the filter panel to hide whole categories). */
+  absence_type_id: string | null;
 };
 
 export type CalendarBankHoliday = {
@@ -27,6 +32,34 @@ interface HolidayCalendarProps {
   bookings: CalendarBooking[];
   bankHolidays: CalendarBankHoliday[];
   bankHolidayColour?: string;
+  /**
+   * When set, enables click+drag-to-select on date cells. Called with
+   * the (inclusive) selected range on mouse up. Ranges are returned
+   * ordered so start <= end, regardless of drag direction.
+   */
+  onRangeSelected?: (startDate: string, endDate: string) => void;
+  /** Suppress the built-in top legend (for consumers rendering their own). */
+  hideLegend?: boolean;
+  /**
+   * Set of absence_type ids whose bookings should be visible. When undefined,
+   * all bookings are shown (existing behaviour).
+   */
+  visibleAbsenceTypeIds?: Set<string> | null;
+  /** Employee work pattern, used by the schedule overlay. */
+  workPattern?: WorkPatternHours | null;
+  /** Render a subtle background tint on the employee's working days. */
+  showSchedule?: boolean;
+  /**
+   * Show bank holiday cells (background colour + tooltip). Defaults to true
+   * for backwards compatibility with consumers that don't pass this prop.
+   */
+  showBankHolidays?: boolean;
+  /**
+   * Fired when a booking-bearing cell is pressed. Supplies the first booking
+   * on that day plus the raw event (for positioning a contextual menu).
+   * When provided, pressing a booking cell also suppresses drag-to-select.
+   */
+  onBookingClick?: (booking: CalendarBooking, event: React.MouseEvent) => void;
 }
 
 function textColorForBg(hex: string): string {
@@ -101,12 +134,75 @@ function buildGrid(yearStart: string) {
 // Component
 // ---------------------------------------------------------------------------
 
-export function HolidayCalendar({ yearStart, bookings, bankHolidays, bankHolidayColour = "#EF4444" }: HolidayCalendarProps) {
+const SCHEDULE_BG = "#e0f2fe"; // sky-100 — subtle "scheduled to work" tint
+const DAY_KEY_BY_INDEX: (keyof WorkPatternHours)[] = [
+  "hours_monday",
+  "hours_tuesday",
+  "hours_wednesday",
+  "hours_thursday",
+  "hours_friday",
+  "hours_saturday",
+  "hours_sunday",
+];
+
+export function HolidayCalendar({
+  yearStart,
+  bookings,
+  bankHolidays,
+  bankHolidayColour = "#EF4444",
+  onRangeSelected,
+  hideLegend,
+  visibleAbsenceTypeIds,
+  workPattern,
+  showSchedule,
+  showBankHolidays = true,
+  onBookingClick,
+}: HolidayCalendarProps) {
   const { months, totalCols } = useMemo(() => buildGrid(yearStart), [yearStart]);
+
+  // Apply the absence-type filter once, then everything downstream uses the
+  // filtered list so the legend, tooltips, and grid all stay consistent.
+  const filteredBookings = useMemo(() => {
+    if (!visibleAbsenceTypeIds) return bookings;
+    return bookings.filter((b) => b.absence_type_id !== null && visibleAbsenceTypeIds.has(b.absence_type_id));
+  }, [bookings, visibleAbsenceTypeIds]);
+
+  const selectable = !!onRangeSelected;
+  const [dragStart, setDragStart] = useState<string | null>(null);
+  const [dragHover, setDragHover] = useState<string | null>(null);
+
+  const dragging = dragStart !== null && dragHover !== null;
+  const rangeLow = dragging ? (dragStart! <= dragHover! ? dragStart! : dragHover!) : null;
+  const rangeHigh = dragging ? (dragStart! <= dragHover! ? dragHover! : dragStart!) : null;
+
+  const handleCellMouseDown = useCallback((date: string) => {
+    if (!selectable) return;
+    setDragStart(date);
+    setDragHover(date);
+  }, [selectable]);
+
+  const handleCellMouseEnter = useCallback((date: string) => {
+    if (!selectable) return;
+    setDragHover((prev) => (prev !== null ? date : prev));
+  }, [selectable]);
+
+  const handleCellMouseUp = useCallback((date: string) => {
+    if (!selectable || !onRangeSelected || dragStart === null) return;
+    const start = dragStart <= date ? dragStart : date;
+    const end = dragStart <= date ? date : dragStart;
+    setDragStart(null);
+    setDragHover(null);
+    onRangeSelected(start, end);
+  }, [selectable, onRangeSelected, dragStart]);
+
+  const cancelDrag = useCallback(() => {
+    setDragStart(null);
+    setDragHover(null);
+  }, []);
 
   const bookingMap = useMemo(() => {
     const map = new Map<string, CalendarBooking[]>();
-    for (const b of bookings) {
+    for (const b of filteredBookings) {
       if (b.status === "cancelled" || b.status === "rejected") continue;
       const s = new Date(b.start_date + "T00:00:00Z");
       const e = new Date(b.end_date + "T00:00:00Z");
@@ -120,7 +216,7 @@ export function HolidayCalendar({ yearStart, bookings, bankHolidays, bankHoliday
       }
     }
     return map;
-  }, [bookings]);
+  }, [filteredBookings]);
 
   const bhMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -130,21 +226,21 @@ export function HolidayCalendar({ yearStart, bookings, bankHolidays, bankHoliday
 
   const legend = useMemo(() => {
     const seen = new Map<string, { name: string; colour: string }>();
-    for (const b of bookings) {
+    for (const b of filteredBookings) {
       if (b.status === "cancelled" || b.status === "rejected") continue;
       if (!seen.has(b.reason_name)) {
         seen.set(b.reason_name, { name: b.reason_name, colour: b.reason_colour });
       }
     }
     return Array.from(seen.values());
-  }, [bookings]);
+  }, [filteredBookings]);
 
   const today = new Date().toISOString().slice(0, 10);
 
   return (
     <div>
       {/* Legend */}
-      {legend.length > 0 && (
+      {!hideLegend && legend.length > 0 && (
         <div className="flex flex-wrap gap-3 mb-4">
           {legend.map((l) => (
             <div key={l.name} className="flex items-center gap-1.5 text-xs">
@@ -161,7 +257,11 @@ export function HolidayCalendar({ yearStart, bookings, bankHolidays, bankHoliday
 
       {/* Calendar grid */}
       <div className="flex justify-center">
-      <div className="overflow-x-auto border rounded-md w-fit">
+      <div
+        className="overflow-x-auto border rounded-md w-fit"
+        onMouseLeave={selectable ? cancelDrag : undefined}
+        style={selectable && dragging ? { userSelect: "none" } : undefined}
+      >
         <table className="border-collapse text-xs tabular-nums">
           <thead>
             <tr>
@@ -172,7 +272,7 @@ export function HolidayCalendar({ yearStart, bookings, bankHolidays, bankHoliday
                   <th
                     key={col}
                     className={cn(
-                      "px-0 py-1.5 text-center text-muted-foreground min-w-6 w-6 border-b text-[10px]",
+                      "px-0 py-1.5 text-center text-muted-foreground w-7 border-b text-[10px]",
                       isWeekend ? "bg-muted/40 font-normal" : "font-bold"
                     )}
                   >
@@ -195,15 +295,25 @@ export function HolidayCalendar({ yearStart, bookings, bankHolidays, bankHoliday
 
                   if (!isValidDay) {
                     return (
-                      <td key={col} className={cn("px-0 py-0.5 text-center h-6", isWeekend && "bg-muted/40")} />
+                      <td key={col} className={cn("px-0 py-0.5 text-center h-7", isWeekend && "bg-muted/40")} />
                     );
                   }
 
                   const dateStr = `${m.year}-${String(m.month + 1).padStart(2, "0")}-${String(dayNum).padStart(2, "0")}`;
                   const isToday = dateStr === today;
                   const dayBookings = bookingMap.get(dateStr) ?? [];
-                  const bh = bhMap.get(dateStr);
+                  // When the Bank Holidays filter is off, pretend the day has no BH —
+                  // this skips the background fill and the tooltip entry below.
+                  const bh = showBankHolidays ? bhMap.get(dateStr) : undefined;
                   const topBooking = dayBookings[0];
+
+                  // Schedule overlay: subtle tint on the employee's working days
+                  // (col % 7 == 0..6 = Mon..Sun in this grid) — only when there's
+                  // no booking or bank holiday taking precedence on that cell.
+                  const patternHours = workPattern
+                    ? Number(workPattern[DAY_KEY_BY_INDEX[col % 7]])
+                    : 0;
+                  const isScheduledWorkDay = !!showSchedule && !!workPattern && patternHours > 0;
 
                   let bgStyle: React.CSSProperties | undefined;
                   let textClass = "";
@@ -215,31 +325,75 @@ export function HolidayCalendar({ yearStart, bookings, bankHolidays, bankHoliday
                       opacity: topBooking.status === "pending" ? 0.4 : 1,
                     };
                     textClass = "text-white font-medium";
+                  } else if (isScheduledWorkDay) {
+                    bgStyle = { backgroundColor: SCHEDULE_BG };
                   }
 
                   const tooltipParts: string[] = [];
                   for (const b of dayBookings) {
-                    tooltipParts.push(`${b.reason_name} (${b.status})${b.days_deducted ? ` — ${b.days_deducted}d` : ""}`);
+                    const days = b.days_deducted ? ` — ${b.days_deducted}d` : "";
+                    // Only show the status for absence types that require approval —
+                    // for non-approval types (e.g. sick) "(approved)" is meaningless.
+                    const statusPart = b.requires_approval ? ` (${b.status})` : "";
+                    tooltipParts.push(`${b.reason_name}${statusPart}${days}`);
                   }
                   if (bh) tooltipParts.push(`Bank Holiday: ${bh}`);
+
+                  const inDragRange =
+                    selectable && rangeLow !== null && rangeHigh !== null
+                      && dateStr >= rangeLow && dateStr <= rangeHigh;
+                  const isRangeEdge = inDragRange && (dateStr === rangeLow || dateStr === rangeHigh);
 
                   return (
                     <td
                       key={col}
                       className={cn(
-                        "px-0 py-0.5 text-center h-6 relative",
+                        "px-0 py-0.5 text-center h-7 relative",
                         isWeekend && !topBooking && "bg-muted/40",
                         isToday && "ring-1 ring-primary ring-inset",
+                        selectable && "cursor-crosshair",
                       )}
                       style={bgStyle}
                       title={tooltipParts.length > 0 ? tooltipParts.join("\n") : undefined}
+                      onMouseDown={selectable ? (e) => {
+                        e.preventDefault();
+                        // 1. A booking on this cell wins over everything else
+                        //    (including bank holidays) — open the Edit/Delete
+                        //    context menu rather than starting a drag.
+                        if (topBooking && onBookingClick) {
+                          onBookingClick(topBooking, e);
+                          return;
+                        }
+                        // 2. Bank holiday cells with no booking shouldn't let
+                        //    you "book" the bank holiday itself by clicking it.
+                        //    Drag-through from another cell still works because
+                        //    onMouseEnter / onMouseUp don't gate on `bh`.
+                        if (bh) return;
+                        handleCellMouseDown(dateStr);
+                      } : undefined}
+                      onMouseEnter={selectable ? () => handleCellMouseEnter(dateStr) : undefined}
+                      onMouseUp={selectable ? () => handleCellMouseUp(dateStr) : undefined}
                     >
                       <span
-                        className={cn("text-[10px] leading-none", textClass, !topBooking && !bh && isWeekend && "text-red-500")}
+                        className={cn(
+                          "text-[10px] leading-none",
+                          inDragRange && "relative z-10",
+                          textClass,
+                          !topBooking && !bh && isWeekend && "text-red-500",
+                        )}
                         style={bh ? { color: textColorForBg(bankHolidayColour) } : undefined}
                       >
                         {dayNum}
                       </span>
+                      {inDragRange && (
+                        <span
+                          aria-hidden
+                          className={cn(
+                            "pointer-events-none absolute inset-0 bg-primary/20",
+                            isRangeEdge && "ring-1 ring-primary ring-inset bg-primary/30",
+                          )}
+                        />
+                      )}
                     </td>
                   );
                 })}

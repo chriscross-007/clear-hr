@@ -750,3 +750,251 @@ export async function updateHolidayBooking(
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Admin: book absence on behalf of an employee (auto-approved)
+// ---------------------------------------------------------------------------
+
+export type AdminBookAbsenceInput = {
+  memberId: string;
+  leaveReasonId: string;
+  startDate: string;
+  endDate: string;
+  startHalf: string | null;
+  endHalf: string | null;
+  note: string | null;
+};
+
+/**
+ * Admin-only server action to create an already-approved absence booking for
+ * another employee. Skips the approval workflow and the notice-period /
+ * team-cover rules (the admin is making the call), but preserves the same
+ * authoritative day-counting logic as the self-service flow so the stored
+ * days_deducted is consistent.
+ */
+export async function adminBookAbsence(
+  input: AdminBookAbsenceInput,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { supabase, member: caller } = await getCallerMember();
+
+    if (caller.role !== "owner" && caller.role !== "admin") {
+      return { success: false, error: "Only admins or owners can book on behalf of others." };
+    }
+
+    // Target must be in the same org. Use admin client for cross-user read.
+    const admin = getAdminClient();
+    const { data: target } = await admin
+      .from("members")
+      .select("id, organisation_id")
+      .eq("id", input.memberId)
+      .eq("organisation_id", caller.organisation_id)
+      .single();
+    if (!target) return { success: false, error: "Member not found" };
+
+    // Overlap check against the target's existing non-cancelled bookings
+    const { count: overlap } = await admin
+      .from("holiday_bookings")
+      .select("id", { count: "exact", head: true })
+      .eq("member_id", target.id)
+      .in("status", ["pending", "approved"])
+      .lte("start_date", input.endDate)
+      .gte("end_date", input.startDate);
+    if (overlap && overlap > 0) {
+      return { success: false, error: "This employee already has a booking on one or more of those dates." };
+    }
+
+    // Verify the reason belongs to the org
+    const { data: reason } = await supabase
+      .from("absence_reasons")
+      .select("id, organisation_id")
+      .eq("id", input.leaveReasonId)
+      .eq("organisation_id", caller.organisation_id)
+      .single();
+    if (!reason) return { success: false, error: "Invalid absence reason" };
+
+    // Authoritative day count using the TARGET member's work pattern.
+    const daysDeducted = await calculateDaysDeducted(
+      supabase,
+      target.id,
+      target.organisation_id,
+      input.startDate,
+      input.endDate,
+      input.startHalf,
+      input.endHalf,
+    );
+
+    const { error: insertError } = await admin
+      .from("holiday_bookings")
+      .insert({
+        organisation_id: target.organisation_id,
+        member_id: target.id,
+        leave_reason_id: input.leaveReasonId,
+        start_date: input.startDate,
+        end_date: input.endDate,
+        start_half: input.startHalf,
+        end_half: input.endHalf,
+        days_deducted: daysDeducted,
+        hours_deducted: null,
+        status: "approved",
+        employee_note: input.note?.trim() || null,
+        approver1_id: caller.id,
+      });
+
+    if (insertError) return { success: false, error: insertError.message };
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Admin: fetch a booking's full editable fields (used by the edit flow on the
+// employee planner calendar).
+// ---------------------------------------------------------------------------
+
+export type AdminBookingDetails = {
+  id: string;
+  member_id: string;
+  leave_reason_id: string;
+  start_date: string;
+  end_date: string;
+  start_half: string | null;
+  end_half: string | null;
+  employee_note: string | null;
+  status: string;
+};
+
+export async function getBookingDetails(
+  bookingId: string,
+): Promise<{ success: boolean; error?: string; booking?: AdminBookingDetails }> {
+  try {
+    const { member: caller } = await getCallerMember();
+    if (caller.role !== "owner" && caller.role !== "admin") {
+      return { success: false, error: "Forbidden" };
+    }
+    const admin = getAdminClient();
+    const { data } = await admin
+      .from("holiday_bookings")
+      .select("id, member_id, leave_reason_id, start_date, end_date, start_half, end_half, employee_note, status")
+      .eq("id", bookingId)
+      .eq("organisation_id", caller.organisation_id)
+      .single();
+    if (!data) return { success: false, error: "Booking not found" };
+    return { success: true, booking: data as AdminBookingDetails };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Admin: edit an existing booking in-place (auto-approved, same org check).
+// ---------------------------------------------------------------------------
+
+export type AdminUpdateBookingInput = {
+  bookingId: string;
+  leaveReasonId: string;
+  startDate: string;
+  endDate: string;
+  startHalf: string | null;
+  endHalf: string | null;
+  note: string | null;
+};
+
+export async function adminUpdateBooking(
+  input: AdminUpdateBookingInput,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { supabase, member: caller } = await getCallerMember();
+    if (caller.role !== "owner" && caller.role !== "admin") {
+      return { success: false, error: "Only admins or owners can edit bookings." };
+    }
+
+    const admin = getAdminClient();
+    const { data: existing } = await admin
+      .from("holiday_bookings")
+      .select("id, member_id, organisation_id")
+      .eq("id", input.bookingId)
+      .eq("organisation_id", caller.organisation_id)
+      .single();
+    if (!existing) return { success: false, error: "Booking not found" };
+
+    // Overlap check — exclude the booking being edited so it doesn't conflict
+    // with itself.
+    const { count: overlap } = await admin
+      .from("holiday_bookings")
+      .select("id", { count: "exact", head: true })
+      .eq("member_id", existing.member_id)
+      .in("status", ["pending", "approved"])
+      .neq("id", input.bookingId)
+      .lte("start_date", input.endDate)
+      .gte("end_date", input.startDate);
+    if (overlap && overlap > 0) {
+      return { success: false, error: "This employee already has a booking on one or more of those dates." };
+    }
+
+    // Reason must belong to the caller's org
+    const { data: reason } = await supabase
+      .from("absence_reasons")
+      .select("id")
+      .eq("id", input.leaveReasonId)
+      .eq("organisation_id", caller.organisation_id)
+      .single();
+    if (!reason) return { success: false, error: "Invalid absence reason" };
+
+    // Recalculate days_deducted with the TARGET member's current work pattern.
+    const daysDeducted = await calculateDaysDeducted(
+      supabase,
+      existing.member_id,
+      existing.organisation_id,
+      input.startDate,
+      input.endDate,
+      input.startHalf,
+      input.endHalf,
+    );
+
+    const { error: updateError } = await admin
+      .from("holiday_bookings")
+      .update({
+        leave_reason_id: input.leaveReasonId,
+        start_date: input.startDate,
+        end_date: input.endDate,
+        start_half: input.startHalf,
+        end_half: input.endHalf,
+        days_deducted: daysDeducted,
+        employee_note: input.note?.trim() || null,
+      })
+      .eq("id", input.bookingId);
+
+    if (updateError) return { success: false, error: updateError.message };
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Admin: hard-delete a booking (admins are explicitly removing it, not
+// cancelling; employees cancel via the self-service flow).
+// ---------------------------------------------------------------------------
+
+export async function adminDeleteBooking(
+  bookingId: string,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { member: caller } = await getCallerMember();
+    if (caller.role !== "owner" && caller.role !== "admin") {
+      return { success: false, error: "Only admins or owners can delete bookings." };
+    }
+    const admin = getAdminClient();
+    const { error } = await admin
+      .from("holiday_bookings")
+      .delete()
+      .eq("id", bookingId)
+      .eq("organisation_id", caller.organisation_id);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Users, Building2, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, CalendarDays, Clock, Palmtree, ClipboardCheck } from "lucide-react";
@@ -9,8 +9,14 @@ import { capitalize, pluralize } from "@/lib/label-utils";
 import { hasPlanFeature } from "@/lib/plan-config";
 import { OrganisationEditDialog } from "./organisation-edit-dialog";
 import { REPORT_GROUPS, ALL_STANDARD_REPORTS } from "./reports/definitions";
+import {
+  loadRecentEmployees,
+  RECENT_EMPLOYEES_EVENT,
+  type RecentEmployee,
+} from "@/lib/recent-employees";
 
 interface SidebarProps {
+  userId: string;
   role: string;
   accessMembers: string | null;
   memberLabel: string;
@@ -42,6 +48,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({
+  userId,
   role,
   accessMembers,
   memberLabel,
@@ -73,12 +80,34 @@ export function Sidebar({
 }: SidebarProps) {
   const pathname = usePathname();
   const [showOrgEdit, setShowOrgEdit] = useState(false);
+  const [recentEmployees, setRecentEmployees] = useState<RecentEmployee[]>([]);
   const [shiftsOpen, setShiftsOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
   const [standardOpen, setStandardOpen] = useState(false);
   const [reportGroupsOpen, setReportGroupsOpen] = useState<Record<string, boolean>>({});
   const [favouritesOpen, setFavouritesOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
+
+  // Re-read the recent-employees list whenever the route changes (so a fresh
+  // visit shows up immediately) or another tab updates localStorage.
+  useEffect(() => {
+    const reload = () => setRecentEmployees(loadRecentEmployees(userId));
+    reload();
+    window.addEventListener(RECENT_EMPLOYEES_EVENT, reload);
+    window.addEventListener("storage", reload);
+    return () => {
+      window.removeEventListener(RECENT_EMPLOYEES_EVENT, reload);
+      window.removeEventListener("storage", reload);
+    };
+  }, [userId, pathname]);
+
+  const inEmployeeArea = pathname.startsWith("/employees/");
+  const currentMemberId = inEmployeeArea ? pathname.split("/")[2] ?? null : null;
+  // Hide whoever's currently on screen (the secondary sidebar already shows them)
+  // and cap the visible list at 3 prior visits.
+  const recentVisible = recentEmployees
+    .filter((e) => e.memberId !== currentMemberId)
+    .slice(0, 3);
 
   const showEmployees = role !== "admin" || accessMembers === "read" || accessMembers === "write";
   const showShifts = role === "owner" || role === "admin";
@@ -99,11 +128,15 @@ export function Sidebar({
     })
     .filter(Boolean) as { id: string; name: string; href: string }[];
 
-  const linkClass = (href: string) =>
-    cn(
+  const linkClass = (href: string) => {
+    // Match the item when the pathname equals its href OR is under it (so
+    // e.g. /employees/[id]/employment keeps "Employees" highlighted).
+    const active = pathname === href || pathname.startsWith(href + "/");
+    return cn(
       "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent",
-      pathname === href && "bg-accent font-medium"
+      active && "bg-accent font-medium",
     );
+  };
 
   const subNodeBtn = (label: string, icon: React.ReactNode, open: boolean, onClick: () => void) => (
     <button
@@ -125,7 +158,44 @@ export function Sidebar({
   return (
     <>
       <nav className="w-48 shrink-0 border-r bg-background sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto">
-        <div className="flex flex-col gap-0.5 p-2 pt-4">
+        {inEmployeeArea && recentVisible.length > 0 && (
+          <div className="border-b border-gray-200 px-2 pb-3 pt-4">
+            <p className="mb-1 px-3 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Recent
+            </p>
+            <div className="flex flex-col gap-0.5">
+              {recentVisible.map((emp) => {
+                const initials = emp.name
+                  .split(/\s+/)
+                  .map((n) => n.charAt(0).toUpperCase())
+                  .slice(0, 2)
+                  .join("");
+                return (
+                  <Link
+                    key={emp.memberId}
+                    href={`/employees/${emp.memberId}/calendar`}
+                    className="flex items-center gap-2 rounded-md px-2 py-1 text-sm transition-colors hover:bg-accent"
+                  >
+                    {emp.avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={emp.avatarUrl}
+                        alt=""
+                        className="h-6 w-6 shrink-0 rounded-full object-cover"
+                      />
+                    ) : (
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-muted-foreground">
+                        {initials}
+                      </span>
+                    )}
+                    <span className="truncate">{emp.name}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <div className="mt-2 flex flex-col gap-0.5 p-2 pt-4">
           <Link href="/holiday" className={linkClass("/holiday")}>
             <Palmtree className="h-4 w-4 shrink-0" />
             My Holiday

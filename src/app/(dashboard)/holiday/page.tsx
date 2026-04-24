@@ -238,14 +238,16 @@ export default async function MyHolidayPage() {
 
     const { data: calBookingsData } = await supabase
       .from("holiday_bookings")
-      .select("id, start_date, end_date, status, days_deducted, absence_reasons(name, colour)")
+      .select("id, start_date, end_date, status, days_deducted, absence_reasons(name, colour, absence_type_id, absence_types(requires_approval))")
       .eq("member_id", member.id)
       .lte("start_date", calEndStr)
       .gte("end_date", yearRec.year_start)
       .in("status", ["pending", "approved"]);
 
     calendarBookings = (calBookingsData ?? []).map((b) => {
-      const reason = b.absence_reasons as unknown as { name: string; colour: string } | null;
+      const reason = b.absence_reasons as unknown as
+        | { name: string; colour: string; absence_type_id: string | null; absence_types: { requires_approval: boolean } | null }
+        | null;
       return {
         id: b.id,
         start_date: b.start_date,
@@ -254,6 +256,8 @@ export default async function MyHolidayPage() {
         days_deducted: b.days_deducted,
         reason_name: reason?.name ?? "—",
         reason_colour: reason?.colour ?? "#6366f1",
+        requires_approval: reason?.absence_types?.requires_approval ?? false,
+        absence_type_id: reason?.absence_type_id ?? null,
       };
     });
 

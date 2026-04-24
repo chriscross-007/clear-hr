@@ -1,6 +1,10 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import {
+  recalculateBookingDays,
+  findBookingIdsForMemberFromDate,
+} from "@/lib/recalculate-bookings";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -257,6 +261,22 @@ export async function assignWorkProfile(
       }
       return { success: false, error: error.message };
     }
+
+    // Recalculate any active bookings this employee has from the effective date
+    // onward. Additive: failure here must not block the assignment.
+    try {
+      const ids = await findBookingIdsForMemberFromDate(memberId, effectiveFrom);
+      if (ids.length > 0) {
+        const res = await recalculateBookingDays(ids);
+        console.log(
+          `[recalc] assignWorkProfile(member=${memberId}, effectiveFrom=${effectiveFrom}): ` +
+          `updated=${res.updated} unchanged=${res.unchanged} skipped=${res.skipped} errors=${res.errors}`,
+        );
+      }
+    } catch (e) {
+      console.error("[recalc] assignWorkProfile post-save failed:", e instanceof Error ? e.message : e);
+    }
+
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };

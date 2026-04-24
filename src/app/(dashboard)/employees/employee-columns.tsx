@@ -2,16 +2,8 @@
 
 import type { ColumnDef, Column, RowData } from "@tanstack/react-table";
 import type { ReactNode } from "react";
-import { ArrowUp, ArrowDown, ArrowUpDown, Trash2, MoreVertical, Clock, CalendarDays, LayoutDashboard, Settings, Palmtree } from "lucide-react";
-import Link from "next/link";
+import { ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { capitalize } from "@/lib/label-utils";
 import type { Profile } from "./profile-actions";
 import type { FieldDef } from "./custom-field-actions";
@@ -344,9 +336,8 @@ export function buildEmployeeColumns(opts: {
   customFieldDefs: FieldDef[];
   holidayProfileNames?: string[];
   workPatternNames?: string[];
-  onDelete?: (member: Member) => void;
 }): ColumnDef<Member>[] {
-  const { teams, adminProfiles, employeeProfiles, memberLabel, canAdd, currencySymbol, customFieldDefs, holidayProfileNames = [], workPatternNames = [], onDelete } = opts;
+  const { teams, adminProfiles, employeeProfiles, memberLabel, currencySymbol, customFieldDefs, holidayProfileNames = [], workPatternNames = [] } = opts;
   const teamMap = Object.fromEntries(teams.map((t) => [t.id, t.name]));
 
   return [
@@ -679,71 +670,5 @@ export function buildEmployeeColumns(opts: {
           }
         : {}),
     })),
-    {
-      id: "actions",
-      enableSorting: false,
-      enableColumnFilter: false,
-      header: () => null,
-      cell: ({ row }: { row: { original: Member } }) => {
-        const memberId = row.original.member_id;
-        const isOwner = row.original.role === "owner";
-        return (
-          <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon">
-                  <MoreVertical className="h-4 w-4" />
-                  <span className="sr-only">Open menu</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem asChild>
-                  <Link href={`/timesheets/${memberId}`}>
-                    <Clock className="mr-2 h-4 w-4" />
-                    Timesheet
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href={`/employees/${memberId}/dashboard`}>
-                    <LayoutDashboard className="mr-2 h-4 w-4" />
-                    Dashboard
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href={`/employees/${memberId}/calendar`}>
-                    <CalendarDays className="mr-2 h-4 w-4" />
-                    Calendar
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href={`/employees/${memberId}/holiday`}>
-                    <Palmtree className="mr-2 h-4 w-4" />
-                    Holiday
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href={`/employees/${memberId}/settings`}>
-                    <Settings className="mr-2 h-4 w-4" />
-                    Settings
-                  </Link>
-                </DropdownMenuItem>
-                {canAdd && !isOwner && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className="text-destructive focus:text-destructive"
-                      onClick={() => onDelete?.(row.original)}
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      Delete
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        );
-      },
-    } satisfies ColumnDef<Member>,
   ];
 }

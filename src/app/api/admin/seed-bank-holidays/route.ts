@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import {
+  recalculateBookingDays,
+  findBookingIdsOverlappingDates,
+  findOrgIdsByCountryCode,
+} from "@/lib/recalculate-bookings";
 
 function getAdminClient() {
   return createSupabaseClient(
@@ -66,6 +71,7 @@ export async function POST() {
 
   let inserted = 0;
   let skipped = 0;
+  const insertedDates: string[] = [];
 
   for (const event of division.events) {
     if (existingDates.has(event.date)) {
@@ -83,8 +89,30 @@ export async function POST() {
         is_excluded: false,
       });
 
-    if (!error) inserted++;
-    else skipped++;
+    if (!error) {
+      inserted++;
+      insertedDates.push(event.date);
+    } else {
+      skipped++;
+    }
+  }
+
+  // Recalculate any active bookings that overlap a newly-inserted bank holiday
+  // for orgs sharing this country_code. Additive — never block the response.
+  if (insertedDates.length > 0) {
+    try {
+      const orgIds = await findOrgIdsByCountryCode(countryCode);
+      const bookingIds = await findBookingIdsOverlappingDates(orgIds, insertedDates);
+      if (bookingIds.length > 0) {
+        const res = await recalculateBookingDays(bookingIds);
+        console.log(
+          `[recalc] seed-bank-holidays(country=${countryCode}, +${insertedDates.length} dates): ` +
+          `updated=${res.updated} unchanged=${res.unchanged} skipped=${res.skipped} errors=${res.errors}`,
+        );
+      }
+    } catch (e) {
+      console.error("[recalc] seed-bank-holidays post-save failed:", e instanceof Error ? e.message : e);
+    }
   }
 
   return NextResponse.json({ inserted, skipped, countryCode });

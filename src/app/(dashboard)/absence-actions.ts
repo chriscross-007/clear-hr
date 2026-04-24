@@ -37,6 +37,7 @@ export type AbsenceType = {
   id: string;
   organisation_id: string;
   name: string;
+  colour: string;
   is_paid: boolean;
   requires_tracking: boolean;
   deducts_from_entitlement: boolean;
@@ -46,6 +47,7 @@ export type AbsenceType = {
 
 type AbsenceTypeInput = {
   name: string;
+  colour: string;
   is_paid: boolean;
   requires_tracking: boolean;
   deducts_from_entitlement: boolean;
@@ -103,7 +105,7 @@ export async function getAbsenceTypes(): Promise<AbsenceType[]> {
 
   const { data } = await supabase
     .from("absence_types")
-    .select("id, organisation_id, name, is_paid, requires_tracking, deducts_from_entitlement, requires_approval, is_default")
+    .select("id, organisation_id, name, colour, is_paid, requires_tracking, deducts_from_entitlement, requires_approval, is_default")
     .eq("organisation_id", membership.organisation_id)
     .order("is_default", { ascending: false })
     .order("name");
@@ -130,13 +132,14 @@ export async function createAbsenceType(
       .insert({
         organisation_id: membership.organisation_id,
         name: input.name.trim(),
+        colour: input.colour,
         is_paid: input.is_paid,
         requires_tracking: input.requires_tracking,
         deducts_from_entitlement: input.deducts_from_entitlement,
         requires_approval: input.requires_approval,
         is_default: false,
       })
-      .select("id, organisation_id, name, is_paid, requires_tracking, deducts_from_entitlement, requires_approval, is_default")
+      .select("id, organisation_id, name, colour, is_paid, requires_tracking, deducts_from_entitlement, requires_approval, is_default")
       .single();
 
     if (error) return { success: false, error: error.message };
@@ -165,6 +168,7 @@ export async function updateAbsenceType(
       .from("absence_types")
       .update({
         name: input.name.trim(),
+        colour: input.colour,
         is_paid: input.is_paid,
         requires_tracking: input.requires_tracking,
         deducts_from_entitlement: input.deducts_from_entitlement,
@@ -172,7 +176,7 @@ export async function updateAbsenceType(
       })
       .eq("id", id)
       .eq("organisation_id", membership.organisation_id)
-      .select("id, organisation_id, name, is_paid, requires_tracking, deducts_from_entitlement, requires_approval, is_default")
+      .select("id, organisation_id, name, colour, is_paid, requires_tracking, deducts_from_entitlement, requires_approval, is_default")
       .single();
 
     if (error) return { success: false, error: error.message };

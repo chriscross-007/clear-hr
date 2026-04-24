@@ -204,6 +204,14 @@ export default async function EmployeeHolidayPage({
     .is("member_id", null)
     .order("name");
 
+  // Fetch the org's default work profile so the assignment sheet can pre-select it
+  const { data: orgRow } = await supabase
+    .from("organisations")
+    .select("default_work_profile_id")
+    .eq("id", caller.organisation_id)
+    .single();
+  const orgDefaultWorkProfileId = orgRow?.default_work_profile_id ?? null;
+
   const fullName = [member.first_name, member.last_name].filter(Boolean).join(" ");
 
   return (
@@ -222,6 +230,7 @@ export default async function EmployeeHolidayPage({
         carryOverMaxMap={carryOverMaxMap}
         workProfileAssignments={workProfileAssignments}
         orgWorkProfiles={(orgWorkProfiles ?? []) as { id: string; name: string }[]}
+        orgDefaultWorkProfileId={orgDefaultWorkProfileId}
         memberBookings={(bookings ?? []).map((b) => {
           const reason = b.absence_reasons as unknown as { name: string; colour: string } | null;
           return {

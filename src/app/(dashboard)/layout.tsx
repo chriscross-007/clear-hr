@@ -175,6 +175,7 @@ export default async function DashboardLayout({
         </header>
         <div className="flex flex-1">
           <Sidebar
+            userId={user.id}
             role={membership.role}
             accessMembers={accessMembers}
             memberLabel={memberLabel}
@@ -204,7 +205,7 @@ export default async function DashboardLayout({
             initialCustomReports={sidebarCustomReports}
             initialShiftDefs={sidebarShiftDefs}
           />
-          <main className="flex-1">{children}</main>
+          <main className="min-w-0 flex-1">{children}</main>
         </div>
       </div>
     </MemberLabelProvider>

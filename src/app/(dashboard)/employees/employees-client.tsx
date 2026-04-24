@@ -177,7 +177,6 @@ export function EmployeesClient({
     customFieldDefs,
     holidayProfileNames,
     workPatternNames,
-    onDelete: (member) => setDeletingMember(member),
   });
 
   const selectColumn: ColumnDef<Member> = useMemo(() => ({
@@ -405,7 +404,7 @@ export function EmployeesClient({
           initialAggregateMetrics={initialAggregateMetrics}
           userId={userId}
           toolbar={toolbar}
-          onRowClick={canEdit ? (m) => setEditingMember(m) : undefined}
+          onRowClick={(m) => router.push(`/employees/${m.member_id}/calendar`)}
           emptyMessage={`No ${pluralize(memberLabel)} found.`}
           onExportPdf={handleExportPdf}
           onPageRowsChange={setCardRows}
@@ -457,7 +456,7 @@ export function EmployeesClient({
                         "relative flex flex-col items-center gap-3 rounded-lg border bg-card p-6 text-center cursor-pointer hover:bg-muted/50",
                         selectedIds.has(m.member_id) && "ring-2 ring-primary"
                       )}
-                      onClick={() => router.push(`/employees/${m.member_id}/dashboard`)}
+                      onClick={() => router.push(`/employees/${m.member_id}/calendar`)}
                     >
                       <div
                         className="absolute top-2 left-2 z-10"

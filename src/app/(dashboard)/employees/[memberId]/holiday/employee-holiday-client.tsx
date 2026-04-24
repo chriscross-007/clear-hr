@@ -92,6 +92,7 @@ interface EmployeeHolidayClientProps {
   carryOverMaxMap: Record<string, number | null>;
   workProfileAssignments: { id: string; work_profile_id: string; work_profile_name: string; effective_from: string }[];
   orgWorkProfiles: { id: string; name: string }[];
+  orgDefaultWorkProfileId: string | null;
   memberBookings: MemberBooking[];
 }
 
@@ -128,6 +129,7 @@ export function EmployeeHolidayClient({
   carryOverMaxMap,
   workProfileAssignments,
   orgWorkProfiles,
+  orgDefaultWorkProfileId,
   memberBookings,
 }: EmployeeHolidayClientProps) {
   const router = useRouter();
@@ -620,7 +622,16 @@ export function EmployeeHolidayClient({
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold">Working Pattern</h2>
           <Button variant="outline" size="sm" onClick={() => {
-            setWpProfileId(orgWorkProfiles[0]?.id ?? "");
+            // Default selection priority:
+            //   1. Employee's most recent existing assignment (workProfileAssignments is sorted desc by effective_from)
+            //   2. Org default_work_profile_id
+            //   3. Empty (placeholder) — admin must pick
+            const existing = workProfileAssignments[0]?.work_profile_id;
+            const orgDefault = orgDefaultWorkProfileId
+              && orgWorkProfiles.some((p) => p.id === orgDefaultWorkProfileId)
+              ? orgDefaultWorkProfileId
+              : "";
+            setWpProfileId(existing ?? orgDefault);
             setWpEffectiveFrom(today);
             setWpError(null);
             setWpSheetOpen(true);

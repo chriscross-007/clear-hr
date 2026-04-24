@@ -68,6 +68,7 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
   const [typeDeleteLoading, setTypeDeleteLoading] = useState(false);
   const [typeDeleteError, setTypeDeleteError] = useState<string | null>(null);
   const [typeName, setTypeName] = useState("");
+  const [typeColour, setTypeColour] = useState("#6366f1");
   const [typeIsPaid, setTypeIsPaid] = useState(true);
   const [typeRequiresTracking, setTypeRequiresTracking] = useState(false);
   const [typeDeductsFromEntitlement, setTypeDeductsFromEntitlement] = useState(true);
@@ -101,6 +102,7 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
   function openCreateType() {
     setEditingType(null);
     setTypeName("");
+    setTypeColour("#6366f1");
     setTypeIsPaid(true);
     setTypeRequiresTracking(false);
     setTypeDeductsFromEntitlement(true);
@@ -112,6 +114,7 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
   function openEditType(type: AbsenceType) {
     setEditingType(type);
     setTypeName(type.name);
+    setTypeColour(type.colour || "#6366f1");
     setTypeIsPaid(type.is_paid);
     setTypeRequiresTracking(type.requires_tracking);
     setTypeDeductsFromEntitlement(type.deducts_from_entitlement);
@@ -125,6 +128,7 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
     setTypeFormError(null);
     const input = {
       name: typeName,
+      colour: typeColour,
       is_paid: typeIsPaid,
       requires_tracking: typeRequiresTracking,
       deducts_from_entitlement: typeDeductsFromEntitlement,
@@ -255,6 +259,7 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
             <TableRow>
               <TableHead className="w-8" />
               <TableHead>Name</TableHead>
+              <TableHead className="w-16">Colour</TableHead>
               <TableHead>Paid</TableHead>
               <TableHead>Tracked</TableHead>
               <TableHead>Deducts</TableHead>
@@ -265,7 +270,7 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
           <TableBody>
             {types.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
                   No absence types defined.
                 </TableCell>
               </TableRow>
@@ -311,6 +316,25 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="absence-type-name">Name</Label>
               <Input id="absence-type-name" value={typeName} onChange={(e) => setTypeName(e.target.value)} placeholder="e.g. TOIL, Parental Leave" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="absence-type-colour">Colour</Label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="color"
+                  id="absence-type-colour"
+                  value={typeColour}
+                  onChange={(e) => setTypeColour(e.target.value)}
+                  className="h-9 w-14 cursor-pointer rounded border border-input bg-background p-0.5"
+                />
+                <Input
+                  value={typeColour}
+                  onChange={(e) => setTypeColour(e.target.value)}
+                  placeholder="#6366f1"
+                  maxLength={7}
+                  className="font-mono"
+                />
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div><Label>Paid</Label><p className="text-xs text-muted-foreground">Employee is paid during this absence</p></div>
@@ -498,6 +522,13 @@ function TypeRowWithReasons({
           {type.is_default && <Badge variant="secondary" className="ml-2 text-xs">Default</Badge>}
           <span className="ml-2 text-xs text-muted-foreground">({reasons.length} reason{reasons.length !== 1 ? "s" : ""})</span>
         </TableCell>
+        <TableCell>
+          <span
+            aria-label={type.colour || "#6366f1"}
+            className="inline-block h-4 w-4 rounded-full border border-border"
+            style={{ backgroundColor: type.colour || "#6366f1" }}
+          />
+        </TableCell>
         <TableCell>{type.is_paid ? <Check className="h-5 w-5 text-green-500" /> : <X className="h-5 w-5 text-red-500" />}</TableCell>
         <TableCell>{type.requires_tracking ? <Check className="h-5 w-5 text-green-500" /> : <X className="h-5 w-5 text-red-500" />}</TableCell>
         <TableCell>{type.deducts_from_entitlement ? <Check className="h-5 w-5 text-green-500" /> : <X className="h-5 w-5 text-red-500" />}</TableCell>
@@ -531,7 +562,7 @@ function TypeRowWithReasons({
                   {reason.is_deprecated && <Badge variant="outline" className="text-xs text-muted-foreground">Inactive</Badge>}
                 </div>
               </TableCell>
-              <TableCell colSpan={4} />
+              <TableCell colSpan={5} />
               <TableCell>
                 {!reason.is_default && (
                   <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
@@ -546,7 +577,7 @@ function TypeRowWithReasons({
           ))}
           <TableRow className="bg-muted/30">
             <TableCell />
-            <TableCell colSpan={6} className="pl-8">
+            <TableCell colSpan={7} className="pl-8">
               <Button variant="ghost" size="sm" className="text-xs" onClick={onAddReason}>
                 <Plus className="h-3.5 w-3.5 mr-1" />
                 Add Reason

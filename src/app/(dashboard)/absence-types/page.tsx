@@ -25,7 +25,7 @@ export default async function AbsenceTypesPage() {
   const [{ data: absenceTypes }, { data: absenceReasons }] = await Promise.all([
     supabase
       .from("absence_types")
-      .select("id, organisation_id, name, is_paid, requires_tracking, deducts_from_entitlement, requires_approval, is_default")
+      .select("id, organisation_id, name, colour, is_paid, requires_tracking, deducts_from_entitlement, requires_approval, is_default")
       .eq("organisation_id", membership.organisation_id)
       .order("is_default", { ascending: false })
       .order("name"),

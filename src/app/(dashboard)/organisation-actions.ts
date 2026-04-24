@@ -2,6 +2,10 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { logAudit, diffChanges } from "@/lib/audit";
+import {
+  recalculateBookingDays,
+  findBookingIdsForOrgFallback,
+} from "@/lib/recalculate-bookings";
 
 export async function updateOrganisation(data: {
   name: string;
@@ -49,7 +53,7 @@ export async function updateOrganisation(data: {
   // Fetch before-state for audit diff
   const { data: beforeOrg } = await supabase
     .from("organisations")
-    .select("name, member_label, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins, holiday_year_start_type, holiday_year_start_day, holiday_year_start_month, bank_holiday_handling")
+    .select("name, member_label, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins, holiday_year_start_type, holiday_year_start_day, holiday_year_start_month, bank_holiday_handling, default_work_profile_id")
     .eq("id", membership.organisation_id)
     .single();
 
@@ -121,6 +125,28 @@ export async function updateOrganisation(data: {
     .eq("id", membership.organisation_id);
 
   if (error) return { success: false, error: error.message };
+
+  // If the org default work profile changed, recalculate days_deducted for
+  // any active bookings belonging to members who fall back to the org default
+  // (i.e. those without an employee_work_profiles assignment). Additive only.
+  if (
+    data.defaultWorkProfileId !== undefined
+    && beforeOrg
+    && beforeOrg.default_work_profile_id !== data.defaultWorkProfileId
+  ) {
+    try {
+      const ids = await findBookingIdsForOrgFallback(membership.organisation_id);
+      if (ids.length > 0) {
+        const res = await recalculateBookingDays(ids);
+        console.log(
+          `[recalc] org.defaultWorkProfile change (org=${membership.organisation_id}): ` +
+          `updated=${res.updated} unchanged=${res.unchanged} skipped=${res.skipped} errors=${res.errors}`,
+        );
+      }
+    } catch (e) {
+      console.error("[recalc] org default change post-save failed:", e instanceof Error ? e.message : e);
+    }
+  }
 
   if (beforeOrg) {
     const changes = diffChanges(
