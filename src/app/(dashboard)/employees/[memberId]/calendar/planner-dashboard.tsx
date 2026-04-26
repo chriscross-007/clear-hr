@@ -1,4 +1,4 @@
-import { CalendarDays, HeartPulse, TrendingUp, BarChart3 } from "lucide-react";
+import { CalendarDays, HeartPulse, TrendingUp, PieChart } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
 import { HolidayDonut } from "./holiday-donut";
 import { SickDonut } from "./sick-donut";
@@ -122,7 +122,7 @@ export function PlannerDashboard({
   );
   const sickTitle = <span>Sick {last365}</span>;
   const bradfordTitle = <span>Bradford Factor {last365}</span>;
-  const sickPlotTitle = <span>Sick Plot {last365}</span>;
+  const sickPlotTitle = <span>Sickness Trend {last365}</span>;
 
   // Full-width grid so the dashboard tracks the calendar+legend row beneath it.
   return (
@@ -136,7 +136,7 @@ export function PlannerDashboard({
       <PlannerDashboardCard title={bradfordTitle} Icon={TrendingUp}>
         {bradfordFactor !== undefined ? <BradfordCardBody value={bradfordFactor} /> : undefined}
       </PlannerDashboardCard>
-      <PlannerDashboardCard title={sickPlotTitle} Icon={BarChart3}>
+      <PlannerDashboardCard title={sickPlotTitle} Icon={PieChart}>
         {sickPlot ? <SickPlot data={sickPlot.byDow} sickColour={sickPlot.colour} /> : undefined}
       </PlannerDashboardCard>
     </div>

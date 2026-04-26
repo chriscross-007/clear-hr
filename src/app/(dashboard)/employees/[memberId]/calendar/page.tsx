@@ -25,7 +25,7 @@ export default async function EmployeeCalendarPage({
 
   const { data: caller } = await supabase
     .from("members")
-    .select("role, organisation_id")
+    .select("id, role, organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -232,15 +232,30 @@ export default async function EmployeeCalendarPage({
   // D = total sick days (both over the trailing 365-day window).
   const bradfordFactor = Math.round(sickSpells * sickSpells * sickDaysTotal);
 
-  // Fetch org bank holiday colour, handling, and default work profile
+  // Fetch org bank holiday colour, handling, default work profile, and the
+  // self-cert template path (used by the sick details panel).
   const { data: orgRow } = await supabase
     .from("organisations")
-    .select("bank_holiday_colour, bank_holiday_handling, default_work_profile_id")
+    .select("bank_holiday_colour, bank_holiday_handling, default_work_profile_id, self_cert_template_path")
     .eq("id", caller.organisation_id)
     .single();
   const bankHolidayColour = (orgRow as { bank_holiday_colour?: string } | null)?.bank_holiday_colour ?? "#EF4444";
   const bankHolidayHandling = (orgRow as { bank_holiday_handling?: string } | null)?.bank_holiday_handling ?? "additional";
   const orgDefaultWorkProfileId = (orgRow as { default_work_profile_id?: string | null } | null)?.default_work_profile_id ?? null;
+  const hasSelfCertTemplate = !!(orgRow as { self_cert_template_path?: string | null } | null)?.self_cert_template_path;
+
+  // Admins + owners for the sick details "Back to Work interviewer" dropdown
+  const { data: adminRows } = await supabase
+    .from("members")
+    .select("id, first_name, last_name")
+    .eq("organisation_id", caller.organisation_id)
+    .in("role", ["admin", "owner"])
+    .order("first_name");
+  const orgAdmins = (adminRows ?? []).map((r) => ({
+    id: r.id as string,
+    firstName: (r.first_name as string) ?? "",
+    lastName: (r.last_name as string) ?? "",
+  }));
 
   // Fetch bank holidays in range
   const { data: bhData } = await supabase
@@ -264,16 +279,18 @@ export default async function EmployeeCalendarPage({
   // admin booking sheet's reason dropdown.
   const { data: reasonRows } = await supabase
     .from("absence_reasons")
-    .select("id, name, colour, is_deprecated, absence_types(colour)")
+    .select("id, name, colour, is_deprecated, absence_type_id, absence_types(name, colour)")
     .eq("organisation_id", caller.organisation_id)
     .eq("is_deprecated", false)
     .order("name");
   const absenceReasons: AbsenceReasonOption[] = (reasonRows ?? []).map((r) => {
-    const typeColour = (r.absence_types as unknown as { colour: string } | null)?.colour;
+    const aType = r.absence_types as unknown as { name: string; colour: string } | null;
     return {
       id: r.id,
       name: r.name,
-      colour: typeColour ?? r.colour,
+      colour: aType?.colour ?? r.colour,
+      absence_type_id: r.absence_type_id,
+      absence_type_name: aType?.name ?? "Other",
     };
   });
 
@@ -345,6 +362,9 @@ export default async function EmployeeCalendarPage({
         memberId={memberId}
         memberName={fullName}
         userId={user.id}
+        callerMemberId={caller.id}
+        orgAdmins={orgAdmins}
+        hasSelfCertTemplate={hasSelfCertTemplate}
         yearStart={rangeStart}
         bookings={bookings}
         bankHolidays={bhList}

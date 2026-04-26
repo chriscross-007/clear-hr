@@ -775,7 +775,7 @@ export type AdminBookAbsenceInput = {
  */
 export async function adminBookAbsence(
   input: AdminBookAbsenceInput,
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; bookingId?: string }> {
   try {
     const { supabase, member: caller } = await getCallerMember();
 
@@ -868,7 +868,7 @@ export async function adminBookAbsence(
       metadata: { member_id: target.id, member_name: memberName },
     });
 
-    return { success: true };
+    return { success: true, bookingId: inserted?.id as string | undefined };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }

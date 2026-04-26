@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { HolidayCalendar, type CalendarBooking, type CalendarBankHoliday } from "@/components/holiday-calendar";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -31,11 +31,20 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { BookingConversation } from "./booking-conversation";
+import {
+  getOrCreateBookingConversation,
+  sendConversationMessage,
+  uploadDocumentToMessage,
+} from "../../../conversation-actions";
+import { SickDetailsPanel, type OrgAdminOption } from "./sick-details-panel";
+import { saveSickDetails, type SickDetailsInput } from "../../../sick-booking-actions";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -54,6 +63,8 @@ export type AbsenceReasonOption = {
   id: string;
   name: string;
   colour: string;
+  absence_type_id: string;
+  absence_type_name: string;
 };
 
 export type AbsenceTypeOption = {
@@ -66,6 +77,12 @@ interface AdminCalendarClientProps {
   memberId: string;
   memberName: string;
   userId: string;
+  /** The admin's own member id — used by the conversation thread to align "mine" bubbles. */
+  callerMemberId: string;
+  /** Admin/owner members in the org — used by the BTW interviewer dropdown. */
+  orgAdmins: OrgAdminOption[];
+  /** True if the org has uploaded a self-certification PDF template. */
+  hasSelfCertTemplate: boolean;
   yearStart: string;
   bookings: CalendarBooking[];
   bankHolidays: CalendarBankHoliday[];
@@ -125,6 +142,9 @@ export function AdminCalendarClient({
   memberId,
   memberName,
   userId,
+  callerMemberId,
+  orgAdmins,
+  hasSelfCertTemplate,
   yearStart,
   bookings,
   bankHolidays,
@@ -191,7 +211,15 @@ export function AdminCalendarClient({
   const [startHalf, setStartHalf] = useState<HalfOption>("full");
   const [endHalf, setEndHalf] = useState<HalfOption>("full");
   const [reasonId, setReasonId] = useState<string>("");
-  const [note, setNote] = useState("");
+  // First-message capture for create flow — applied AFTER the booking is saved.
+  const [firstMessage, setFirstMessage] = useState("");
+  const [firstMessageFiles, setFirstMessageFiles] = useState<File[]>([]);
+  // Latest draft of sick-management fields (lifted from SickDetailsPanel).
+  // Held in a ref alongside state so handleBook reads the freshest value
+  // without the panel forcing re-renders here on every keystroke.
+  const [sickDetails, setSickDetails] = useState<Omit<SickDetailsInput, "bookingId"> | null>(null);
+  const sickDetailsRef = useRef<Omit<SickDetailsInput, "bookingId"> | null>(null);
+  sickDetailsRef.current = sickDetails;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -209,7 +237,6 @@ export function AdminCalendarClient({
     startHalf: HalfOption;
     endHalf: HalfOption;
     reasonId: string;
-    note: string;
   } | null>(null);
 
   const bankHolidaySet = useMemo(
@@ -224,6 +251,29 @@ export function AdminCalendarClient({
     return (annual ?? absenceReasons[0]).id;
   }, [absenceReasons]);
 
+  // Sick-type detection from the currently selected reason. The Sick details
+  // panel + post-save call only fire when this is true.
+  const selectedReason = absenceReasons.find((r) => r.id === reasonId);
+  const isSickType = selectedReason?.absence_type_name?.startsWith("Sick") ?? false;
+
+  // Group reasons by absence type for the dropdown — Annual Leave first,
+  // Sick second, then any remaining types alphabetically.
+  const groupedReasons = useMemo(() => {
+    const TYPE_ORDER: Record<string, number> = { "Annual Leave": 0, "Sick": 1 };
+    const map = new Map<string, AbsenceReasonOption[]>();
+    for (const r of absenceReasons) {
+      const group = map.get(r.absence_type_name) ?? [];
+      group.push(r);
+      map.set(r.absence_type_name, group);
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => {
+      const oa = TYPE_ORDER[a] ?? 999;
+      const ob = TYPE_ORDER[b] ?? 999;
+      if (oa !== ob) return oa - ob;
+      return a.localeCompare(b);
+    });
+  }, [absenceReasons]);
+
   function openForRange(start: string, end: string) {
     setEditingBookingId(null);
     setOriginalEdit(null);
@@ -231,7 +281,9 @@ export function AdminCalendarClient({
     setReasonId(defaultReasonId);
     setStartHalf("full");
     setEndHalf("full");
-    setNote("");
+    setFirstMessage("");
+    setFirstMessageFiles([]);
+    setSickDetails(null);
     setError(null);
   }
 
@@ -239,9 +291,24 @@ export function AdminCalendarClient({
     setRange(null);
     setEditingBookingId(null);
     setOriginalEdit(null);
+    setFirstMessage("");
+    setFirstMessageFiles([]);
+    setSickDetails(null);
     setError(null);
     setSaving(false);
   }
+
+  // Stable so the conversation composer doesn't see a new identity on every
+  // parent render — the previous inline handler caused its useEffect to
+  // re-fire continually and the draft message could be lost on submit.
+  const handleFirstMessageReady = useCallback((msg: string, files: File[]) => {
+    setFirstMessage(msg);
+    setFirstMessageFiles(files);
+  }, []);
+
+  const handleSickDetailsChange = useCallback((next: Omit<SickDetailsInput, "bookingId">) => {
+    setSickDetails(next);
+  }, []);
 
   // Open the context menu anchored to the clicked booking cell
   function handleBookingClick(booking: CalendarBooking, event: React.MouseEvent) {
@@ -260,20 +327,17 @@ export function AdminCalendarClient({
     const half = (v: string | null): HalfOption => (v === "am" || v === "pm" ? v : "full");
     const sh = half(b.start_half);
     const eh = half(b.end_half);
-    const noteVal = b.employee_note ?? "";
     setEditingBookingId(b.id);
     setRange({ start: b.start_date, end: b.end_date });
     setReasonId(b.leave_reason_id);
     setStartHalf(sh);
     setEndHalf(eh);
-    setNote(noteVal);
     setOriginalEdit({
       start: b.start_date,
       end: b.end_date,
       startHalf: sh,
       endHalf: eh,
       reasonId: b.leave_reason_id,
-      note: noteVal,
     });
     setError(null);
   }
@@ -303,7 +367,6 @@ export function AdminCalendarClient({
         || startHalf !== originalEdit.startHalf
         || endHalf !== originalEdit.endHalf
         || reasonId !== originalEdit.reasonId
-        || note !== originalEdit.note
       : false;
 
   const dayCount = useMemo(() => {
@@ -340,7 +403,7 @@ export function AdminCalendarClient({
           endDate: range.end,
           startHalf: sh,
           endHalf: eh,
-          note: note.trim() || null,
+          note: null,
         })
       : await adminBookAbsence({
           memberId,
@@ -349,14 +412,70 @@ export function AdminCalendarClient({
           endDate: range.end,
           startHalf: sh,
           endHalf: eh,
-          note: note.trim() || null,
+          note: null,
         });
 
-    setSaving(false);
     if (!result.success) {
+      setSaving(false);
       setError(result.error ?? (editingBookingId ? "Failed to update booking" : "Failed to book absence"));
       return;
     }
+
+    // Resolve the booking id for downstream side-effects (sick details + first
+    // message). For edits it's the existing id; for new bookings it comes back
+    // on the result.
+    const persistedBookingId = editingBookingId
+      ?? (result as { bookingId?: string }).bookingId
+      ?? null;
+
+    // Persist sick-management fields if the selected reason is a Sick type
+    // and the panel surfaced a draft. Failure is surfaced but doesn't undo
+    // the booking save.
+    if (isSickType && persistedBookingId && sickDetailsRef.current) {
+      try {
+        const sd = sickDetailsRef.current;
+        const sdRes = await saveSickDetails({ bookingId: persistedBookingId, ...sd });
+        if (!sdRes.success) {
+          setError(`Booking saved, but sick details could not be saved: ${sdRes.error ?? "unknown error"}`);
+        }
+      } catch (e) {
+        setError(`Booking saved, but sick details could not be saved: ${e instanceof Error ? e.message : "unknown error"}`);
+      }
+    }
+
+    // For new bookings only: if the admin entered a first message or attached
+    // files, create the conversation and post that message now (before we
+    // close the sheet). Failures here are surfaced to the admin but don't
+    // unwind the booking — the booking itself is saved.
+    if (!editingBookingId && (firstMessage.trim() || firstMessageFiles.length > 0)) {
+      const newBookingId = (result as { bookingId?: string }).bookingId;
+      if (newBookingId) {
+        try {
+          const conv = await getOrCreateBookingConversation(newBookingId);
+          if (conv.success && conv.conversationId) {
+            const msgRes = await sendConversationMessage(
+              conv.conversationId,
+              firstMessage.trim() || "(attachment)",
+            );
+            if (msgRes.success && msgRes.message) {
+              for (const file of firstMessageFiles) {
+                const fd = new FormData();
+                fd.append("file", file);
+                fd.append("conversationMessageId", msgRes.message.id);
+                fd.append("memberId", memberId);
+                await uploadDocumentToMessage(fd);
+              }
+            }
+          }
+        } catch {
+          // Booking is already saved at this point — surface the message
+          // failure rather than silently dropping it.
+          setError("Booking saved, but the message could not be sent. You can add it from the Edit view.");
+        }
+      }
+    }
+
+    setSaving(false);
     setToast(editingBookingId ? "Booking updated" : `Absence booked for ${memberName}`);
     setTimeout(() => setToast(null), 3000);
     closeSheet();
@@ -504,17 +623,22 @@ export function AdminCalendarClient({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {absenceReasons.map((r) => (
-                    <SelectItem key={r.id} value={r.id}>
-                      <span className="flex items-center gap-2">
-                        <span
-                          aria-hidden
-                          className="inline-block h-3 w-3 rounded-sm"
-                          style={{ backgroundColor: r.colour }}
-                        />
-                        {r.name}
-                      </span>
-                    </SelectItem>
+                  {groupedReasons.map(([typeName, typeReasons]) => (
+                    <SelectGroup key={typeName}>
+                      <SelectLabel>{typeName}</SelectLabel>
+                      {typeReasons.map((r) => (
+                        <SelectItem key={r.id} value={r.id}>
+                          <span className="flex items-center gap-2">
+                            <span
+                              aria-hidden
+                              className="inline-block h-3 w-3 rounded-sm"
+                              style={{ backgroundColor: r.colour }}
+                            />
+                            {r.name}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   ))}
                 </SelectContent>
               </Select>
@@ -525,14 +649,23 @@ export function AdminCalendarClient({
               <span className="font-semibold">{dayCount}</span>
             </div>
 
+            {isSickType && (
+              <SickDetailsPanel
+                bookingId={editingBookingId}
+                callerMemberId={callerMemberId}
+                orgAdmins={orgAdmins}
+                hasSelfCertTemplate={hasSelfCertTemplate}
+                onSickDetailsChange={handleSickDetailsChange}
+              />
+            )}
+
             <div className="space-y-1">
-              <Label htmlFor="note">Note (optional)</Label>
-              <Textarea
-                id="note"
-                rows={3}
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="Context for this booking"
+              <Label>Conversation</Label>
+              <BookingConversation
+                bookingId={editingBookingId}
+                memberId={memberId}
+                callerMemberId={callerMemberId}
+                onFirstMessageReady={handleFirstMessageReady}
               />
             </div>
           </div>

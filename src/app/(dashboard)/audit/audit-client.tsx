@@ -99,7 +99,8 @@ const FIELD_LABELS: Record<string, string> = {
   inferred_type: "inferred type",
 };
 
-const HIDDEN_METADATA_KEYS = new Set(["clocking_date"]);
+const HIDDEN_METADATA_KEYS = new Set(["clocking_date", "member_id", "member_name"]);
+const HIDDEN_CHANGE_KEYS = new Set(["member_id"]);
 
 function formatRightValue(val: unknown): string {
   if (val === true) return "Yes";
@@ -184,9 +185,10 @@ function formatDate(dateStr: string): string {
 }
 
 function ChangeSummary({ changes }: { changes: Record<string, { old: unknown; new: unknown }> }) {
+  const visible = Object.entries(changes).filter(([field]) => !HIDDEN_CHANGE_KEYS.has(field));
   return (
     <span className="text-muted-foreground">
-      {Object.entries(changes).map(([field, { old: oldVal, new: newVal }], i) => {
+      {visible.map(([field, { old: oldVal, new: newVal }], i) => {
         const label = FIELD_LABELS[field] ?? field;
         // For rights objects, just say "X rights changed" rather than dumping the blob
         if (field === "rights" && isRightsObject(oldVal) && isRightsObject(newVal)) {
@@ -215,9 +217,11 @@ function ChangeSummary({ changes }: { changes: Record<string, { old: unknown; ne
 }
 
 function ChangeDetail({ changes }: { changes: Record<string, { old: unknown; new: unknown }> }) {
+  const visible = Object.entries(changes).filter(([field]) => !HIDDEN_CHANGE_KEYS.has(field));
+  if (visible.length === 0) return null;
   return (
     <div className="mt-2 space-y-1.5 rounded-md border bg-muted/30 p-3 text-sm">
-      {Object.entries(changes).map(([field, { old: oldVal, new: newVal }]) => {
+      {visible.map(([field, { old: oldVal, new: newVal }]) => {
         const label = FIELD_LABELS[field] ?? field;
         // For rights objects, expand to a per-right diff
         if (field === "rights" && isRightsObject(oldVal) && isRightsObject(newVal)) {
@@ -475,9 +479,13 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
           {filteredEntries.map((entry) => {
             const hasManualToggle = expandedIds.has(entry.id);
             const isExpanded = hasManualToggle ? !verbose : verbose;
-            const hasDetail =
-              (entry.changes && Object.keys(entry.changes).length > 0) ||
-              (entry.metadata && Object.keys(entry.metadata).length > 0);
+            const visibleChanges = entry.changes
+              ? Object.keys(entry.changes).filter((k) => !HIDDEN_CHANGE_KEYS.has(k))
+              : [];
+            const visibleMeta = entry.metadata
+              ? Object.keys(entry.metadata).filter((k) => !HIDDEN_METADATA_KEYS.has(k))
+              : [];
+            const hasDetail = visibleChanges.length > 0 || visibleMeta.length > 0;
 
             return (
               <div
@@ -498,7 +506,6 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline gap-2 flex-wrap">
-                      <span className="font-medium">{entry.actor_name}</span>
                       <span className="text-muted-foreground">
                         {ACTION_LABELS[entry.action] ?? entry.action}
                       </span>
@@ -548,8 +555,9 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
                       </div>
                     )}
                   </div>
-                  <div className="shrink-0 text-xs text-muted-foreground whitespace-nowrap">
-                    {formatDate(entry.created_at)}
+                  <div className="shrink-0 text-xs whitespace-nowrap text-right">
+                    <span className="font-medium text-foreground">{entry.actor_name}</span>
+                    <span className="text-muted-foreground">{" · "}{formatDate(entry.created_at)}</span>
                   </div>
                 </div>
 
