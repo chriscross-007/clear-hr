@@ -183,7 +183,7 @@ export function calculateEntitlement(
 
     if (b.status === "pending") {
       pending += val;
-    } else if (b.status === "approved" && b.end_date < today) {
+    } else if (b.status === "approved" && b.end_date !== null && b.end_date < today) {
       taken += val;
     } else {
       booked += val;
