@@ -241,7 +241,7 @@ export default async function MyHolidayPage() {
       .select("id, start_date, end_date, status, days_deducted, absence_reasons(name, colour, absence_type_id, absence_types(requires_approval))")
       .eq("member_id", member.id)
       .lte("start_date", calEndStr)
-      .gte("end_date", yearRec.year_start)
+      .or(`end_date.gte.${yearRec.year_start},end_date.is.null`)
       .in("status", ["pending", "approved"]);
 
     calendarBookings = (calBookingsData ?? []).map((b) => {

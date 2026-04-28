@@ -166,7 +166,7 @@ export async function uploadDocumentToMessage(
 
 export async function getDocumentDownloadUrl(
   documentId: string,
-): Promise<{ success: boolean; error?: string; url?: string; fileName?: string }> {
+): Promise<{ success: boolean; error?: string; url?: string; downloadUrl?: string; fileName?: string }> {
   try {
     const { supabase } = await getCallerMember();
 
@@ -178,14 +178,28 @@ export async function getDocumentDownloadUrl(
     if (!doc) return { success: false, error: "Document not found" };
 
     const admin = getAdminClient();
+    const storagePath = doc.storage_path as string;
+    const fileName = doc.file_name as string;
+
+    // Inline URL for viewing in the browser
     const { data, error } = await admin.storage
       .from("member-documents")
-      .createSignedUrl(doc.storage_path as string, 60);
+      .createSignedUrl(storagePath, 120);
     if (error || !data) {
       return { success: false, error: error?.message ?? "Could not create download link" };
     }
 
-    return { success: true, url: data.signedUrl, fileName: doc.file_name as string };
+    // Download URL with Content-Disposition: attachment
+    const { data: dlData } = await admin.storage
+      .from("member-documents")
+      .createSignedUrl(storagePath, 120, { download: fileName });
+
+    return {
+      success: true,
+      url: data.signedUrl,
+      downloadUrl: dlData?.signedUrl ?? data.signedUrl,
+      fileName,
+    };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }

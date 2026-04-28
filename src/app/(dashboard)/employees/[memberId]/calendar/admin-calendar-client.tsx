@@ -5,12 +5,6 @@ import { useRouter } from "next/navigation";
 import { HolidayCalendar, type CalendarBooking, type CalendarBankHoliday } from "@/components/holiday-calendar";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -20,7 +14,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Pencil, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -38,7 +32,9 @@ import {
   uploadDocumentToMessage,
 } from "../../../conversation-actions";
 import { SickDetailsPanel, type OrgAdminOption } from "./sick-details-panel";
-import { saveSickDetails, type SickDetailsInput } from "../../../sick-booking-actions";
+import { BookingHistoryPopover } from "@/components/booking-history-popover";
+import { saveSickDetails } from "../../../sick-booking-actions";
+import type { SickDetailsInput } from "../../../sick-booking-types";
 import {
   Select,
   SelectContent,
@@ -91,6 +87,8 @@ interface AdminCalendarClientProps {
   absenceTypes: AbsenceTypeOption[];
   workPattern: WorkPatternHours | null;
   bankHolidayHandling: string;
+  /** If set, auto-open this booking's edit form on mount. */
+  initialBookingId?: string | null;
 }
 
 type CalendarFilters = {
@@ -153,6 +151,7 @@ export function AdminCalendarClient({
   absenceTypes,
   workPattern,
   bankHolidayHandling,
+  initialBookingId,
 }: AdminCalendarClientProps) {
   const router = useRouter();
 
@@ -207,7 +206,7 @@ export function AdminCalendarClient({
     });
   }
 
-  const [range, setRange] = useState<{ start: string; end: string } | null>(null);
+  const [range, setRange] = useState<{ start: string; end: string | null } | null>(null);
   const [startHalf, setStartHalf] = useState<HalfOption>("full");
   const [endHalf, setEndHalf] = useState<HalfOption>("full");
   const [reasonId, setReasonId] = useState<string>("");
@@ -220,24 +219,37 @@ export function AdminCalendarClient({
   const [sickDetails, setSickDetails] = useState<Omit<SickDetailsInput, "bookingId"> | null>(null);
   const sickDetailsRef = useRef<Omit<SickDetailsInput, "bookingId"> | null>(null);
   sickDetailsRef.current = sickDetails;
+  // Snapshot of sick details after the panel finishes loading — used to detect
+  // whether the user has actually changed anything.
+  const [originalSickDetails, setOriginalSickDetails] = useState<string | null>(null);
+  const sickDetailsDirty = sickDetails !== null && originalSickDetails !== null
+    && JSON.stringify(sickDetails) !== originalSickDetails;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   // Edit/delete state for existing bookings on the calendar
   const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
-  const [actionMenu, setActionMenu] = useState<{ booking: CalendarBooking; x: number; y: number } | null>(null);
   const [deletingBooking, setDeletingBooking] = useState<CalendarBooking | null>(null);
   const [deleting, setDeleting] = useState(false);
   // Snapshot of the booking as it was when the edit sheet opened — used to
   // drive the "is the form dirty?" check that gates Save Changes.
   const [originalEdit, setOriginalEdit] = useState<{
     start: string;
-    end: string;
+    end: string | null;
     startHalf: HalfOption;
     endHalf: HalfOption;
     reasonId: string;
   } | null>(null);
+
+  // Auto-open a specific booking's edit form when navigated to with ?bookingId=
+  const initialBookingHandled = useRef(false);
+  useEffect(() => {
+    if (!initialBookingId || initialBookingHandled.current) return;
+    initialBookingHandled.current = true;
+    const match = bookings.find((b) => b.id === initialBookingId);
+    if (match) openEditFor(match);
+  }, [initialBookingId, bookings]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const bankHolidaySet = useMemo(
     () => new Set(bankHolidays.map((bh) => bh.date)),
@@ -284,18 +296,30 @@ export function AdminCalendarClient({
     setFirstMessage("");
     setFirstMessageFiles([]);
     setSickDetails(null);
+
+    setOriginalSickDetails(null);
+    sickPanelLoaded.current = false;
     setError(null);
   }
 
-  function closeSheet() {
+  function closeSheet(navigateBack = true) {
+    const wasDeepLinked = initialBookingId && editingBookingId === initialBookingId;
     setRange(null);
     setEditingBookingId(null);
     setOriginalEdit(null);
     setFirstMessage("");
     setFirstMessageFiles([]);
     setSickDetails(null);
+
+    setOriginalSickDetails(null);
+    sickPanelLoaded.current = false;
     setError(null);
     setSaving(false);
+
+    // If the user arrived via a deep-link, go back on cancel/dismiss.
+    // When called from the save path, navigateBack is false — the caller
+    // handles navigation itself after closeSheet returns.
+    if (navigateBack && wasDeepLinked) router.back();
   }
 
   // Stable so the conversation composer doesn't see a new identity on every
@@ -306,18 +330,33 @@ export function AdminCalendarClient({
     setFirstMessageFiles(files);
   }, []);
 
+  // The panel fires onSickDetailsChange on mount (with defaults) and again
+  // after its async load. We keep overwriting the baseline snapshot until the
+  // panel signals it has finished loading, then any further change is a user
+  // edit that makes the form dirty.
+  const sickPanelLoaded = useRef(false);
   const handleSickDetailsChange = useCallback((next: Omit<SickDetailsInput, "bookingId">) => {
     setSickDetails(next);
+    if (!sickPanelLoaded.current) {
+      // Still loading — update the baseline
+      setOriginalSickDetails(JSON.stringify(next));
+    }
+  }, []);
+  const handleSickPanelLoaded = useCallback((baseline: Omit<SickDetailsInput, "bookingId">) => {
+    setOriginalSickDetails(JSON.stringify(baseline));
+    sickPanelLoaded.current = true;
   }, []);
 
-  // Open the context menu anchored to the clicked booking cell
-  function handleBookingClick(booking: CalendarBooking, event: React.MouseEvent) {
-    setActionMenu({ booking, x: event.clientX, y: event.clientY });
+  // Click an existing booking → open the edit form directly
+  function handleBookingClick(booking: CalendarBooking, _event: React.MouseEvent) {
+    openEditFor(booking);
   }
 
   // Load the full booking record and open the Sheet in edit mode
   async function openEditFor(booking: CalendarBooking) {
-    setActionMenu(null);
+
+    setOriginalSickDetails(null);
+    sickPanelLoaded.current = false;
     const result = await getBookingDetails(booking.id);
     if (!result.success || !result.booking) {
       setError(result.error ?? "Failed to load booking");
@@ -354,13 +393,22 @@ export function AdminCalendarClient({
     setDeletingBooking(null);
     setToast(`Booking deleted`);
     setTimeout(() => setToast(null), 3000);
-    router.refresh();
+
+    const shouldGoBack = initialBookingId && editingBookingId === initialBookingId;
+    closeSheet(false);
+
+    if (shouldGoBack) {
+      router.back();
+    } else {
+      router.refresh();
+    }
   }
 
+  const isOpenEnded = range !== null && range.end === null;
   const sameDay = range ? range.start === range.end : false;
 
   // Edit-only: has the admin actually changed anything vs what they opened?
-  const isDirty =
+  const bookingFieldsDirty =
     editingBookingId !== null && originalEdit !== null && range !== null
       ? range.start !== originalEdit.start
         || range.end !== originalEdit.end
@@ -368,14 +416,17 @@ export function AdminCalendarClient({
         || endHalf !== originalEdit.endHalf
         || reasonId !== originalEdit.reasonId
       : false;
+  const isDirty = bookingFieldsDirty || sickDetailsDirty;
 
   const dayCount = useMemo(() => {
     if (!range) return 0;
+    // Open-ended bookings use today as the effective end for the live count.
+    const effectiveEnd = range.end ?? new Date().toISOString().slice(0, 10);
     const sh = startHalf !== "full";
     const eh = sameDay ? false : endHalf !== "full";
     return countWorkingDaysSimple(
       range.start,
-      range.end,
+      effectiveEnd,
       sh,
       eh,
       workPattern,
@@ -402,7 +453,7 @@ export function AdminCalendarClient({
           startDate: range.start,
           endDate: range.end,
           startHalf: sh,
-          endHalf: eh,
+          endHalf: isOpenEnded ? null : eh,
           note: null,
         })
       : await adminBookAbsence({
@@ -411,7 +462,7 @@ export function AdminCalendarClient({
           startDate: range.start,
           endDate: range.end,
           startHalf: sh,
-          endHalf: eh,
+          endHalf: isOpenEnded ? null : eh,
           note: null,
         });
 
@@ -429,17 +480,18 @@ export function AdminCalendarClient({
       ?? null;
 
     // Persist sick-management fields if the selected reason is a Sick type
-    // and the panel surfaced a draft. Failure is surfaced but doesn't undo
-    // the booking save.
+    // and the panel surfaced a draft. If this fails, keep the sheet open so
+    // the admin can see the error (closeSheet clears the error state).
+    let sideEffectError: string | null = null;
     if (isSickType && persistedBookingId && sickDetailsRef.current) {
       try {
         const sd = sickDetailsRef.current;
         const sdRes = await saveSickDetails({ bookingId: persistedBookingId, ...sd });
         if (!sdRes.success) {
-          setError(`Booking saved, but sick details could not be saved: ${sdRes.error ?? "unknown error"}`);
+          sideEffectError = `Booking saved, but sick details could not be saved: ${sdRes.error ?? "unknown error"}`;
         }
       } catch (e) {
-        setError(`Booking saved, but sick details could not be saved: ${e instanceof Error ? e.message : "unknown error"}`);
+        sideEffectError = `Booking saved, but sick details could not be saved: ${e instanceof Error ? e.message : "unknown error"}`;
       }
     }
 
@@ -468,18 +520,33 @@ export function AdminCalendarClient({
             }
           }
         } catch {
-          // Booking is already saved at this point — surface the message
-          // failure rather than silently dropping it.
-          setError("Booking saved, but the message could not be sent. You can add it from the Edit view.");
+          sideEffectError = "Booking saved, but the message could not be sent. You can add it from the Edit view.";
         }
       }
     }
 
     setSaving(false);
+
+    if (sideEffectError) {
+      // Keep the sheet open so the admin can see the error.
+      setError(sideEffectError);
+      router.refresh();
+      return;
+    }
+
     setToast(editingBookingId ? "Booking updated" : `Absence booked for ${memberName}`);
     setTimeout(() => setToast(null), 3000);
-    closeSheet();
-    router.refresh();
+
+    // If the user arrived via a deep-link (e.g. from the incomplete sick
+    // bookings widget), navigate back to where they came from after saving.
+    const shouldGoBack = initialBookingId && editingBookingId === initialBookingId;
+    closeSheet(false);
+
+    if (shouldGoBack) {
+      router.back();
+    } else {
+      router.refresh();
+    }
   }
 
   return (
@@ -534,9 +601,14 @@ export function AdminCalendarClient({
       <Sheet open={range !== null} onOpenChange={(o) => !o && closeSheet()}>
         <SheetContent className="flex flex-col gap-4 sm:max-w-md">
           <SheetHeader>
-            <SheetTitle>
-              {editingBookingId ? "Edit Booking" : `Book absence for ${memberName}`}
-            </SheetTitle>
+            <div className="flex items-center gap-2">
+              <SheetTitle>
+                {editingBookingId ? "Edit Booking" : `Book absence for ${memberName}`}
+              </SheetTitle>
+              {editingBookingId && (
+                <BookingHistoryPopover bookingId={editingBookingId} />
+              )}
+            </div>
           </SheetHeader>
 
           {error && (
@@ -556,7 +628,8 @@ export function AdminCalendarClient({
                       const v = e.target.value;
                       if (!v) return;
                       // Keep start <= end by bumping end forward when needed.
-                      setRange((prev) => prev ? { start: v, end: v > prev.end ? v : prev.end } : prev);
+                      // Open-ended bookings (end = null) don't need bumping.
+                      setRange((prev) => prev ? { start: v, end: prev.end !== null && v > prev.end ? v : prev.end } : prev);
                     }}
                   />
                 ) : (
@@ -566,19 +639,50 @@ export function AdminCalendarClient({
               <div className="space-y-1">
                 <Label htmlFor="booking-end-date">End Date</Label>
                 {editingBookingId ? (
-                  <Input
-                    id="booking-end-date"
-                    type="date"
-                    value={range?.end ?? ""}
-                    min={range?.start}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (!v) return;
-                      setRange((prev) => prev ? { start: prev.start, end: v < prev.start ? prev.start : v } : prev);
-                    }}
-                  />
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="booking-end-date"
+                      type="date"
+                      value={range?.end ?? ""}
+                      min={range?.start}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (!v) {
+                          // Only allow clearing end date for sick-type reasons
+                          if (isSickType) {
+                            setRange((prev) => prev ? { start: prev.start, end: null } : prev);
+                          }
+                          return;
+                        }
+                        setRange((prev) => prev ? { start: prev.start, end: v < prev.start ? prev.start : v } : prev);
+                      }}
+                    />
+                    {isOpenEnded && (
+                      <span className="shrink-0 rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                        Open
+                      </span>
+                    )}
+                  </div>
                 ) : (
-                  <Input disabled value={range ? formatLongDate(range.end) : ""} className="bg-muted" />
+                  <div className="flex items-center gap-2">
+                    <Input disabled value={range?.end ? formatLongDate(range.end) : ""} className="bg-muted" />
+                    {isSickType && (
+                      <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs">
+                        <Checkbox
+                          checked={isOpenEnded}
+                          onCheckedChange={(v) => {
+                            if (v) {
+                              setRange((prev) => prev ? { start: prev.start, end: null } : prev);
+                            } else {
+                              // Restore end = start when un-checking "Open"
+                              setRange((prev) => prev ? { start: prev.start, end: prev.start } : prev);
+                            }
+                          }}
+                        />
+                        <span>Open</span>
+                      </label>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -600,8 +704,8 @@ export function AdminCalendarClient({
               <div className="space-y-1">
                 <Label>End</Label>
                 <Select
-                  value={sameDay ? "full" : endHalf}
-                  disabled={sameDay}
+                  value={sameDay || isOpenEnded ? "full" : endHalf}
+                  disabled={sameDay || isOpenEnded}
                   onValueChange={(v) => setEndHalf(v as HalfOption)}
                 >
                   <SelectTrigger>
@@ -646,16 +750,21 @@ export function AdminCalendarClient({
 
             <div className="rounded-md border bg-muted/30 p-3 text-sm">
               <span className="text-muted-foreground">Working days to deduct: </span>
-              <span className="font-semibold">{dayCount}</span>
+              <span className="font-semibold">
+                {dayCount}
+                {isOpenEnded && <span className="ml-1 font-normal text-muted-foreground">(and counting)</span>}
+              </span>
             </div>
 
             {isSickType && (
               <SickDetailsPanel
                 bookingId={editingBookingId}
+                bookingEndDate={range?.end ?? null}
                 callerMemberId={callerMemberId}
                 orgAdmins={orgAdmins}
                 hasSelfCertTemplate={hasSelfCertTemplate}
                 onSickDetailsChange={handleSickDetailsChange}
+                onLoaded={handleSickPanelLoaded}
               />
             )}
 
@@ -670,53 +779,47 @@ export function AdminCalendarClient({
             </div>
           </div>
 
-          <SheetFooter className="flex-row justify-end gap-2">
-            <Button variant="outline" onClick={closeSheet} disabled={saving}>Cancel</Button>
-            <Button
-              onClick={handleBook}
-              disabled={saving || !reasonId || (editingBookingId !== null && !isDirty)}
-            >
-              {saving
-                ? (editingBookingId ? "Saving..." : "Booking...")
-                : (editingBookingId ? "Save Changes" : "Book")}
-            </Button>
+          <SheetFooter className="flex-row justify-between gap-2">
+            <div>
+              {editingBookingId && (
+                <Button
+                  variant="destructive"
+                  disabled={saving}
+                  onClick={() => {
+                    const matched = absenceReasons.find((r) => r.id === reasonId);
+                    const bk: CalendarBooking = {
+                      id: editingBookingId,
+                      start_date: range?.start ?? "",
+                      end_date: range?.end ?? null,
+                      status: "approved",
+                      reason_name: matched?.name ?? "this",
+                      reason_colour: matched?.colour ?? "#888",
+                      days_deducted: null,
+                      requires_approval: false,
+                      absence_type_id: null,
+                    };
+                    setDeletingBooking(bk);
+                  }}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete
+                </Button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={closeSheet} disabled={saving}>Cancel</Button>
+              <Button
+                onClick={handleBook}
+                disabled={saving || !reasonId || (editingBookingId !== null && !isDirty)}
+              >
+                {saving
+                  ? (editingBookingId ? "Saving..." : "Booking...")
+                  : (editingBookingId ? "Save Changes" : "Book")}
+              </Button>
+            </div>
           </SheetFooter>
         </SheetContent>
       </Sheet>
-
-      {/* Context menu for an existing booking — anchored to the click point
-          via a zero-size hidden trigger. */}
-      <DropdownMenu
-        open={actionMenu !== null}
-        onOpenChange={(o) => { if (!o) setActionMenu(null); }}
-      >
-        <DropdownMenuTrigger asChild>
-          <span
-            aria-hidden
-            className="pointer-events-none fixed"
-            style={{ left: actionMenu?.x ?? 0, top: actionMenu?.y ?? 0, width: 0, height: 0 }}
-          />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          <DropdownMenuItem
-            onSelect={() => { if (actionMenu) openEditFor(actionMenu.booking); }}
-          >
-            <Pencil className="mr-2 h-4 w-4" />
-            Edit
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="text-destructive focus:text-destructive"
-            onSelect={() => {
-              if (!actionMenu) return;
-              setDeletingBooking(actionMenu.booking);
-              setActionMenu(null);
-            }}
-          >
-            <Trash2 className="mr-2 h-4 w-4" />
-            Delete
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
 
       {/* Delete confirmation */}
       <AlertDialog
@@ -730,7 +833,7 @@ export function AdminCalendarClient({
               {deletingBooking && (
                 <>
                   Are you sure you want to delete this {deletingBooking.reason_name} booking
-                  ({deletingBooking.start_date} to {deletingBooking.end_date})?
+                  ({deletingBooking.start_date}{deletingBooking.end_date ? ` to ${deletingBooking.end_date}` : " — Open"})?
                   This action cannot be undone.
                 </>
               )}
@@ -753,12 +856,12 @@ export function AdminCalendarClient({
 }
 
 // ---------------------------------------------------------------------------
-// External legend — vertical 2-column list of active absence reasons, to the
-// left of the calendar grid. Caps at 12 visible entries and shows "+N more"
+// External legend — single-column list of active absence reasons, to the
+// left of the calendar grid. Caps at 20 visible entries and shows "+N more"
 // for any overflow.
 // ---------------------------------------------------------------------------
 
-const MAX_LEGEND_ITEMS = 12;
+const MAX_LEGEND_ITEMS = 20;
 
 function CalendarLegend({
   bookings,
@@ -785,11 +888,8 @@ function CalendarLegend({
   const overflow = items.length - visible.length;
 
   return (
-    <div className="w-32 shrink-0">
-      <div
-        className="grid gap-x-2 gap-y-1"
-        style={{ gridTemplateColumns: visible.length > 6 ? "repeat(2, minmax(0, 1fr))" : "repeat(1, minmax(0, 1fr))", gridAutoFlow: "column", gridTemplateRows: `repeat(${Math.min(6, visible.length)}, minmax(0, auto))` }}
-      >
+    <div className="w-40 shrink-0">
+      <div className="flex flex-col gap-1">
         {visible.map((l) => (
           <div key={l.name} className="flex items-center gap-1.5 text-xs">
             <span className="inline-block h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: l.colour }} />

@@ -32,7 +32,7 @@ export type BookingUsage = {
   days_deducted: number | null;
   hours_deducted: number | null;
   status: string;
-  end_date: string;
+  end_date: string | null;
 };
 
 export type EntitlementResult = {

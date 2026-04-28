@@ -53,6 +53,16 @@ const ACTION_LABELS: Record<string, string> = {
   "employee_profile.created": "Created Employee Profile",
   "employee_profile.updated": "Updated Employee Profile",
   "employee_profile.deleted": "Deleted Employee Profile",
+  "booking.submitted": "Submitted Booking",
+  "booking.updated": "Updated Booking",
+  "booking.resubmitted": "Resubmitted Booking",
+  "booking.created": "Created Booking",
+  "booking.approved": "Approved Booking",
+  "booking.rejected": "Rejected Booking",
+  "booking.cancelled": "Cancelled Booking",
+  "booking.deleted": "Deleted Booking",
+  "sick_details.created": "Created Sick Details",
+  "sick_details.updated": "Updated Sick Details",
 };
 
 const FILTER_ACTIONS = [
@@ -70,6 +80,16 @@ const FILTER_ACTIONS = [
   "employee_profile.created",
   "employee_profile.updated",
   "employee_profile.deleted",
+  "booking.submitted",
+  "booking.updated",
+  "booking.resubmitted",
+  "booking.created",
+  "booking.approved",
+  "booking.rejected",
+  "booking.cancelled",
+  "booking.deleted",
+  "sick_details.created",
+  "sick_details.updated",
 ];
 
 // Lookup from right key → human-readable label
@@ -97,6 +117,25 @@ const FIELD_LABELS: Record<string, string> = {
   rights: "Rights",
   clocked_at: "clocked at",
   inferred_type: "inferred type",
+  start_date: "Start Date",
+  end_date: "End Date",
+  start_half: "Start Half-Day",
+  end_half: "End Half-Day",
+  days_deducted: "Days Deducted",
+  leave_reason: "Leave Reason",
+  status: "Status",
+  note: "Note",
+  approver_note: "Approver Note",
+  self_cert_required: "Self-Cert Required",
+  self_cert_received_date: "Self-Cert Received",
+  btw_required: "BTW Required",
+  btw_date: "BTW Date",
+  btw_completed: "BTW Completed",
+  med_cert_required: "Med Cert Required",
+  med_cert_received_date: "Med Cert Received",
+  is_paid: "Paid",
+  hr_approved: "HR Approved",
+  completion_status: "Completion Status",
 };
 
 const HIDDEN_METADATA_KEYS = new Set(["clocking_date", "member_id", "member_name"]);
@@ -342,7 +381,8 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
   }
 
   return (
-    <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
+    <div className="w-full px-4 sm:px-6 lg:px-8">
+      <div className="sticky top-16 z-10 bg-background pt-8 pb-4">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-bold">Audit Trail</h1>
         <div className="flex items-center gap-2">
@@ -469,7 +509,9 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
             )}
           </div>
       </div>
+      </div>
 
+      <div className="pb-8">
       {filteredEntries.length === 0 ? (
         <div className="rounded-md border p-8 text-center text-muted-foreground">
           No audit trail entries found
@@ -576,6 +618,7 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
           })}
         </div>
       )}
+      </div>
     </div>
   );
 }

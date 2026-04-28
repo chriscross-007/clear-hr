@@ -1,0 +1,14 @@
+#,BreakOUT inside Band,BreakIN inside band,Clocked duration compared to allowed break duration,Paid break,Scenario,Deduct hours,Add Hours,Flag
+1,n,n,,,Failed to clock the break,Penalty amount ,,
+2,y,y,BrkIN - BrkOUT <= allowed,y,Expected behaviour,,BrkIN - BrkOUT,
+3,y,y,BrkIN - BrkOUT <= allowed,n,Expected behaviour,Allowed - (BrkIN - BrkOUT) ,,
+4,y,y,BrkIN - BrkOUT > allowed,y,Break overrun inside band,,Allowed,BO
+5,y,y,BrkIN - BrkOUT > allowed,n,Break overrun inside band,,,BO
+6,y,n,BBend - BrkOUT <= allowed,y,"Late back, short break",,BBend - BrkOUT,BL
+7,y,n,BBend - BrkOUT <= allowed,n,"Late back, short break",Allowed - (Bend - BrkOUT),,BL
+8,y,n,BBend - BrkOUT > allowed,y,"Late back, long break",,Allowed,BLO
+9,y,n,BBend - BrkOUT > allowed,n,"Late back, long break",,,BLO
+10,n,y,BrkIN - BBstart <= allowed,y,"Early out, short break",,BrkIN - BBstart,BE
+11,n,y,BrkIN - BBstart <= allowed,n,"Early out, short break",Allowed - BrkIN-BBstart,,BE
+12,n,y,BrkIN - BBstart > allowed,y,"Early out, long break",,Allowed,BEO
+13,n,y,BrkIN - BBstart > allowed,n,"Early out, long break",,,BEO

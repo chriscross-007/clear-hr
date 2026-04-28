@@ -43,6 +43,8 @@ import {
 } from "@/components/ui/table";
 import { changeEmployeeHolidayProfile, updateHolidayYearRecord, deleteHolidayYearRecord, cancelBookingAsAdmin } from "../../actions";
 import { assignWorkProfile } from "../../../work-profile-actions";
+import { CompletionStatusBadge } from "@/components/completion-status-badge";
+import type { CompletionStatus } from "../../../sick-booking-types";
 
 type HolidayYearRecord = {
   id: string;
@@ -69,13 +71,14 @@ type AbsenceProfileRow = {
 type MemberBooking = {
   id: string;
   start_date: string;
-  end_date: string;
+  end_date: string | null;
   start_half: string | null;
   end_half: string | null;
   days_deducted: number | null;
   status: string;
   reason_name: string;
   reason_colour: string;
+  completion_status: string | null;
 };
 
 interface EmployeeHolidayClientProps {
@@ -538,8 +541,10 @@ export function EmployeeHolidayClient({
                   </TableHeader>
                   <TableBody>
                     {memberBookings.map((b) => {
-                      const sameDay = b.start_date === b.end_date;
-                      let dateLabel = sameDay ? fmtDate(b.start_date) : `${fmtDate(b.start_date)} – ${fmtDate(b.end_date)}`;
+                      const sameDay = b.end_date !== null && b.start_date === b.end_date;
+                      let dateLabel = b.end_date === null
+                        ? `${fmtDate(b.start_date)} – Open`
+                        : sameDay ? fmtDate(b.start_date) : `${fmtDate(b.start_date)} – ${fmtDate(b.end_date)}`;
                       if (b.start_half) dateLabel += ` (${b.start_half.toUpperCase()})`;
                       if (!sameDay && b.end_half) dateLabel += ` to (${b.end_half.toUpperCase()})`;
                       const canCancel = b.status === "pending" || b.status === "approved";
@@ -554,13 +559,18 @@ export function EmployeeHolidayClient({
                           </TableCell>
                           <TableCell>{b.days_deducted ?? "—"} {unit}</TableCell>
                           <TableCell>
-                            <Badge variant={
-                              b.status === "approved" ? "default" :
-                              b.status === "pending" ? "outline" :
-                              b.status === "rejected" ? "destructive" : "secondary"
-                            }>
-                              {b.status.charAt(0).toUpperCase() + b.status.slice(1)}
-                            </Badge>
+                            <div className="flex items-center gap-1.5">
+                              <Badge variant={
+                                b.status === "approved" ? "default" :
+                                b.status === "pending" ? "outline" :
+                                b.status === "rejected" ? "destructive" : "secondary"
+                              }>
+                                {b.status.charAt(0).toUpperCase() + b.status.slice(1)}
+                              </Badge>
+                              {b.completion_status && b.completion_status !== "complete" && (
+                                <CompletionStatusBadge status={b.completion_status as CompletionStatus} />
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell>
                             {canCancel && (
@@ -598,7 +608,9 @@ export function EmployeeHolidayClient({
                 <>
                   Are you sure you want to cancel this {cancellingBooking.status} booking for{" "}
                   <strong>{fmtDate(cancellingBooking.start_date)}</strong>
-                  {cancellingBooking.start_date !== cancellingBooking.end_date && <> – <strong>{fmtDate(cancellingBooking.end_date)}</strong></>}
+                  {cancellingBooking.end_date === null
+                    ? <> – <strong>Open</strong></>
+                    : cancellingBooking.start_date !== cancellingBooking.end_date && <> – <strong>{fmtDate(cancellingBooking.end_date)}</strong></>}
                   {" "}({cancellingBooking.reason_name})? The days will be returned to the employee&apos;s balance.
                 </>
               )}

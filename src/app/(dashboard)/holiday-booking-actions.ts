@@ -24,7 +24,7 @@ export type HolidayBookingRow = {
   id: string;
   leave_reason_id: string;
   start_date: string;
-  end_date: string;
+  end_date: string | null;
   start_half: string | null;
   end_half: string | null;
   days_deducted: number | null;
@@ -480,7 +480,7 @@ async function validateBookingRules(
               .in("member_id", teammateIds)
               .in("status", ["approved", "pending"])
               .lte("start_date", dateStr)
-              .gte("end_date", dateStr);
+              .or(`end_date.gte.${dateStr},end_date.is.null`);
 
             if (excludeBookingId) {
               query = query.neq("id", excludeBookingId);
@@ -537,7 +537,7 @@ async function checkTeamOverlap(
     .in("member_id", teammateIds)
     .eq("status", "approved")
     .lte("start_date", endDate)
-    .gte("end_date", startDate);
+    .or(`end_date.gte.${startDate},end_date.is.null`);
 
   return (count ?? 0) > 0;
 }
@@ -552,14 +552,14 @@ export async function submitHolidayBooking(
   try {
     const { supabase, member } = await getCallerMember();
 
-    // Check for same-employee overlap
+    // Check for same-employee overlap (open-ended bookings extend indefinitely)
     const { count: selfOverlap } = await supabase
       .from("holiday_bookings")
       .select("id", { count: "exact", head: true })
       .eq("member_id", member.id)
       .in("status", ["pending", "approved"])
       .lte("start_date", input.endDate)
-      .gte("end_date", input.startDate);
+      .or(`end_date.gte.${input.startDate},end_date.is.null`);
 
     if (selfOverlap && selfOverlap > 0) {
       return { success: false, error: "You already have a booking on one or more of these dates." };
@@ -624,6 +624,28 @@ export async function submitHolidayBooking(
 
     if (insertError) return { success: false, error: insertError.message };
 
+    // Audit log — employee submitted a booking
+    const memberName = `${member.first_name ?? ""} ${member.last_name ?? ""}`.trim();
+    logAudit({
+      organisationId: member.organisation_id,
+      actorId: member.id,
+      actorName: memberName,
+      action: "booking.submitted",
+      targetType: "booking",
+      targetLabel: `${memberName} — ${leaveTypeName}`,
+      changes: {
+        start_date: { old: null, new: input.startDate },
+        end_date: { old: null, new: input.endDate },
+        leave_reason: { old: null, new: leaveTypeName },
+        days_deducted: { old: null, new: daysDeducted },
+        status: { old: null, new: status },
+        start_half: { old: null, new: input.startHalf },
+        end_half: { old: null, new: input.endHalf },
+        note: { old: null, new: input.note?.trim() || null },
+      },
+      metadata: { member_id: member.id, member_name: memberName },
+    });
+
     // Fire-and-forget email notification
     const headersList = await headers();
     const host = headersList.get("host") ?? "localhost:3000";
@@ -676,10 +698,11 @@ export async function updateHolidayBooking(
   try {
     const { supabase, member } = await getCallerMember();
 
-    // Verify booking belongs to current user and is pending or cancelled
+    // Verify booking belongs to current user and is pending or cancelled.
+    // Fetch full row for the audit diff.
     const { data: existing } = await supabase
       .from("holiday_bookings")
-      .select("id, status")
+      .select("id, status, leave_reason_id, start_date, end_date, start_half, end_half, days_deducted, hours_deducted, employee_note, absence_reasons(name)")
       .eq("id", bookingId)
       .eq("member_id", member.id)
       .in("status", ["pending", "cancelled"])
@@ -699,7 +722,7 @@ export async function updateHolidayBooking(
       .in("status", ["pending", "approved"])
       .neq("id", bookingId)
       .lte("start_date", input.endDate)
-      .gte("end_date", input.startDate);
+      .or(`end_date.gte.${input.startDate},end_date.is.null`);
 
     if (selfOverlap && selfOverlap > 0) {
       return { success: false, error: "You already have a booking on one or more of these dates." };
@@ -746,6 +769,58 @@ export async function updateHolidayBooking(
       .eq("member_id", member.id);
 
     if (error) return { success: false, error: error.message };
+
+    // Audit log — employee updated their own booking
+    const memberName = `${member.first_name ?? ""} ${member.last_name ?? ""}`.trim();
+    const oldReasonName = (existing.absence_reasons as unknown as { name: string } | null)?.name ?? null;
+    // Resolve new reason name if it changed
+    let newReasonName = oldReasonName;
+    if (input.leaveReasonId !== existing.leave_reason_id) {
+      const { data: newReason } = await supabase
+        .from("absence_reasons")
+        .select("name")
+        .eq("id", input.leaveReasonId)
+        .single();
+      newReasonName = newReason?.name ?? null;
+    }
+
+    const changes = diffChanges(
+      {
+        start_date: existing.start_date,
+        end_date: existing.end_date,
+        start_half: existing.start_half,
+        end_half: existing.end_half,
+        days_deducted: Number(existing.days_deducted),
+        note: existing.employee_note,
+        leave_reason: oldReasonName,
+        status: existing.status,
+      },
+      {
+        start_date: input.startDate,
+        end_date: input.endDate,
+        start_half: input.startHalf,
+        end_half: input.endHalf,
+        days_deducted: daysDeducted,
+        note: input.note || null,
+        leave_reason: newReasonName,
+        status: wasCancelled ? "pending" : existing.status,
+      },
+    );
+
+    if (changes) {
+      logAudit({
+        organisationId: member.organisation_id,
+        actorId: member.id,
+        actorName: memberName,
+        action: wasCancelled ? "booking.resubmitted" : "booking.updated",
+        targetType: "booking",
+        targetId: bookingId,
+        targetLabel: `${memberName} — ${newReasonName ?? ""}`.trim(),
+        changes,
+        metadata: { member_id: member.id, member_name: memberName },
+      });
+    }
+
     return { success: true, resubmitted: wasCancelled };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
@@ -760,7 +835,7 @@ export type AdminBookAbsenceInput = {
   memberId: string;
   leaveReasonId: string;
   startDate: string;
-  endDate: string;
+  endDate: string | null;
   startHalf: string | null;
   endHalf: string | null;
   note: string | null;
@@ -794,14 +869,20 @@ export async function adminBookAbsence(
     if (!target) return { success: false, error: "Member not found" };
     const memberName = `${target.first_name ?? ""} ${target.last_name ?? ""}`.trim();
 
-    // Overlap check against the target's existing non-cancelled bookings
+    // Overlap check against the target's existing non-cancelled bookings.
+    // For open-ended bookings (endDate = null) we only check that the start
+    // date itself is free — extending to infinity would block any future
+    // booking (e.g. annual leave next month), which is too aggressive. When
+    // the admin closes the sick booking with a real end date, the normal
+    // update overlap check will validate the full range.
+    const overlapEnd = input.endDate ?? input.startDate;
     const { count: overlap } = await admin
       .from("holiday_bookings")
       .select("id", { count: "exact", head: true })
       .eq("member_id", target.id)
       .in("status", ["pending", "approved"])
-      .lte("start_date", input.endDate)
-      .gte("end_date", input.startDate);
+      .lte("start_date", overlapEnd)
+      .or(`end_date.gte.${input.startDate},end_date.is.null`);
     if (overlap && overlap > 0) {
       return { success: false, error: "This employee already has a booking on one or more of those dates." };
     }
@@ -816,12 +897,15 @@ export async function adminBookAbsence(
     if (!reason) return { success: false, error: "Invalid absence reason" };
 
     // Authoritative day count using the TARGET member's work pattern.
+    // Open-ended bookings (no end date) use today as the effective end for the
+    // initial day count — this gets recalculated each time the calendar loads.
+    const effectiveEndForCalc = input.endDate ?? new Date().toISOString().slice(0, 10);
     const daysDeducted = await calculateDaysDeducted(
       supabase,
       target.id,
       target.organisation_id,
       input.startDate,
-      input.endDate,
+      effectiveEndForCalc,
       input.startHalf,
       input.endHalf,
     );
@@ -884,7 +968,7 @@ export type AdminBookingDetails = {
   member_id: string;
   leave_reason_id: string;
   start_date: string;
-  end_date: string;
+  end_date: string | null;
   start_half: string | null;
   end_half: string | null;
   employee_note: string | null;
@@ -921,7 +1005,7 @@ export type AdminUpdateBookingInput = {
   bookingId: string;
   leaveReasonId: string;
   startDate: string;
-  endDate: string;
+  endDate: string | null;
   startHalf: string | null;
   endHalf: string | null;
   note: string | null;
@@ -948,15 +1032,17 @@ export async function adminUpdateBooking(
     if (!existing) return { success: false, error: "Booking not found" };
 
     // Overlap check — exclude the booking being edited so it doesn't conflict
-    // with itself.
+    // with itself. For open-ended bookings, only check the start date is free
+    // (same rationale as adminBookAbsence).
+    const overlapEnd = input.endDate ?? input.startDate;
     const { count: overlap } = await admin
       .from("holiday_bookings")
       .select("id", { count: "exact", head: true })
       .eq("member_id", existing.member_id)
       .in("status", ["pending", "approved"])
       .neq("id", input.bookingId)
-      .lte("start_date", input.endDate)
-      .gte("end_date", input.startDate);
+      .lte("start_date", overlapEnd)
+      .or(`end_date.gte.${input.startDate},end_date.is.null`);
     if (overlap && overlap > 0) {
       return { success: false, error: "This employee already has a booking on one or more of those dates." };
     }
@@ -971,12 +1057,14 @@ export async function adminUpdateBooking(
     if (!reason) return { success: false, error: "Invalid absence reason" };
 
     // Recalculate days_deducted with the TARGET member's current work pattern.
+    // Open-ended bookings use today as the effective end.
+    const effectiveEndForCalc = input.endDate ?? new Date().toISOString().slice(0, 10);
     const daysDeducted = await calculateDaysDeducted(
       supabase,
       existing.member_id,
       existing.organisation_id,
       input.startDate,
-      input.endDate,
+      effectiveEndForCalc,
       input.startHalf,
       input.endHalf,
     );

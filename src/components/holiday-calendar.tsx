@@ -11,7 +11,8 @@ import type { WorkPatternHours } from "@/lib/day-counting";
 export type CalendarBooking = {
   id: string;
   start_date: string;
-  end_date: string;
+  /** null = open-ended sick booking (employee still off). */
+  end_date: string | null;
   status: string;
   reason_name: string;
   reason_colour: string;
@@ -20,6 +21,8 @@ export type CalendarBooking = {
   requires_approval: boolean;
   /** Parent absence_type id (used by the filter panel to hide whole categories). */
   absence_type_id: string | null;
+  /** Sick booking completion status — null for non-sick bookings. */
+  completion_status?: string | null;
 };
 
 export type CalendarBankHoliday = {
@@ -200,14 +203,22 @@ export function HolidayCalendar({
     setDragHover(null);
   }, []);
 
+  // For open-ended bookings (end_date = null) we project forward to today so
+  // the calendar shows the ongoing absence. Days past the start_date are
+  // rendered at reduced opacity via a synthetic "projected" booking wrapper.
+  const todayStr = new Date().toISOString().slice(0, 10);
+
   const bookingMap = useMemo(() => {
     const map = new Map<string, CalendarBooking[]>();
     for (const b of filteredBookings) {
       if (b.status === "cancelled" || b.status === "rejected") continue;
       const s = new Date(b.start_date + "T00:00:00Z");
-      const e = new Date(b.end_date + "T00:00:00Z");
+      // Open-ended: extend to today; closed: use actual end_date
+      const effectiveEnd = b.end_date
+        ? new Date(b.end_date + "T00:00:00Z")
+        : new Date(todayStr + "T00:00:00Z");
       const d = new Date(s);
-      while (d <= e) {
+      while (d <= effectiveEnd) {
         const key = isoDate(d);
         const arr = map.get(key) ?? [];
         arr.push(b);
@@ -216,7 +227,7 @@ export function HolidayCalendar({
       }
     }
     return map;
-  }, [filteredBookings]);
+  }, [filteredBookings, todayStr]);
 
   const bhMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -315,6 +326,13 @@ export function HolidayCalendar({
                     : 0;
                   const isScheduledWorkDay = !!showSchedule && !!workPattern && patternHours > 0;
 
+                  // Is this day a projected (virtual) day on an open-ended
+                  // booking? i.e. the booking has no end_date and this cell is
+                  // after the start_date.
+                  const isProjectedDay = topBooking
+                    && topBooking.end_date === null
+                    && dateStr > topBooking.start_date;
+
                   let bgStyle: React.CSSProperties | undefined;
                   let textClass = "";
                   if (bh) {
@@ -322,7 +340,9 @@ export function HolidayCalendar({
                   } else if (topBooking) {
                     bgStyle = {
                       backgroundColor: topBooking.reason_colour,
-                      opacity: topBooking.status === "pending" ? 0.4 : 1,
+                      opacity: isProjectedDay ? 0.45
+                        : topBooking.status === "pending" ? 0.4
+                        : 1,
                     };
                     textClass = "text-white font-medium";
                   } else if (isScheduledWorkDay) {
@@ -335,7 +355,11 @@ export function HolidayCalendar({
                     // Only show the status for absence types that require approval —
                     // for non-approval types (e.g. sick) "(approved)" is meaningless.
                     const statusPart = b.requires_approval ? ` (${b.status})` : "";
-                    tooltipParts.push(`${b.reason_name}${statusPart}${days}`);
+                    const openTag = b.end_date === null ? " [Open]" : "";
+                    const incompletePart = b.completion_status && b.completion_status !== "complete"
+                      ? ` [${b.completion_status.replace(/_/g, " ")}]`
+                      : "";
+                    tooltipParts.push(`${b.reason_name}${statusPart}${days}${openTag}${incompletePart}`);
                   }
                   if (bh) tooltipParts.push(`Bank Holiday: ${bh}`);
 
@@ -385,6 +409,18 @@ export function HolidayCalendar({
                       >
                         {dayNum}
                       </span>
+                      {/* Incomplete sick booking indicator — small dot on the 1st day */}
+                      {topBooking
+                        && topBooking.completion_status
+                        && topBooking.completion_status !== "complete"
+                        && dateStr === topBooking.start_date && (
+                        <span
+                          aria-hidden
+                          className="absolute top-0.5 right-0.5 h-2 w-2 rounded-full"
+                          style={{ backgroundColor: "#ef4444" }}
+                          title={`Action needed: ${topBooking.completion_status.replace(/_/g, " ")}`}
+                        />
+                      )}
                       {inDragRange && (
                         <span
                           aria-hidden

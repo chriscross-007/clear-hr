@@ -19,7 +19,7 @@ export type TeamMember = {
 export type TeamBooking = {
   member_id: string;
   start_date: string;
-  end_date: string;
+  end_date: string | null;
   status: string;
   reason_name: string;
   reason_colour: string;
@@ -35,7 +35,7 @@ export type TeamBankHoliday = {
 /** When set, the calendar shows a rolling date window instead of a fixed month. */
 export type FocusRange = {
   startDate: string;
-  endDate: string;
+  endDate: string | null;
 };
 
 function textColorForBg(hex: string): string {
@@ -163,7 +163,8 @@ export function TeamCalendar({ members, bookings, bankHolidays, bankHolidayColou
   // Build the day entries — either from a fixed month or rolling window
   const { dayEntries, monthSpans } = useMemo(() => {
     if (focusRange) {
-      const { days, monthSpans } = buildRollingWindow(focusRange.startDate, focusRange.endDate);
+      const effectiveEnd = focusRange.endDate ?? new Date().toISOString().slice(0, 10);
+      const { days, monthSpans } = buildRollingWindow(focusRange.startDate, effectiveEnd);
       return { dayEntries: days, monthSpans };
     }
     // Fixed month mode
@@ -188,7 +189,9 @@ export function TeamCalendar({ members, bookings, bankHolidays, bankHolidayColou
     for (const b of bookings) {
       if (b.status !== "approved" && b.status !== "pending") continue;
       const s = new Date(b.start_date + "T00:00:00Z");
-      const e = new Date(b.end_date + "T00:00:00Z");
+      // Open-ended bookings (end_date null) extend to today
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const e = new Date((b.end_date ?? todayStr) + "T00:00:00Z");
       const d = new Date(s);
       while (d <= e) {
         const key = `${b.member_id}:${isoDate(d)}`;

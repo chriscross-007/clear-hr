@@ -61,7 +61,12 @@ function fmtDate(dateStr: string): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
 
-function fmtDateRange(start: string, end: string, startHalf: string | null, endHalf: string | null): string {
+function fmtDateRange(start: string, end: string | null, startHalf: string | null, endHalf: string | null): string {
+  if (end === null) {
+    let label = `${fmtDate(start)} – Open`;
+    if (startHalf) label += ` (${startHalf.toUpperCase()})`;
+    return label;
+  }
   const sameDay = start === end;
   let label = sameDay ? fmtDate(start) : `${fmtDate(start)} – ${fmtDate(end)}`;
   if (startHalf) label += ` (${startHalf.toUpperCase()})`;
@@ -128,7 +133,7 @@ export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings
   const today = new Date().toISOString().slice(0, 10);
   const yearStart = balance?.yearStart ?? today;
   const filteredBookings = bookings.filter((b) =>
-    (b.start_date >= yearStart || b.end_date >= today) && statusFilters[b.status]
+    (b.start_date >= yearStart || b.end_date === null || (b.end_date ?? "") >= today) && statusFilters[b.status]
   );
 
   return (
@@ -193,7 +198,7 @@ export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings
         <h2 className="text-lg font-semibold">Holiday Bookings</h2>
         <div className="flex items-center gap-4">
           {(["pending", "approved", "rejected", "cancelled"] as const).map((s) => {
-            const count = bookings.filter((b) => (b.start_date >= yearStart || b.end_date >= today) && b.status === s).length;
+            const count = bookings.filter((b) => (b.start_date >= yearStart || b.end_date === null || (b.end_date ?? "") >= today) && b.status === s).length;
             return (
               <label key={s} className="flex items-center gap-1.5 cursor-pointer">
                 <Checkbox
@@ -342,7 +347,9 @@ export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings
                 <>
                   Are you sure you want to cancel this {cancellingBooking.status} booking for{" "}
                   <strong>{fmtDate(cancellingBooking.start_date)}</strong>
-                  {cancellingBooking.start_date !== cancellingBooking.end_date && <> – <strong>{fmtDate(cancellingBooking.end_date)}</strong></>}
+                  {cancellingBooking.end_date === null
+                    ? <> – <strong>Open</strong></>
+                    : cancellingBooking.start_date !== cancellingBooking.end_date && <> – <strong>{fmtDate(cancellingBooking.end_date)}</strong></>}
                   {" "}({cancellingBooking.reason_name})? The days will be returned to your balance.
                 </>
               )}

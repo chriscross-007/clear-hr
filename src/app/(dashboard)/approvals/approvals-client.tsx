@@ -42,6 +42,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { TeamCalendar, type TeamMember, type TeamBooking, type TeamBankHoliday } from "@/components/team-calendar";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
+import { CompletionStatusBadge } from "@/components/completion-status-badge";
+import type { CompletionStatus } from "../sick-booking-types";
 
 interface ApprovalsClientProps {
   pendingRows: ApprovalRow[];
@@ -64,7 +66,12 @@ function fmtDateTime(iso: string): string {
   return `${date} ${time}`;
 }
 
-function fmtDateRange(start: string, end: string, startHalf: string | null, endHalf: string | null): string {
+function fmtDateRange(start: string, end: string | null, startHalf: string | null, endHalf: string | null): string {
+  if (end === null) {
+    let label = `${fmtDate(start)} – Open`;
+    if (startHalf) label += ` (${startHalf.toUpperCase()})`;
+    return label;
+  }
   const sameDay = start === end;
   let label = sameDay ? fmtDate(start) : `${fmtDate(start)} – ${fmtDate(end)}`;
   if (startHalf) label += ` (${startHalf.toUpperCase()})`;
@@ -461,9 +468,12 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
 // Overlap-sorted members for inline calendar
 // ---------------------------------------------------------------------------
 
-function getOverlapDays(aStart: string, aEnd: string, bStart: string, bEnd: string): number {
+function getOverlapDays(aStart: string, aEnd: string | null, bStart: string, bEnd: string | null): number {
+  // Treat open-ended bookings as extending to a far-future date
+  const aEndEff = aEnd ?? "9999-12-31";
+  const bEndEff = bEnd ?? "9999-12-31";
   const s = aStart > bStart ? aStart : bStart;
-  const e = aEnd < bEnd ? aEnd : bEnd;
+  const e = aEndEff < bEndEff ? aEndEff : bEndEff;
   if (s > e) return 0;
   const ms = Date.parse(e + "T00:00:00Z") - Date.parse(s + "T00:00:00Z");
   return Math.floor(ms / 86_400_000) + 1;
@@ -656,7 +666,12 @@ function ApprovalsTable({
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={badge.variant}>{badge.label}</Badge>
+                        <div className="flex items-center gap-1.5">
+                          <Badge variant={badge.variant}>{badge.label}</Badge>
+                          {row.completion_status && row.completion_status !== "complete" && (
+                            <CompletionStatusBadge status={row.completion_status as CompletionStatus} />
+                          )}
+                        </div>
                       </TableCell>
                       {showActions && (
                         <TableCell>

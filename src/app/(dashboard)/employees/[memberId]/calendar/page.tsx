@@ -12,10 +12,13 @@ import { PlannerDashboard, type HolidayStats, type SickPlotStats, type SickStats
 
 export default async function EmployeeCalendarPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ memberId: string }>;
+  searchParams: Promise<{ bookingId?: string }>;
 }) {
   const { memberId } = await params;
+  const { bookingId: initialBookingId } = await searchParams;
   const supabase = await createClient();
 
   const {
@@ -72,13 +75,15 @@ export default async function EmployeeCalendarPage({
   const rangeEnd = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth() + 13, 0));
   const rangeEndStr = rangeEnd.toISOString().slice(0, 10);
 
-  // Fetch bookings in range
+  // Fetch bookings in range. Open-ended bookings (end_date = null) are
+  // included when they start within or before the range — they'll be
+  // projected forward to today on the calendar.
   const { data: bookingsData } = await supabase
     .from("holiday_bookings")
-    .select("id, start_date, end_date, status, days_deducted, leave_reason_id, absence_reasons(name, colour, absence_type_id, absence_types(colour, requires_approval))")
+    .select("id, start_date, end_date, status, days_deducted, leave_reason_id, absence_reasons(name, colour, absence_type_id, absence_types(colour, requires_approval)), sick_booking_details(completion_status)")
     .eq("member_id", memberId)
     .lte("start_date", rangeEndStr)
-    .gte("end_date", rangeStart)
+    .or(`end_date.gte.${rangeStart},end_date.is.null`)
     .in("status", ["pending", "approved"]);
 
   // Reasons whose absence_type deducts from holiday entitlement — these are
@@ -128,6 +133,7 @@ export default async function EmployeeCalendarPage({
     // Prefer the absence type's colour; fall back to the reason's own colour,
     // then to the default indigo if neither is set.
     const colour = reason?.absence_types?.colour ?? reason?.colour ?? "#6366f1";
+    const sickDetails = (b as Record<string, unknown>).sick_booking_details as { completion_status: string } | null;
     return {
       id: b.id,
       start_date: b.start_date,
@@ -138,6 +144,7 @@ export default async function EmployeeCalendarPage({
       reason_colour: colour,
       requires_approval: reason?.absence_types?.requires_approval ?? false,
       absence_type_id: reason?.absence_type_id ?? null,
+      completion_status: sickDetails?.completion_status ?? null,
     };
   });
 
@@ -165,6 +172,40 @@ export default async function EmployeeCalendarPage({
     pending: ent.pending,
   };
 
+  // Fetch org bank holiday colour, handling, default work profile, and the
+  // self-cert template path (used by the sick details panel).
+  const { data: orgRow } = await supabase
+    .from("organisations")
+    .select("bank_holiday_colour, bank_holiday_handling, default_work_profile_id, self_cert_template_path")
+    .eq("id", caller.organisation_id)
+    .single();
+  const bankHolidayColour = (orgRow as { bank_holiday_colour?: string } | null)?.bank_holiday_colour ?? "#EF4444";
+  const bankHolidayHandling = (orgRow as { bank_holiday_handling?: string } | null)?.bank_holiday_handling ?? "additional";
+  const orgDefaultWorkProfileId = (orgRow as { default_work_profile_id?: string | null } | null)?.default_work_profile_id ?? null;
+  const hasSelfCertTemplate = !!(orgRow as { self_cert_template_path?: string | null } | null)?.self_cert_template_path;
+
+  // Resolve the target member's work pattern as of today so the booking sheet
+  // can compute days_deducted live (matches the server's authoritative calc).
+  // Also used by the sick day counting below and the sick donut.
+  const { data: assignment } = await supabase
+    .from("employee_work_profiles")
+    .select("work_profile_id")
+    .eq("member_id", memberId)
+    .lte("effective_from", today)
+    .order("effective_from", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const profileId = assignment?.work_profile_id ?? orgDefaultWorkProfileId;
+  let workPattern: WorkPatternHours | null = null;
+  if (profileId) {
+    const { data: wp } = await supabase
+      .from("work_profiles")
+      .select("hours_monday, hours_tuesday, hours_wednesday, hours_thursday, hours_friday, hours_saturday, hours_sunday")
+      .eq("id", profileId)
+      .single();
+    workPattern = (wp as WorkPatternHours | null) ?? null;
+  }
+
   // -------------------------------------------------------------------------
   // Sick plot — sick days by day of week over the trailing 365 days.
   // Heuristic for "sickness": absence types that don't require approval.
@@ -191,14 +232,19 @@ export default async function EmployeeCalendarPage({
     .maybeSingle();
   const sickColour = sickType?.colour ?? "#ef4444";
 
+  const PATTERN_KEYS: (keyof WorkPatternHours)[] = [
+    "hours_monday", "hours_tuesday", "hours_wednesday", "hours_thursday",
+    "hours_friday", "hours_saturday", "hours_sunday",
+  ];
   const sickByDow = [0, 0, 0, 0, 0, 0, 0]; // Mon..Sun
   let sickSpells = 0; // number of separate sick bookings — the "S" in Bradford
   if (sickReasonIds.length > 0) {
+    // Include open-ended bookings (end_date is null) — they're still running.
     const { data: sickBookings } = await supabase
       .from("holiday_bookings")
       .select("start_date, end_date, start_half, end_half")
       .eq("member_id", memberId)
-      .gte("end_date", sickWindowStart)
+      .or(`end_date.gte.${sickWindowStart},end_date.is.null`)
       .lte("start_date", today)
       .in("status", ["pending", "approved"])
       .in("leave_reason_id", sickReasonIds);
@@ -209,19 +255,28 @@ export default async function EmployeeCalendarPage({
     const winEndMs = new Date(today + "T00:00:00Z").getTime();
     for (const b of sickBookings ?? []) {
       const startMs = new Date((b.start_date as string) + "T00:00:00Z").getTime();
-      const endMs = new Date((b.end_date as string) + "T00:00:00Z").getTime();
+      // Open-ended bookings extend to today for counting purposes
+      const endMs = b.end_date
+        ? new Date((b.end_date as string) + "T00:00:00Z").getTime()
+        : winEndMs;
       const startHalf = !!b.start_half;
-      const endHalf = !!b.end_half;
+      const endHalf = b.end_date ? !!b.end_half : false; // no end-half on open bookings
       const cursor = new Date(Math.max(startMs, winStartMs));
       const stop = Math.min(endMs, winEndMs);
       while (cursor.getTime() <= stop) {
         // 0=Mon .. 6=Sun
         const js = cursor.getUTCDay();
         const dow = js === 0 ? 6 : js - 1;
-        let value = 1;
-        if (cursor.getTime() === startMs && startHalf) value = 0.5;
-        if (cursor.getTime() === endMs && endHalf) value = 0.5;
-        sickByDow[dow] += value;
+        // Only count working days — skip days with 0 scheduled hours
+        const hours = workPattern
+          ? Number(workPattern[PATTERN_KEYS[dow]])
+          : (dow < 5 ? 8 : 0); // Mon–Fri 8h fallback
+        if (hours > 0) {
+          let value = 1;
+          if (cursor.getTime() === startMs && startHalf) value = 0.5;
+          if (cursor.getTime() === endMs && endHalf) value = 0.5;
+          sickByDow[dow] += value;
+        }
         cursor.setUTCDate(cursor.getUTCDate() + 1);
       }
     }
@@ -231,18 +286,6 @@ export default async function EmployeeCalendarPage({
   // Bradford Factor: B = S² × D where S = number of sickness spells,
   // D = total sick days (both over the trailing 365-day window).
   const bradfordFactor = Math.round(sickSpells * sickSpells * sickDaysTotal);
-
-  // Fetch org bank holiday colour, handling, default work profile, and the
-  // self-cert template path (used by the sick details panel).
-  const { data: orgRow } = await supabase
-    .from("organisations")
-    .select("bank_holiday_colour, bank_holiday_handling, default_work_profile_id, self_cert_template_path")
-    .eq("id", caller.organisation_id)
-    .single();
-  const bankHolidayColour = (orgRow as { bank_holiday_colour?: string } | null)?.bank_holiday_colour ?? "#EF4444";
-  const bankHolidayHandling = (orgRow as { bank_holiday_handling?: string } | null)?.bank_holiday_handling ?? "additional";
-  const orgDefaultWorkProfileId = (orgRow as { default_work_profile_id?: string | null } | null)?.default_work_profile_id ?? null;
-  const hasSelfCertTemplate = !!(orgRow as { self_cert_template_path?: string | null } | null)?.self_cert_template_path;
 
   // Admins + owners for the sick details "Back to Work interviewer" dropdown
   const { data: adminRows } = await supabase
@@ -294,35 +337,9 @@ export default async function EmployeeCalendarPage({
     };
   });
 
-  // Resolve the target member's work pattern as of today so the booking sheet
-  // can compute days_deducted live (matches the server's authoritative calc).
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const { data: assignment } = await supabase
-    .from("employee_work_profiles")
-    .select("work_profile_id")
-    .eq("member_id", memberId)
-    .lte("effective_from", todayStr)
-    .order("effective_from", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const profileId = assignment?.work_profile_id ?? orgDefaultWorkProfileId;
-  let workPattern: WorkPatternHours | null = null;
-  if (profileId) {
-    const { data: wp } = await supabase
-      .from("work_profiles")
-      .select("hours_monday, hours_tuesday, hours_wednesday, hours_thursday, hours_friday, hours_saturday, hours_sunday")
-      .eq("id", profileId)
-      .single();
-    workPattern = (wp as WorkPatternHours | null) ?? null;
-  }
-
   // Sick donut: count working days in the same trailing 365-day window using
   // the resolved work pattern (Mon–Fri default if none). Combined with the
   // sickDaysTotal accumulated above this gives the % sick rate.
-  const PATTERN_KEYS: (keyof WorkPatternHours)[] = [
-    "hours_monday", "hours_tuesday", "hours_wednesday", "hours_thursday",
-    "hours_friday", "hours_saturday", "hours_sunday",
-  ];
   let workingDaysInWindow = 0;
   {
     const cursor = new Date(sickWindowStart + "T00:00:00Z");
@@ -373,6 +390,7 @@ export default async function EmployeeCalendarPage({
         absenceTypes={absenceTypes}
         workPattern={workPattern}
         bankHolidayHandling={bankHolidayHandling}
+        initialBookingId={initialBookingId ?? null}
       />
     </div>
   );

@@ -108,7 +108,7 @@ export async function findBookingIdsForMemberFromDate(
     .select("id")
     .eq("member_id", memberId)
     .in("status", ["pending", "approved"])
-    .gte("end_date", fromDate);
+    .or(`end_date.gte.${fromDate},end_date.is.null`);
   return (data ?? []).map((r) => r.id as string);
 }
 
@@ -142,7 +142,7 @@ export async function findBookingIdsForOrgFallback(orgId: string): Promise<strin
     .eq("organisation_id", orgId)
     .in("member_id", fallbackMembers)
     .in("status", ["pending", "approved"])
-    .gte("end_date", today);
+    .or(`end_date.gte.${today},end_date.is.null`);
   return (bookings ?? []).map((r) => r.id as string);
 }
 
@@ -165,13 +165,14 @@ export async function findBookingIdsOverlappingDates(
     .in("organisation_id", orgIds)
     .in("status", ["pending", "approved"])
     .lte("start_date", maxDate)
-    .gte("end_date", minDate);
+    .or(`end_date.gte.${minDate},end_date.is.null`);
 
   const dateSet = new Set(dates);
   const ids: string[] = [];
+  const todayStr = new Date().toISOString().slice(0, 10);
   for (const b of data ?? []) {
     const start = new Date((b.start_date as string) + "T00:00:00Z");
-    const end = new Date((b.end_date as string) + "T00:00:00Z");
+    const end = new Date(((b.end_date as string | null) ?? todayStr) + "T00:00:00Z");
     const d = new Date(start);
     while (d <= end) {
       if (dateSet.has(d.toISOString().slice(0, 10))) {
@@ -243,17 +244,20 @@ export async function recalculateBookingDays(bookingIds: string[]): Promise<Reca
         continue;
       }
 
+      // Open-ended bookings use today as the effective end for day counting
+      const effectiveEnd = (booking.end_date as string | null) ?? new Date().toISOString().slice(0, 10);
+
       const [pattern, bankHolidays, handling] = await Promise.all([
         resolveWorkPattern(admin, booking.member_id, booking.organisation_id, booking.start_date),
-        fetchBankHolidays(admin, booking.organisation_id, booking.start_date, booking.end_date),
+        fetchBankHolidays(admin, booking.organisation_id, booking.start_date, effectiveEnd),
         getOrgBankHolidayHandling(admin, booking.organisation_id),
       ]);
 
       const newValue = countWorkingDays(
         booking.start_date,
-        booking.end_date,
+        effectiveEnd,
         !!booking.start_half,
-        !!booking.end_half,
+        !!(booking.end_date ? booking.end_half : false),
         pattern,
         bankHolidays,
         handling,

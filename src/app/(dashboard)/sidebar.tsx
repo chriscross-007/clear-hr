@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Users, Building2, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, CalendarDays, Clock, Palmtree, ClipboardCheck } from "lucide-react";
+import { Users, Building2, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, CalendarDays, Clock, Palmtree, ClipboardCheck, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { hasPlanFeature } from "@/lib/plan-config";
@@ -263,6 +263,10 @@ export function Sidebar({
               )}
             </>
           )}
+          <Link href="/health-and-safety" className={linkClass("/health-and-safety")}>
+            <ShieldCheck className="h-4 w-4 shrink-0" />
+            Health &amp; Safety
+          </Link>
           {showOrg && (
             <button
               onClick={() => setShowOrgEdit(true)}

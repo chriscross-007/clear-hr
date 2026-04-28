@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ApprovalsClient } from "./approvals-client";
+import { IncompleteSickBookingsWidget } from "@/components/incomplete-sick-bookings-widget";
 import type { ApprovalRow } from "../approvals-actions";
 import type { TeamMember, TeamBooking, TeamBankHoliday } from "@/components/team-calendar";
 
@@ -49,7 +50,7 @@ export default async function ApprovalsPage() {
   // Fetch pending bookings
   const { data: pendingData } = await supabase
     .from("holiday_bookings")
-    .select("id, member_id, start_date, end_date, start_half, end_half, days_deducted, hours_deducted, status, approver1_id, approver_note, employee_note, created_at, absence_reasons(name, colour)")
+    .select("id, member_id, start_date, end_date, start_half, end_half, days_deducted, hours_deducted, status, approver1_id, approver_note, employee_note, created_at, absence_reasons(name, colour), sick_booking_details(completion_status)")
     .eq("organisation_id", member.organisation_id)
     .eq("status", "pending")
     .order("created_at", { ascending: true });
@@ -57,7 +58,7 @@ export default async function ApprovalsPage() {
   // Fetch all bookings
   const { data: allData } = await supabase
     .from("holiday_bookings")
-    .select("id, member_id, start_date, end_date, start_half, end_half, days_deducted, hours_deducted, status, approver1_id, approver_note, employee_note, created_at, absence_reasons(name, colour)")
+    .select("id, member_id, start_date, end_date, start_half, end_half, days_deducted, hours_deducted, status, approver1_id, approver_note, employee_note, created_at, absence_reasons(name, colour), sick_booking_details(completion_status)")
     .eq("organisation_id", member.organisation_id)
     .order("start_date", { ascending: true });
 
@@ -101,7 +102,7 @@ export default async function ApprovalsPage() {
     .select("member_id, start_date, end_date, status, created_at, days_deducted, absence_reasons(name, colour)")
     .eq("organisation_id", member.organisation_id)
     .lte("start_date", rangeEndStr)
-    .gte("end_date", rangeStartStr)
+    .or(`end_date.gte.${rangeStartStr},end_date.is.null`)
     .in("status", ["pending", "approved"]);
 
   const calendarBookings: TeamBooking[] = (calBookingsData ?? []).map((b) => {
@@ -137,6 +138,7 @@ export default async function ApprovalsPage() {
   function mapRows(data: Record<string, unknown>[]): ApprovalRow[] {
     return data.map((b) => {
       const reason = b.absence_reasons as { name: string; colour: string } | null;
+      const sickDetails = b.sick_booking_details as { completion_status: string } | null;
       const memberId = b.member_id as string;
       const mem = memberMap.get(memberId);
       const mode = "days"; // Simplified — measurement mode derived from booking context
@@ -145,7 +147,7 @@ export default async function ApprovalsPage() {
         member_id: memberId,
         member_name: mem?.name ?? "—",
         start_date: b.start_date as string,
-        end_date: b.end_date as string,
+        end_date: b.end_date as string | null,
         start_half: b.start_half as string | null,
         end_half: b.end_half as string | null,
         days_deducted: b.days_deducted as number | null,
@@ -158,12 +160,16 @@ export default async function ApprovalsPage() {
         reason_name: reason?.name ?? "—",
         reason_colour: reason?.colour ?? "#6366f1",
         measurement_mode: mode,
+        completion_status: sickDetails?.completion_status ?? null,
       };
     });
   }
 
   return (
     <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mb-6">
+        <IncompleteSickBookingsWidget />
+      </div>
       <ApprovalsClient
         pendingRows={mapRows(pendingData ?? [])}
         allRows={mapRows(allData ?? [])}

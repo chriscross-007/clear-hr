@@ -78,7 +78,7 @@ export default async function AvailabilityPage({
     .select("member_id, start_date, end_date, status, days_deducted, absence_reasons(name, colour)")
     .eq("organisation_id", member.organisation_id)
     .lte("start_date", rangeEndStr)
-    .gte("end_date", rangeStartStr)
+    .or(`end_date.gte.${rangeStartStr},end_date.is.null`)
     .in("status", ["pending", "approved"]);
 
   const teamBookings: TeamBooking[] = (bookingsData ?? []).map((b) => {

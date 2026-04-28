@@ -11,7 +11,11 @@
       "Bash(npx shadcn@latest add table:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(ls /c/Lifeboat/VsCode/clear-hr/src/app/\\\\\\(dashboard\\\\\\)/)",
+      "mcp__supabase__get_project_url",
+      "mcp__supabase__get_publishable_keys",
+      "mcp__supabase__deploy_edge_function"
     ]
   }
 }

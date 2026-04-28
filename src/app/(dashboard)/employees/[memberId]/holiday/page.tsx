@@ -141,7 +141,7 @@ export default async function EmployeeHolidayPage({
   // Fetch holiday bookings for this member (all non-cancelled for aggregation + display)
   const { data: bookings } = await supabase
     .from("holiday_bookings")
-    .select("id, start_date, end_date, start_half, end_half, days_deducted, hours_deducted, status, approver_note, employee_note, created_at, absence_reasons(name, colour)")
+    .select("id, start_date, end_date, start_half, end_half, days_deducted, hours_deducted, status, approver_note, employee_note, created_at, absence_reasons(name, colour), sick_booking_details(completion_status)")
     .eq("member_id", memberId)
     .in("status", ["pending", "approved"])
     .order("start_date", { ascending: true });
@@ -233,6 +233,7 @@ export default async function EmployeeHolidayPage({
         orgDefaultWorkProfileId={orgDefaultWorkProfileId}
         memberBookings={(bookings ?? []).map((b) => {
           const reason = b.absence_reasons as unknown as { name: string; colour: string } | null;
+          const sickDetails = b.sick_booking_details as unknown as { completion_status: string } | null;
           return {
             id: b.id,
             start_date: b.start_date,
@@ -243,6 +244,7 @@ export default async function EmployeeHolidayPage({
             status: b.status,
             reason_name: reason?.name ?? "—",
             reason_colour: reason?.colour ?? "#6366f1",
+            completion_status: sickDetails?.completion_status ?? null,
           };
         })}
       />

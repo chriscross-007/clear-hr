@@ -11,6 +11,7 @@ import {
   User,
   Phone,
   FileText,
+  Receipt,
   History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -50,6 +51,7 @@ export function EmployeeSidebar({ member, userId }: { member: EmployeeSidebarMem
     { href: `${base}/personal`, label: "Personal", icon: User },
     { href: `${base}/contacts`, label: "Contacts", icon: Phone },
     { href: `${base}/docs`, label: "Docs", icon: FileText },
+    { href: `${base}/expenses`, label: "Expenses", icon: Receipt },
     { href: `${base}/history`, label: "History", icon: History },
   ];
 

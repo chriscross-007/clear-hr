@@ -16,7 +16,8 @@ function fmtDate(dateStr: string): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
 
-function dateRange(start: string, end: string): string {
+function dateRange(start: string, end: string | null): string {
+  if (end === null) return `${fmtDate(start)} – Open`;
   return start === end ? fmtDate(start) : `${fmtDate(start)} – ${fmtDate(end)}`;
 }
 
@@ -84,7 +85,7 @@ export type BookingEmailData = {
   bookingId: string;
   memberId: string;
   startDate: string;
-  endDate: string;
+  endDate: string | null;
   days: number | null;
   leaveType: string;
   approverId?: string | null;
@@ -267,7 +268,7 @@ export async function sendHolidayReminderEmail(
   firstName: string,
   orgName: string,
   startDate: string,
-  endDate: string,
+  endDate: string | null,
   days: number | null,
   leaveType: string,
   baseUrl: string

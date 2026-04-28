@@ -58,7 +58,7 @@ export type HolidayBookingRow = {
   leave_colour: string;
   leave_reason_id: string;
   start_date: string;
-  end_date: string;
+  end_date: string | null;
   days: number;
   status: string;
   created_at: string;
@@ -149,7 +149,7 @@ const COL_DEFS: ColDef[] = [
     csvValue: (r) => `"${r.leave_type}"`,
   },
   { id: "start_date", render: (r) => <span className="whitespace-nowrap">{fmtDate(r.start_date)}</span>, csvValue: (r) => r.start_date },
-  { id: "end_date", render: (r) => <span className="whitespace-nowrap">{fmtDate(r.end_date)}</span>, csvValue: (r) => r.end_date },
+  { id: "end_date", render: (r) => <span className="whitespace-nowrap">{r.end_date ? fmtDate(r.end_date) : "Open"}</span>, csvValue: (r) => r.end_date ?? "Open" },
   { id: "days", headerClassName: "text-right", render: (r) => <span className="text-right block">{r.days}</span>, csvValue: (r) => String(r.days) },
   {
     id: "status",
@@ -327,7 +327,7 @@ export function HolidayReportClient({ rows, teams, absenceReasons, defaultFrom, 
       if (teamFilter !== "__all__" && r.team_id !== teamFilter) return false;
       if (reasonFilter !== "__all__" && r.leave_reason_id !== reasonFilter) return false;
       if (!statusFilters.has(r.status)) return false;
-      if (dateFrom && r.end_date < dateFrom) return false;
+      if (dateFrom && r.end_date !== null && r.end_date < dateFrom) return false;
       if (dateTo && r.start_date > dateTo) return false;
       if (payrollLc && !(r.payroll_number ?? "").toLowerCase().includes(payrollLc)) return false;
       if (firstNameLc && !r.first_name.toLowerCase().includes(firstNameLc)) return false;
@@ -412,7 +412,7 @@ export function HolidayReportClient({ rows, teams, absenceReasons, defaultFrom, 
         team_name: r.team_name,
         leave_type: r.leave_type,
         start_date: fmtDate(r.start_date),
-        end_date: fmtDate(r.end_date),
+        end_date: r.end_date ? fmtDate(r.end_date) : "Open",
         days: String(r.days),
         _raw_days: String(r.days),
         status: STATUS_BADGE[r.status]?.label ?? r.status,

@@ -1,9 +1,15 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Paperclip, SendHorizontal, FileText, X, Loader2 } from "lucide-react";
+import { Paperclip, SendHorizontal, FileText, X, Loader2, Download, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   getOrCreateBookingConversation,
   getConversationMessages,
@@ -12,6 +18,7 @@ import {
   getDocumentDownloadUrl,
   type ConversationMessage,
 } from "../../../conversation-actions";
+import { createClient } from "@/lib/supabase/client";
 
 interface BookingConversationProps {
   /** null when the parent is creating a new booking — no conversation exists yet. */
@@ -73,6 +80,14 @@ export function BookingConversation({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Document viewer dialog state
+  const [viewerDoc, setViewerDoc] = useState<{
+    url: string;
+    downloadUrl: string;
+    fileName: string;
+    contentType: string;
+  } | null>(null);
+
   // Edit-mode: load conversation + messages.
   useEffect(() => {
     if (bookingId === null) return;
@@ -99,6 +114,88 @@ export function BookingConversation({
     })();
     return () => { cancelled = true; };
   }, [bookingId]);
+
+  // Realtime: subscribe to new messages AND document attachments.
+  // Documents arrive after the message row (the mobile app inserts the message
+  // first, then uploads files one-by-one), so we listen on both tables.
+  useEffect(() => {
+    if (!conversationId || bookingId === null) return;
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`conv-${conversationId}`)
+      // --- new messages ---
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "conversation_messages",
+          filter: `conversation_id=eq.${conversationId}`,
+        },
+        async (payload) => {
+          const row = payload.new as { id: string; body: string; created_at: string; author_member_id: string };
+          // Skip messages we sent (already in the list from optimistic add).
+          if (callerMemberId && row.author_member_id === callerMemberId) return;
+          // Fetch author info for the incoming message.
+          const { data: member } = await supabase
+            .from("members")
+            .select("id, first_name, last_name, role")
+            .eq("id", row.author_member_id)
+            .single();
+          const msg: ConversationMessage = {
+            id: row.id,
+            body: row.body,
+            createdAt: row.created_at,
+            author: {
+              memberId: row.author_member_id,
+              firstName: member?.first_name ?? "Unknown",
+              lastName: member?.last_name ?? "",
+              role: member?.role ?? "employee",
+            },
+            documents: [], // docs arrive separately via the subscription below
+          };
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === msg.id)) return prev;
+            return [...prev, msg];
+          });
+        },
+      )
+      // --- document attachments landing on any message in this conversation ---
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "member_documents",
+        },
+        (payload) => {
+          const d = payload.new as {
+            id: string;
+            conversation_message_id: string | null;
+            file_name: string;
+            content_type: string;
+            file_size: number;
+          };
+          if (!d.conversation_message_id) return;
+          const doc = {
+            id: d.id,
+            fileName: d.file_name,
+            contentType: d.content_type,
+            fileSize: d.file_size,
+          };
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== d.conversation_message_id) return m;
+              // Skip if already present (e.g. optimistic add from our own send)
+              if (m.documents.some((existing) => existing.id === doc.id)) return m;
+              return { ...m, documents: [...m.documents, doc] };
+            }),
+          );
+        },
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [conversationId, bookingId, callerMemberId]);
 
   // Auto-scroll to the bottom whenever the message list changes.
   useEffect(() => {
@@ -166,10 +263,15 @@ export function BookingConversation({
     setSending(false);
   }, [canSend, conversationId, draft, memberId, pendingFiles]);
 
-  const handleDocClick = useCallback(async (docId: string) => {
+  const handleDocClick = useCallback(async (docId: string, fileName?: string, contentType?: string) => {
     const res = await getDocumentDownloadUrl(docId);
     if (res.success && res.url) {
-      window.open(res.url, "_blank", "noopener,noreferrer");
+      setViewerDoc({
+        url: res.url,
+        downloadUrl: res.downloadUrl ?? res.url,
+        fileName: res.fileName ?? fileName ?? "document",
+        contentType: contentType ?? "application/octet-stream",
+      });
     }
   }, []);
 
@@ -241,7 +343,94 @@ export function BookingConversation({
         className="hidden"
         onChange={handleFileSelect}
       />
+
+      {/* Document viewer dialog with download & print */}
+      <DocumentViewerDialog doc={viewerDoc} onClose={() => setViewerDoc(null)} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Document viewer — shows the file in a dialog with Download and Print buttons.
+// ---------------------------------------------------------------------------
+function DocumentViewerDialog({
+  doc,
+  onClose,
+}: {
+  doc: { url: string; downloadUrl: string; fileName: string; contentType: string } | null;
+  onClose: () => void;
+}) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const isImage = doc?.contentType.startsWith("image/");
+
+  const handlePrint = useCallback(() => {
+    if (!doc) return;
+    // For images, open a minimal print window
+    const printWin = window.open("", "_blank");
+    if (!printWin) return;
+    if (isImage) {
+      printWin.document.write(`
+        <html><head><title>${doc.fileName}</title>
+        <style>@media print { body { margin: 0; } img { max-width: 100%; height: auto; } }</style>
+        </head><body>
+        <img src="${doc.url}" onload="window.print();window.close();" />
+        </body></html>
+      `);
+      printWin.document.close();
+    } else {
+      // For PDFs and other files, open in a new tab and let the user print from there
+      printWin.location.href = doc.url;
+    }
+  }, [doc, isImage]);
+
+  const handleDownload = useCallback(() => {
+    if (!doc) return;
+    const a = document.createElement("a");
+    a.href = doc.downloadUrl;
+    a.download = doc.fileName;
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }, [doc]);
+
+  return (
+    <Dialog open={doc !== null} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="flex max-h-[90vh] max-w-3xl flex-col">
+        <DialogHeader className="flex-row items-center justify-between gap-4 space-y-0">
+          <DialogTitle className="truncate text-sm font-medium">
+            {doc?.fileName}
+          </DialogTitle>
+          <div className="flex shrink-0 gap-2">
+            <Button variant="outline" size="sm" onClick={handleDownload}>
+              <Download className="mr-1.5 h-4 w-4" />
+              Download
+            </Button>
+            <Button variant="outline" size="sm" onClick={handlePrint}>
+              <Printer className="mr-1.5 h-4 w-4" />
+              Print
+            </Button>
+          </div>
+        </DialogHeader>
+        <div className="min-h-0 flex-1 overflow-auto rounded-md border bg-muted/30">
+          {doc && isImage && (
+            <img
+              src={doc.url}
+              alt={doc.fileName}
+              className="mx-auto max-h-[70vh] object-contain"
+            />
+          )}
+          {doc && !isImage && (
+            <iframe
+              ref={iframeRef}
+              src={doc.url}
+              title={doc.fileName}
+              className="h-[70vh] w-full"
+            />
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -251,7 +440,7 @@ function MessageRow({
   isMine,
 }: {
   message: ConversationMessage;
-  onDocClick: (id: string) => void;
+  onDocClick: (id: string, fileName?: string, contentType?: string) => void;
   isMine: boolean;
 }) {
   return (
@@ -280,7 +469,7 @@ function MessageRow({
                 <button
                   key={d.id}
                   type="button"
-                  onClick={() => onDocClick(d.id)}
+                  onClick={() => onDocClick(d.id, d.fileName, d.contentType)}
                   className={
                     isMine
                       ? "inline-flex max-w-full items-center gap-1.5 rounded-md border border-white/30 bg-white/10 px-2 py-1 text-xs text-white/90 hover:bg-white/20"

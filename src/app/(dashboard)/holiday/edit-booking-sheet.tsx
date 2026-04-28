@@ -102,7 +102,7 @@ export function EditBookingSheet({
     if (booking && open) {
       setReasonId(booking.leave_reason_id);
       setStartDate(booking.start_date);
-      setEndDate(booking.end_date);
+      setEndDate(booking.end_date ?? "");
       setStartHalfEnabled(!!booking.start_half);
       setStartHalf((booking.start_half as "am" | "pm") ?? "am");
       setEndHalfEnabled(!!booking.end_half);
