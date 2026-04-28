@@ -87,7 +87,7 @@ export function SickDetailsPanel({
   onLoaded,
 }: SickDetailsPanelProps) {
   const [input, setInput] = useState<Omit<SickDetailsInput, "bookingId">>(DEFAULT_INPUT);
-  const [loaded, setLoaded] = useState<LoadedExtras>({ hr_approved_by: null, hr_approved_at: null });
+  const [loaded, setLoaded] = useState<LoadedExtras>({ self_cert_received_by: null, med_cert_received_by: null, hr_approved_by: null, hr_approved_at: null });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
