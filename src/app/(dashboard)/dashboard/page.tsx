@@ -24,7 +24,7 @@ export default async function DashboardPage() {
   if (!member) redirect("/organisation-setup");
 
   // Owners and admins don't belong here
-  if (member.role !== "employee") redirect("/employees");
+  if (member.role !== "employee") redirect("/admin-dashboard");
 
   const initials = [member.first_name, member.last_name]
     .filter(Boolean)

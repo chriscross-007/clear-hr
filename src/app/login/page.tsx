@@ -77,7 +77,7 @@ function LoginForm() {
             .single()
         : { data: null };
 
-      const defaultHome = membership?.role === "employee" ? "/dashboard" : "/employees";
+      const defaultHome = membership?.role === "employee" ? "/dashboard" : "/admin-dashboard";
       router.push(nextPath || defaultHome);
       router.refresh();
     }
