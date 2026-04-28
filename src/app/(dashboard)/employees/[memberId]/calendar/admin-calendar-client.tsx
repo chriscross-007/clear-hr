@@ -807,7 +807,7 @@ export function AdminCalendarClient({
               )}
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={closeSheet} disabled={saving}>Cancel</Button>
+              <Button variant="outline" onClick={() => closeSheet()} disabled={saving}>Cancel</Button>
               <Button
                 onClick={handleBook}
                 disabled={saving || !reasonId || (editingBookingId !== null && !isDirty)}
