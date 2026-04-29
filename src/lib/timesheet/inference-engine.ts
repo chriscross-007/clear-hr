@@ -96,10 +96,6 @@ function minutesApart(a: Date, b: Date): number {
   return Math.abs(a.getTime() - b.getTime()) / 60_000;
 }
 
-function hoursApart(a: Date, b: Date): number {
-  return Math.abs(a.getTime() - b.getTime()) / 3_600_000;
-}
-
 function toDateStr(d: Date): string {
   return d.toISOString().slice(0, 10);
 }

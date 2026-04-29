@@ -29,7 +29,6 @@ function fmtDate(dateStr: string): string {
 
 function SummaryCard({
   icon,
-  iconColour,
   title,
   count,
   subtitle,
@@ -42,7 +41,6 @@ function SummaryCard({
   children,
 }: {
   icon: React.ReactNode;
-  iconColour?: string;
   title: string;
   count: number;
   subtitle?: React.ReactNode;
@@ -231,7 +229,7 @@ export function AdminDashboardClient() {
               {sickBookings.map((b) => (
                 <Link
                   key={b.booking_id}
-                  href={`/employees/${b.member_id}/calendar?bookingId=${b.booking_id}`}
+                  href={`/members/${b.member_id}/calendar?bookingId=${b.booking_id}`}
                   className="flex items-center justify-between rounded-md border px-3 py-2 text-sm hover:bg-muted/50 transition-colors"
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -273,7 +271,7 @@ export function AdminDashboardClient() {
               {absentToday.map((m) => (
                 <Link
                   key={m.memberId}
-                  href={`/employees/${m.memberId}/calendar`}
+                  href={`/members/${m.memberId}/calendar`}
                   className="flex items-center justify-between rounded-md border px-3 py-2 text-sm hover:bg-muted/50 transition-colors"
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -316,7 +314,7 @@ export function AdminDashboardClient() {
               {onHolidayToday.map((m) => (
                 <Link
                   key={m.memberId}
-                  href={`/employees/${m.memberId}/calendar`}
+                  href={`/members/${m.memberId}/calendar`}
                   className="flex items-center justify-between rounded-md border px-3 py-2 text-sm hover:bg-muted/50 transition-colors"
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -359,7 +357,7 @@ export function AdminDashboardClient() {
               {birthdaysToday.map((m) => (
                 <Link
                   key={m.memberId}
-                  href={`/employees/${m.memberId}/calendar`}
+                  href={`/members/${m.memberId}/calendar`}
                   className="flex items-center rounded-md border px-3 py-2 text-sm hover:bg-muted/50 transition-colors"
                 >
                   <div className="flex items-center gap-3 min-w-0">

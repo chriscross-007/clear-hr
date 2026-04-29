@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -226,25 +226,37 @@ export function TimesheetGrid({ weekStart, workPeriods, shiftByDate = {}, onCell
 
   // Per-rate totals for the footer.
   // Periods with no bands contribute gross hours to the first rate column (fallback).
-  const rateTotals: Record<string, number> = {};
-  let noBandsTotalHours = 0;
-  const totalHours = workPeriods.reduce((sum, p) => {
-    const pairs      = computePairs(p.clockings);
-    const gross      = computeGrossHours(pairs, roundingConfig);
-    const shiftDefId = p.scheduledShift?.shiftDefinitionId ?? "";
-    const bands      = shiftBands[shiftDefId] ?? [];
-    const brules     = shiftBreakRules[shiftDefId] ?? [];
-    if (bands.length === 0) {
-      noBandsTotalHours += gross;
-    } else {
-      const split    = splitHoursByBands(pairs, bands, roundingConfig);
-      const adjusted = applyBreakRules(p.clockings, split, brules);
-      for (const [rateId, hrs] of Object.entries(adjusted)) {
-        rateTotals[rateId] = (rateTotals[rateId] ?? 0) + hrs;
-      }
-    }
-    return sum + gross;
-  }, 0);
+  const { totalHours, rateTotals, noBandsTotalHours } = useMemo(
+    () => workPeriods.reduce(
+      (acc, p) => {
+        const pairs      = computePairs(p.clockings);
+        const gross      = computeGrossHours(pairs, roundingConfig);
+        const shiftDefId = p.scheduledShift?.shiftDefinitionId ?? "";
+        const bands      = shiftBands[shiftDefId] ?? [];
+        const brules     = shiftBreakRules[shiftDefId] ?? [];
+        if (bands.length === 0) {
+          return {
+            totalHours:        acc.totalHours + gross,
+            rateTotals:        acc.rateTotals,
+            noBandsTotalHours: acc.noBandsTotalHours + gross,
+          };
+        }
+        const split    = splitHoursByBands(pairs, bands, roundingConfig);
+        const adjusted = applyBreakRules(p.clockings, split, brules);
+        const nextRateTotals = { ...acc.rateTotals };
+        for (const [rateId, hrs] of Object.entries(adjusted)) {
+          nextRateTotals[rateId] = (nextRateTotals[rateId] ?? 0) + hrs;
+        }
+        return {
+          totalHours:        acc.totalHours + gross,
+          rateTotals:        nextRateTotals,
+          noBandsTotalHours: acc.noBandsTotalHours,
+        };
+      },
+      { totalHours: 0, rateTotals: {} as Record<string, number>, noBandsTotalHours: 0 },
+    ),
+    [workPeriods, shiftBands, shiftBreakRules, roundingConfig],
+  );
 
   return (
     <div className="overflow-x-auto rounded-md border border-border">

@@ -41,7 +41,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { changeEmployeeHolidayProfile, updateHolidayYearRecord, deleteHolidayYearRecord, cancelBookingAsAdmin } from "../../actions";
+import { changeEmployeeHolidayProfile, updateHolidayYearRecord, deleteHolidayYearRecord, cancelBookingAsAdmin } from "@/app/(dashboard)/employees/actions";
 import { assignWorkProfile } from "../../../work-profile-actions";
 import { CompletionStatusBadge } from "@/components/completion-status-badge";
 import type { CompletionStatus } from "../../../sick-booking-types";
@@ -91,7 +91,6 @@ interface EmployeeHolidayClientProps {
   absenceProfiles: AbsenceProfileRow[];
   bookingAggregates: Record<string, { booked: number; taken: number }>;
   profileMap: Record<string, string>;
-  profileAllowanceMap: Record<string, number>;
   carryOverMaxMap: Record<string, number | null>;
   workProfileAssignments: { id: string; work_profile_id: string; work_profile_name: string; effective_from: string }[];
   orgWorkProfiles: { id: string; name: string }[];
@@ -128,7 +127,6 @@ export function EmployeeHolidayClient({
   absenceProfiles,
   bookingAggregates,
   profileMap,
-  profileAllowanceMap,
   carryOverMaxMap,
   workProfileAssignments,
   orgWorkProfiles,

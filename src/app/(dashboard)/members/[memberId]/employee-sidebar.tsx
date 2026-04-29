@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Calendar,
+  Clock,
   Palmtree,
   Briefcase,
   User,
@@ -33,7 +34,7 @@ interface NavItem {
 
 export function EmployeeSidebar({ member, userId }: { member: EmployeeSidebarMember; userId: string }) {
   const pathname = usePathname();
-  const base = `/employees/${member.id}`;
+  const base = `/members/${member.id}`;
 
   // Record this visit to the per-user "recent employees" list (browser-only).
   useEffect(() => {
@@ -45,6 +46,7 @@ export function EmployeeSidebar({ member, userId }: { member: EmployeeSidebarMem
   }, [userId, member.id, member.first_name, member.last_name, member.avatar_url]);
   const items: NavItem[] = [
     { href: `${base}/calendar`, label: "Planner", icon: Calendar },
+    { href: `${base}/timesheet`, label: "Timesheet", icon: Clock },
     { href: `${base}/dashboard`, label: "Dashboard", icon: LayoutDashboard },
     { href: `${base}/holiday`, label: "Holiday", icon: Palmtree },
     { href: `${base}/employment`, label: "Employment", icon: Briefcase },

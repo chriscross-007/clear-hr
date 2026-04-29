@@ -349,6 +349,20 @@ export async function updateMemberTeam(
 
     const admin = createAdminClient();
 
+    // Capture before-state for audit (only when we'll actually write one).
+    let beforeTeamId: string | null = null;
+    let memberLabel = "";
+    if (!skipAudit) {
+      const { data: before } = await admin
+        .from("members")
+        .select("team_id, first_name, last_name")
+        .eq("id", memberId)
+        .eq("organisation_id", membership.organisation_id)
+        .single();
+      beforeTeamId = before?.team_id ?? null;
+      memberLabel = before ? `${before.first_name} ${before.last_name}` : memberId;
+    }
+
     const { error } = await admin
       .from("members")
       .update({ team_id: teamId })
@@ -356,6 +370,30 @@ export async function updateMemberTeam(
       .eq("organisation_id", membership.organisation_id);
 
     if (error) return { success: false, error: error.message };
+
+    if (!skipAudit && beforeTeamId !== teamId) {
+      const ids = [beforeTeamId, teamId].filter((x): x is string => !!x);
+      const teamNameMap: Record<string, string> = {};
+      if (ids.length > 0) {
+        const { data: teams } = await admin.from("teams").select("id, name").in("id", ids);
+        for (const t of teams ?? []) teamNameMap[t.id] = t.name;
+      }
+      logAudit({
+        organisationId: membership.organisation_id,
+        actorId:        membership.id,
+        actorName:      `${membership.first_name} ${membership.last_name}`,
+        action:         "member.team_changed",
+        targetType:     "member",
+        targetId:       memberId,
+        targetLabel:    memberLabel,
+        changes: {
+          team: {
+            old: beforeTeamId ? (teamNameMap[beforeTeamId] ?? "Unknown") : null,
+            new: teamId       ? (teamNameMap[teamId]       ?? "Unknown") : null,
+          },
+        },
+      });
+    }
 
     return { success: true };
   } catch (e) {
@@ -422,15 +460,24 @@ export async function setMemberTeams(
 
     const admin = createAdminClient();
 
-    // Verify member belongs to same org
+    // Verify member belongs to same org and capture audit context.
     const { data: member } = await admin
       .from("members")
-      .select("id")
+      .select("id, first_name, last_name")
       .eq("id", memberId)
       .eq("organisation_id", membership.organisation_id)
       .single();
 
     if (!member) return { success: false, error: "Member not found" };
+
+    let beforeTeamIds: string[] = [];
+    if (!skipAudit) {
+      const { data: existing } = await admin
+        .from("member_teams")
+        .select("team_id")
+        .eq("member_id", memberId);
+      beforeTeamIds = (existing ?? []).map((r) => r.team_id as string);
+    }
 
     // Delete existing member_teams
     await admin
@@ -457,6 +504,40 @@ export async function setMemberTeams(
       .from("members")
       .update({ team_id: teamIds.length > 0 ? teamIds[0] : null })
       .eq("id", memberId);
+
+    if (!skipAudit) {
+      const beforeSet = new Set(beforeTeamIds);
+      const afterSet  = new Set(teamIds);
+      const sameSize  = beforeSet.size === afterSet.size;
+      const unchanged = sameSize && [...beforeSet].every((id) => afterSet.has(id));
+      if (!unchanged) {
+        const allIds = [...new Set([...beforeTeamIds, ...teamIds])];
+        const teamNameMap: Record<string, string> = {};
+        if (allIds.length > 0) {
+          const { data: teams } = await admin.from("teams").select("id, name").in("id", allIds);
+          for (const t of teams ?? []) teamNameMap[t.id] = t.name;
+        }
+        const formatList = (ids: string[]) =>
+          ids.length === 0
+            ? null
+            : ids.map((id) => teamNameMap[id] ?? "Unknown").sort().join(", ");
+        logAudit({
+          organisationId: membership.organisation_id,
+          actorId:        membership.id,
+          actorName:      `${membership.first_name} ${membership.last_name}`,
+          action:         "member.teams_changed",
+          targetType:     "member",
+          targetId:       memberId,
+          targetLabel:    `${member.first_name} ${member.last_name}`,
+          changes: {
+            teams: {
+              old: formatList(beforeTeamIds),
+              new: formatList(teamIds),
+            },
+          },
+        });
+      }
+    }
 
     return { success: true };
   } catch (e) {

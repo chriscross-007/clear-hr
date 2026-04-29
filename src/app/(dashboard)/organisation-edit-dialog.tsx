@@ -19,7 +19,7 @@ import { getRates } from "./rates-actions";
 import type { Rate } from "./rates-actions";
 import { getWorkProfiles } from "./work-profile-actions";
 import type { WorkProfile } from "./work-profile-actions";
-import { getNoticePeriodRules, saveNoticePeriodRules, checkBookingsInBreach, type NoticePeriodRule } from "./notice-period-actions";
+import { getNoticePeriodRules, saveNoticePeriodRules, checkBookingsInBreach } from "./notice-period-actions";
 import { seedBankHolidays, getBankHolidays, getOrgCountryCode, type BankHolidayEntry } from "./bank-holiday-actions";
 import { updateTeamMinCover, updateTeamApprover, getApproverMembers } from "./employees/team-actions";
 import { Button } from "@/components/ui/button";
@@ -183,7 +183,6 @@ export function OrganisationEditDialog({
       return orig && (orig.name !== t.name || orig.min_cover !== t.min_cover || orig.approver_id !== t.approver_id);
     });
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- deps must be fixed-length
   useEffect(() => {
     if (open) {
       setName(orgName);

@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { overrideClockingType } from "@/app/(dashboard)/timesheets/actions";
+import { overrideClockingType } from "@/app/(dashboard)/timesheet-actions";
 import { fmtTime, effectiveType } from "./timesheet-types";
 import type { ClockingData } from "./timesheet-types";
 
@@ -128,7 +128,7 @@ export function ClockingOverrideDialog({
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Selecting "Use inferred" clears any existing override and lets the engine decide.
+              Selecting &ldquo;Use inferred&rdquo; clears any existing override and lets the engine decide.
             </p>
           </div>
 

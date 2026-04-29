@@ -249,7 +249,7 @@ export function AdminCalendarClient({
     initialBookingHandled.current = true;
     const match = bookings.find((b) => b.id === initialBookingId);
     if (match) openEditFor(match);
-  }, [initialBookingId, bookings]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [initialBookingId, bookings]);
 
   const bankHolidaySet = useMemo(
     () => new Set(bankHolidays.map((bh) => bh.date)),
@@ -348,7 +348,7 @@ export function AdminCalendarClient({
   }, []);
 
   // Click an existing booking → open the edit form directly
-  function handleBookingClick(booking: CalendarBooking, _event: React.MouseEvent) {
+  function handleBookingClick(booking: CalendarBooking) {
     openEditFor(booking);
   }
 
@@ -774,6 +774,7 @@ export function AdminCalendarClient({
                 bookingId={editingBookingId}
                 memberId={memberId}
                 callerMemberId={callerMemberId}
+                callerRole="admin"
                 onFirstMessageReady={handleFirstMessageReady}
               />
             </div>

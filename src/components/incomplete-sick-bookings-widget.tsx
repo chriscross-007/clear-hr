@@ -69,7 +69,7 @@ export function IncompleteSickBookingsWidget() {
             {bookings.map((b) => (
               <Link
                 key={b.booking_id}
-                href={`/employees/${b.member_id}/calendar?bookingId=${b.booking_id}`}
+                href={`/members/${b.member_id}/calendar?bookingId=${b.booking_id}`}
                 className="flex items-center justify-between rounded-md border px-3 py-2 text-sm hover:bg-muted/50 transition-colors"
               >
                 <div className="flex items-center gap-3 min-w-0">

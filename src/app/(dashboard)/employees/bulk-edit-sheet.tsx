@@ -5,7 +5,6 @@ import { Loader2 } from "lucide-react";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Sheet,
   SheetContent,

@@ -3,7 +3,6 @@ export const dynamic = "force-dynamic";
 import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ApprovalsClient } from "./approvals-client";
-import { IncompleteSickBookingsWidget } from "@/components/incomplete-sick-bookings-widget";
 import type { ApprovalRow } from "../approvals-actions";
 import type { TeamMember, TeamBooking, TeamBankHoliday } from "@/components/team-calendar";
 
@@ -167,9 +166,6 @@ export default async function ApprovalsPage() {
 
   return (
     <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-6">
-        <IncompleteSickBookingsWidget />
-      </div>
       <ApprovalsClient
         pendingRows={mapRows(pendingData ?? [])}
         allRows={mapRows(allData ?? [])}

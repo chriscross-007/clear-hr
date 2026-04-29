@@ -8,7 +8,7 @@ import {
   debugCreateClocking,
   debugUpdateClocking,
   debugDeleteClocking,
-} from "@/app/(dashboard)/timesheets/actions";
+} from "@/app/(dashboard)/timesheet-actions";
 
 export interface DebugClocking {
   id:           string;
@@ -46,12 +46,10 @@ interface EditState {
 
 export function ClockingsDebug({
   memberId,
-  weekStart,
   clockings,
   onRefresh,
 }: {
   memberId:  string;
-  weekStart: string;
   clockings: DebugClocking[];
   onRefresh: () => void | Promise<void>;
 }) {

@@ -1,9 +1,16 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Paperclip, SendHorizontal, FileText, X, Loader2, Download, Printer } from "lucide-react";
+import { Paperclip, SendHorizontal, FileText, X, Loader2, Download, Printer, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -16,9 +23,19 @@ import {
   sendConversationMessage,
   uploadDocumentToMessage,
   getDocumentDownloadUrl,
+  updateDocumentLabel,
   type ConversationMessage,
 } from "../../../conversation-actions";
 import { createClient } from "@/lib/supabase/client";
+
+// Document labels available for admin to classify received documents
+const ABSENCE_DOCUMENT_LABELS = [
+  { value: "self_certification", label: "Self-Certification" },
+  { value: "medical_certificate", label: "Medical Certificate" },
+  { value: "fit_note", label: "Fit Note" },
+  { value: "prescription", label: "Prescription" },
+  { value: "other", label: "Other" },
+] as const;
 
 interface BookingConversationProps {
   /** null when the parent is creating a new booking — no conversation exists yet. */
@@ -31,6 +48,8 @@ interface BookingConversationProps {
    * Optional because create-mode shows no thread.
    */
   callerMemberId?: string;
+  /** The viewing user's role — admin/owner see label controls on documents. */
+  callerRole?: string;
   /** Create-mode hook: called whenever the draft message/files change. */
   onFirstMessageReady?: (message: string, files: File[]) => void;
 }
@@ -66,8 +85,10 @@ export function BookingConversation({
   bookingId,
   memberId,
   callerMemberId,
+  callerRole,
   onFirstMessageReady,
 }: BookingConversationProps) {
+  const isAdmin = callerRole === "admin" || callerRole === "owner";
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [loading, setLoading] = useState(false);
@@ -275,6 +296,21 @@ export function BookingConversation({
     }
   }, []);
 
+  // Admin labels a received document — persist and update local state.
+  const handleLabelChange = useCallback(async (docId: string, label: string) => {
+    const res = await updateDocumentLabel(docId, label);
+    if (res.success) {
+      setMessages((prev) =>
+        prev.map((m) => ({
+          ...m,
+          documents: m.documents.map((d) =>
+            d.id === docId ? { ...d, documentLabel: label } : d,
+          ),
+        })),
+      );
+    }
+  }, []);
+
   // ===== Create mode (no booking yet — only the input row) =====
   if (bookingId === null) {
     return (
@@ -321,6 +357,8 @@ export function BookingConversation({
             message={m}
             onDocClick={handleDocClick}
             isMine={!!callerMemberId && m.author.memberId === callerMemberId}
+            isAdmin={isAdmin}
+            onLabelChange={handleLabelChange}
           />
         ))}
       </div>
@@ -434,14 +472,23 @@ function DocumentViewerDialog({
   );
 }
 
+function labelDisplayName(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return ABSENCE_DOCUMENT_LABELS.find((l) => l.value === value)?.label ?? value;
+}
+
 function MessageRow({
   message,
   onDocClick,
   isMine,
+  isAdmin,
+  onLabelChange,
 }: {
   message: ConversationMessage;
   onDocClick: (id: string, fileName?: string, contentType?: string) => void;
   isMine: boolean;
+  isAdmin: boolean;
+  onLabelChange?: (docId: string, label: string) => void;
 }) {
   return (
     <div className={`flex flex-col ${isMine ? "items-end" : "items-start"}`}>
@@ -464,21 +511,49 @@ function MessageRow({
         >
           <p className="whitespace-pre-wrap text-sm">{message.body}</p>
           {message.documents.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 pt-1.5">
+            <div className="space-y-1.5 pt-1.5">
               {message.documents.map((d) => (
-                <button
-                  key={d.id}
-                  type="button"
-                  onClick={() => onDocClick(d.id, d.fileName, d.contentType)}
-                  className={
-                    isMine
-                      ? "inline-flex max-w-full items-center gap-1.5 rounded-md border border-white/30 bg-white/10 px-2 py-1 text-xs text-white/90 hover:bg-white/20"
-                      : "inline-flex max-w-full items-center gap-1.5 rounded-md border bg-background/60 px-2 py-1 text-xs hover:bg-background"
-                  }
-                >
-                  <FileText className={`h-3 w-3 shrink-0 ${isMine ? "text-white/80" : "text-muted-foreground"}`} />
-                  <span className="truncate">{d.fileName}</span>
-                </button>
+                <div key={d.id} className="space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => onDocClick(d.id, d.fileName, d.contentType)}
+                    className={
+                      isMine
+                        ? "inline-flex max-w-full items-center gap-1.5 rounded-md border border-white/30 bg-white/10 px-2 py-1 text-xs text-white/90 hover:bg-white/20"
+                        : "inline-flex max-w-full items-center gap-1.5 rounded-md border bg-background/60 px-2 py-1 text-xs hover:bg-background"
+                    }
+                  >
+                    <FileText className={`h-3 w-3 shrink-0 ${isMine ? "text-white/80" : "text-muted-foreground"}`} />
+                    <span className="truncate">{d.fileName}</span>
+                  </button>
+                  {/* Admin label selector — shown on documents not sent by the admin */}
+                  {isAdmin && !isMine && onLabelChange && (
+                    <div className="flex items-center gap-1.5">
+                      <Tag className="h-3 w-3 text-muted-foreground shrink-0" />
+                      <Select
+                        value={d.documentLabel ?? ""}
+                        onValueChange={(v) => onLabelChange(d.id, v)}
+                      >
+                        <SelectTrigger className="h-6 w-[140px] text-[11px] px-2">
+                          <SelectValue placeholder="Classify document..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ABSENCE_DOCUMENT_LABELS.map((l) => (
+                            <SelectItem key={l.value} value={l.value} className="text-xs">
+                              {l.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {/* Show label badge on admin's own docs if already labelled */}
+                  {d.documentLabel && (isAdmin && isMine) && (
+                    <span className="inline-block rounded px-1.5 py-0.5 text-[10px] bg-white/20 text-white/80">
+                      {labelDisplayName(d.documentLabel)}
+                    </span>
+                  )}
+                </div>
               ))}
             </div>
           )}

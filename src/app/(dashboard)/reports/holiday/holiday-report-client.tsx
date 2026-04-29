@@ -14,7 +14,6 @@ import {
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { ColumnCustomiserTrigger, ColumnCustomiserDialog } from "@/components/ui/column-customiser";
-import type { ColPref } from "@/lib/grid-prefs-actions";
 import { saveGridPrefs } from "@/lib/grid-prefs-actions";
 import { useColumnPrefs } from "@/hooks/use-column-prefs";
 import type { GridPrefs } from "@/lib/grid-prefs";

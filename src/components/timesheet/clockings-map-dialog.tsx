@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { ChevronLeft, ChevronRight, MapPin, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { getClockingsWithLocation, type MapClocking } from "@/app/(dashboard)/timesheets/actions";
+import { getClockingsWithLocation, type MapClocking } from "@/app/(dashboard)/timesheet-actions";
 
 // Load Leaflet map without SSR
 const ClockingsMapInner = dynamic(

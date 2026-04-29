@@ -166,15 +166,13 @@ export default async function EmployeeHolidayPage({
     bookingAggregates[rec.id] = { booked, taken };
   }
 
-  // Build profile name, allowance, and carry-over max maps (keyed by record ID)
+  // Build profile name and carry-over max maps (keyed by record ID)
   const profileMap: Record<string, string> = {};
-  const profileAllowanceMap: Record<string, number> = {};
   const carryOverMaxMap: Record<string, number | null> = {};
   for (const rec of finalRecords) {
     const p = resolveProfile(rec);
     if (p) {
       profileMap[rec.id] = p.name;
-      profileAllowanceMap[rec.id] = Number(p.allowance);
       carryOverMaxMap[rec.id] = p.carry_over_max !== null ? Number(p.carry_over_max) : null;
     }
   }
@@ -226,7 +224,6 @@ export default async function EmployeeHolidayPage({
         absenceProfiles={(absenceProfiles ?? []) as AbsenceProfileRow[]}
         bookingAggregates={bookingAggregates}
         profileMap={profileMap}
-        profileAllowanceMap={profileAllowanceMap}
         carryOverMaxMap={carryOverMaxMap}
         workProfileAssignments={workProfileAssignments}
         orgWorkProfiles={(orgWorkProfiles ?? []) as { id: string; name: string }[]}

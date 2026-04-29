@@ -2,7 +2,14 @@
   "permissions": {
     "allow": [
       "Bash(npm install *)",
-      "Bash(npm uninstall *)"
+      "Bash(npm uninstall *)",
+      "Bash(git mv *)"
+    ],
+    "additionalDirectories": [
+      "C:\\Lifeboat\\VsCode\\clear-hr\\src\\app\\(dashboard)\\employees\\[memberId]\\src",
+      "C:\\Lifeboat\\VsCode\\clear-hr\\src\\app\\(dashboard)\\members\\[memberId]",
+      "C:\\Lifeboat\\VsCode\\clear-hr\\src\\app\\(dashboard)\\employees\\[memberId]\\calendar",
+      "C:\\Lifeboat\\VsCode\\clear-hr\\src\\app\\(dashboard)\\timesheets\\[memberId]"
     ]
   }
 }

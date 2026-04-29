@@ -19,7 +19,7 @@ import Link from "next/link";
 import { Plus, List, LayoutGrid, Pencil } from "lucide-react";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
-import { deleteEmployee, type BulkUpdatePayload } from "./actions";
+import { deleteEmployee } from "./actions";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -51,7 +51,6 @@ export type { Team, Member };
 
 interface EmployeesClientProps {
   initialMembers: Member[];
-  canEdit: boolean;
   canAdd: boolean;
   maxEmployees: number;
   isOwner: boolean;
@@ -75,7 +74,6 @@ interface EmployeesClientProps {
 
 export function EmployeesClient({
   initialMembers,
-  canEdit,
   canAdd,
   maxEmployees,
   isOwner,
@@ -126,7 +124,7 @@ export function EmployeesClient({
   const handleSelect = (id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
@@ -215,7 +213,6 @@ export function EmployeesClient({
       headerClassName: "w-10",
       cellClassName: "w-10",
     },
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [selectedIds]);
 
   const columns = [selectColumn, ...baseColumns];
@@ -404,7 +401,7 @@ export function EmployeesClient({
           initialAggregateMetrics={initialAggregateMetrics}
           userId={userId}
           toolbar={toolbar}
-          onRowClick={(m) => router.push(`/employees/${m.member_id}/calendar`)}
+          onRowClick={(m) => router.push(`/members/${m.member_id}/calendar`)}
           emptyMessage={`No ${pluralize(memberLabel)} found.`}
           onExportPdf={handleExportPdf}
           onPageRowsChange={setCardRows}
@@ -456,7 +453,7 @@ export function EmployeesClient({
                         "relative flex flex-col items-center gap-3 rounded-lg border bg-card p-6 text-center cursor-pointer hover:bg-muted/50",
                         selectedIds.has(m.member_id) && "ring-2 ring-primary"
                       )}
-                      onClick={() => router.push(`/employees/${m.member_id}/calendar`)}
+                      onClick={() => router.push(`/members/${m.member_id}/calendar`)}
                     >
                       <div
                         className="absolute top-2 left-2 z-10"

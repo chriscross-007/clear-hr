@@ -41,7 +41,6 @@ export default async function EmployeesPage({
     );
   }
 
-  const canEdit = membership?.role === "owner" || accessMembers === "write";
   const canAdd = membership?.role === "owner" ||
     (membership?.role === "admin" && permissions.can_add_members === true);
 
@@ -99,7 +98,6 @@ export default async function EmployeesPage({
   return (
     <EmployeesClient
       initialMembers={enrichedMembers}
-      canEdit={canEdit}
       canAdd={canAdd}
       maxEmployees={maxEmployees}
       isOwner={membership?.role === "owner"}

@@ -43,7 +43,6 @@ import { FileDown, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Ensure the ColumnMeta augmentation from employee-columns is available here too
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 declare module "@tanstack/react-table" {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface ColumnMeta<TData extends RowData, TValue> {
@@ -167,7 +166,6 @@ export function DataGrid<T extends object>({
         if ([10, 25, 50, 100, 250].includes(n)) setPageSize(n);
       }
     } catch { /* localStorage unavailable */ }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [showCustomiser, setShowCustomiser] = useState(false);
   const [showPdfDialog, setShowPdfDialog] = useState(false);
@@ -203,7 +201,6 @@ export function DataGrid<T extends object>({
     } else {
       setSorting((prev) => prev.filter((s) => s.id !== groupBy));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupBy]);
 
   const effectiveColumnOrder = leadingColumnIds?.length
@@ -256,7 +253,6 @@ export function DataGrid<T extends object>({
       pdfRepeatHeaders: pdfRepeatHeaders || undefined,
       aggregateMetrics,
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefs, columnFilters, sorting, groupBy, pdfPageBreak, pdfRepeatHeaders, aggregateMetrics]);
 
   async function handleExportPdf(orientation: "portrait" | "landscape") {

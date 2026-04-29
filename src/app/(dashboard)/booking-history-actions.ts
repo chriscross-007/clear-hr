@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
-import type { BookingHistoryEvent } from "./booking-history-types";
+import type { BookingHistoryAudit, BookingHistoryChat, BookingHistoryEntry } from "./booking-history-types";
 
 function getAdminClient() {
   return createSupabaseClient(
@@ -113,20 +113,20 @@ function buildDetails(
 
 export async function getBookingHistory(
   bookingId: string,
-): Promise<{ success: boolean; error?: string; events: BookingHistoryEvent[] }> {
+): Promise<{ success: boolean; error?: string; entries: BookingHistoryEntry[] }> {
   try {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return { success: false, error: "Not authenticated", events: [] };
+    if (!user) return { success: false, error: "Not authenticated", entries: [] };
 
     const { data: member } = await supabase
       .from("members")
       .select("id, organisation_id, role")
       .eq("user_id", user.id)
       .single();
-    if (!member) return { success: false, error: "No membership found", events: [] };
+    if (!member) return { success: false, error: "No membership found", entries: [] };
     if (member.role !== "admin" && member.role !== "owner") {
-      return { success: false, error: "Not authorised", events: [] };
+      return { success: false, error: "Not authorised", entries: [] };
     }
 
     // Verify the booking belongs to this org
@@ -137,10 +137,10 @@ export async function getBookingHistory(
       .eq("id", bookingId)
       .eq("organisation_id", member.organisation_id)
       .single();
-    if (!booking) return { success: false, error: "Booking not found", events: [] };
+    if (!booking) return { success: false, error: "Booking not found", entries: [] };
 
-    // Fetch all audit entries for this booking, oldest first
-    const { data: entries, error: fetchErr } = await admin
+    // 1. Fetch all audit entries for this booking
+    const { data: auditRows, error: auditErr } = await admin
       .from("audit_log")
       .select("id, actor_name, action, changes, created_at")
       .eq("target_type", "booking")
@@ -148,9 +148,10 @@ export async function getBookingHistory(
       .eq("organisation_id", member.organisation_id)
       .order("created_at", { ascending: true });
 
-    if (fetchErr) return { success: false, error: fetchErr.message, events: [] };
+    if (auditErr) return { success: false, error: auditErr.message, entries: [] };
 
-    const events: BookingHistoryEvent[] = (entries ?? []).map((e) => ({
+    const auditEntries: BookingHistoryAudit[] = (auditRows ?? []).map((e) => ({
+      type: "audit" as const,
       id: e.id as string,
       timestamp: e.created_at as string,
       actorName: (e.actor_name as string) ?? "System",
@@ -162,8 +163,78 @@ export async function getBookingHistory(
       ),
     }));
 
-    return { success: true, events };
+    // 2. Fetch conversation messages for this booking
+    const chatEntries: BookingHistoryChat[] = [];
+
+    const { data: conversation } = await admin
+      .from("conversations")
+      .select("id")
+      .eq("entity_type", "absence_booking")
+      .eq("entity_id", bookingId)
+      .eq("organisation_id", member.organisation_id)
+      .maybeSingle();
+
+    if (conversation) {
+      const { data: messages } = await admin
+        .from("conversation_messages")
+        .select(`
+          id,
+          body,
+          created_at,
+          members!conversation_messages_author_member_id_fkey(
+            first_name,
+            last_name,
+            role
+          )
+        `)
+        .eq("conversation_id", conversation.id)
+        .order("created_at", { ascending: true });
+
+      // Fetch any attached documents for these messages
+      const messageIds = (messages ?? []).map((m) => m.id as string);
+      let docsByMessage: Record<string, { id: string; fileName: string }[]> = {};
+
+      if (messageIds.length > 0) {
+        const { data: docs } = await admin
+          .from("member_documents")
+          .select("id, file_name, conversation_message_id")
+          .in("conversation_message_id", messageIds);
+
+        for (const d of docs ?? []) {
+          const msgId = d.conversation_message_id as string;
+          if (!docsByMessage[msgId]) docsByMessage[msgId] = [];
+          docsByMessage[msgId].push({ id: d.id as string, fileName: d.file_name as string });
+        }
+      }
+
+      for (const m of messages ?? []) {
+        const author = m.members as unknown as {
+          first_name: string;
+          last_name: string;
+          role: string;
+        };
+        const authorName = `${author?.first_name ?? ""} ${author?.last_name ?? ""}`.trim() || "Unknown";
+        const role = (author?.role ?? "employee") as "admin" | "owner" | "employee";
+
+        chatEntries.push({
+          type: "chat" as const,
+          id: m.id as string,
+          timestamp: m.created_at as string,
+          authorName,
+          authorRole: role,
+          body: m.body as string,
+          documents: docsByMessage[m.id as string] ?? [],
+        });
+      }
+    }
+
+    // 3. Merge and sort by timestamp
+    const entries: BookingHistoryEntry[] = [...auditEntries, ...chatEntries].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+    );
+
+    return { success: true, entries };
   } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "An error occurred", events: [] };
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred", entries: [] };
   }
 }

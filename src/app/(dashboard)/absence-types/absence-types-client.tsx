@@ -94,7 +94,7 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
   function toggleExpanded(typeId: string) {
     setExpandedTypeIds((prev) => {
       const next = new Set(prev);
-      next.has(typeId) ? next.delete(typeId) : next.add(typeId);
+      if (next.has(typeId)) next.delete(typeId); else next.add(typeId);
       return next;
     });
   }

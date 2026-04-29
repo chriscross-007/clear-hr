@@ -228,7 +228,7 @@ export default async function MyHolidayPage() {
   // Calendar data — 13-month range from current year record
   let calendarYearStart: string | null = null;
   let calendarBookings: CalendarBooking[] = [];
-  let calendarBankHolidays: CalendarBankHoliday[] = [];
+  const calendarBankHolidays: CalendarBankHoliday[] = [];
 
   if (yearRec) {
     calendarYearStart = yearRec.year_start;

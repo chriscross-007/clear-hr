@@ -101,7 +101,7 @@ export function Sidebar({
     };
   }, [userId, pathname]);
 
-  const inEmployeeArea = pathname.startsWith("/employees/");
+  const inEmployeeArea = pathname.startsWith("/members/");
   const currentMemberId = inEmployeeArea ? pathname.split("/")[2] ?? null : null;
   // Hide whoever's currently on screen (the secondary sidebar already shows them)
   // and cap the visible list at 3 prior visits.
@@ -130,7 +130,7 @@ export function Sidebar({
 
   const linkClass = (href: string) => {
     // Match the item when the pathname equals its href OR is under it (so
-    // e.g. /employees/[id]/employment keeps "Employees" highlighted).
+    // e.g. /members/[id]/employment keeps "Employees" highlighted).
     const active = pathname === href || pathname.startsWith(href + "/");
     return cn(
       "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent",
@@ -173,7 +173,7 @@ export function Sidebar({
                 return (
                   <Link
                     key={emp.memberId}
-                    href={`/employees/${emp.memberId}/calendar`}
+                    href={`/members/${emp.memberId}/calendar`}
                     className="flex items-center gap-2 rounded-md px-2 py-1 text-sm transition-colors hover:bg-accent"
                   >
                     {emp.avatarUrl ? (
@@ -207,7 +207,13 @@ export function Sidebar({
             My Holiday
           </Link>
           {showEmployees && (
-            <Link href="/employees" className={linkClass("/employees")}>
+            <Link
+              href="/employees"
+              className={cn(
+                "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent",
+                (pathname === "/employees" || inEmployeeArea) && "bg-accent font-medium",
+              )}
+            >
               <Users className="h-4 w-4 shrink-0" />
               {capitalize(pluralize(memberLabel))}
             </Link>

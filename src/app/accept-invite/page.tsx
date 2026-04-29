@@ -53,7 +53,6 @@ function AcceptInviteForm() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState(false);
 
   useEffect(() => {
     async function loadInvite() {
@@ -125,29 +124,6 @@ function AcceptInviteForm() {
             <Link href="/login">
               <Button variant="outline" className="w-full">
                 Go to login
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  if (success) {
-    return (
-      <div className="flex min-h-screen items-center justify-center px-4">
-        <Card className="w-full max-w-md">
-          <CardHeader className="text-center">
-            <CardTitle className="text-2xl">Account created</CardTitle>
-            <CardDescription>
-              Your account has been set up. You can now sign in to join{" "}
-              {inviteData!.orgName}.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Link href="/login">
-              <Button className="w-full">
-                Sign in
               </Button>
             </Link>
           </CardContent>

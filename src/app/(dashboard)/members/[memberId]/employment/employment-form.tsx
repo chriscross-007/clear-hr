@@ -9,12 +9,12 @@ import {
   sendInvite,
   uploadMemberAvatar,
   deleteEmployee,
-} from "../../actions";
+} from "@/app/(dashboard)/employees/actions";
 import {
   updateMemberTeam,
   setMemberTeams,
-} from "../../team-actions";
-import { saveCustomFieldValues } from "../../custom-field-actions";
+} from "@/app/(dashboard)/employees/team-actions";
+import { saveCustomFieldValues } from "@/app/(dashboard)/employees/custom-field-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

@@ -574,7 +574,7 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
                                 d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
                                 return `?week=${d.toISOString().slice(0, 10)}`;
                               })() : "";
-                              router.push(`/timesheets/${entry.target_id}${weekParam}`);
+                              router.push(`/members/${entry.target_id}/timesheet${weekParam}`);
                             }}
                           >
                             {entry.target_label}

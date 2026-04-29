@@ -307,7 +307,7 @@ export function CustomFieldsManager({ defs, onDefsChange, currencySymbol }: Cust
   }
 
   // ---- add handler ----
-  async function handleAdd(newDef: Omit<FieldDef, "id">, _nextOrder: number) {
+  async function handleAdd(newDef: Omit<FieldDef, "id">) {
     const result = await createCustomFieldDef(newDef);
     if (!result.success) return result; // signal error to form
     // Re-fetch to get the server-generated id

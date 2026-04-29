@@ -24,6 +24,7 @@ export type ConversationMessage = {
     fileName: string;
     contentType: string;
     fileSize: number;
+    documentLabel?: string | null;
   }[];
 };
 
@@ -99,15 +100,22 @@ export async function uploadDocumentToMessage(
 
     const admin = getAdminClient();
 
-    // 1. Verify the message exists in the caller's org. Joining to
-    //    conversations gives us the org_id check in a single query.
+    // 1. Verify the message exists in the caller's org. Also fetch the
+    //    conversation's entity_type and entity_id so we can auto-populate
+    //    the document metadata.
     const { data: messageRow } = await admin
       .from("conversation_messages")
-      .select("id, conversations!inner(organisation_id)")
+      .select("id, conversations!inner(organisation_id, entity_type, entity_id)")
       .eq("id", conversationMessageId)
       .eq("conversations.organisation_id", caller.organisation_id)
       .single();
     if (!messageRow) return { success: false, error: "Message not found" };
+
+    const conv = messageRow.conversations as unknown as {
+      organisation_id: string;
+      entity_type: string;
+      entity_id: string;
+    };
 
     // 2. Target member must be in the same org.
     const { data: targetMember } = await admin
@@ -133,7 +141,13 @@ export async function uploadDocumentToMessage(
       .upload(path, buffer, { contentType: file.type, upsert: false });
     if (uploadError) return { success: false, error: uploadError.message };
 
-    // 5. Record the document in the registry.
+    // 5. Auto-derive document_category from entity context.
+    const CATEGORY_MAP: Record<string, string> = {
+      absence_booking: "absence_document",
+    };
+    const documentCategory = CATEGORY_MAP[conv.entity_type] ?? conv.entity_type;
+
+    // 6. Record the document in the registry.
     const { data: inserted, error: insertError } = await admin
       .from("member_documents")
       .insert({
@@ -146,6 +160,9 @@ export async function uploadDocumentToMessage(
         storage_path: path,
         uploaded_by_member_id: caller.id,
         conversation_message_id: conversationMessageId,
+        entity_type: conv.entity_type,
+        entity_id: conv.entity_id,
+        document_category: documentCategory,
       })
       .select("id")
       .single();
@@ -282,7 +299,7 @@ export async function getConversationMessages(
     const { data: docs } = messageIds.length > 0
       ? await supabase
           .from("member_documents")
-          .select("id, conversation_message_id, file_name, content_type, file_size")
+          .select("id, conversation_message_id, file_name, content_type, file_size, document_label")
           .in("conversation_message_id", messageIds)
       : { data: [] as Array<{ id: string; conversation_message_id: string; file_name: string; content_type: string; file_size: number }> };
 
@@ -294,6 +311,7 @@ export async function getConversationMessages(
         fileName: d.file_name as string,
         contentType: d.content_type as string,
         fileSize: d.file_size as number,
+        documentLabel: (d.document_label as string | null) ?? null,
       });
       docsByMessage.set(d.conversation_message_id as string, list);
     }
@@ -379,6 +397,37 @@ export async function sendConversationMessage(
       documents: [],
     };
     return { success: true, message };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// updateDocumentLabel — admin/owner sets or changes the document_label on an
+// existing member_documents row. This is the post-receipt labelling step
+// where the admin classifies a document sent by an employee.
+// ---------------------------------------------------------------------------
+
+export async function updateDocumentLabel(
+  documentId: string,
+  label: string | null,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { member: caller } = await getCallerMember();
+    if (caller.role !== "owner" && caller.role !== "admin") {
+      return { success: false, error: "Not authorised" };
+    }
+
+    const admin = getAdminClient();
+
+    const { error: updateError } = await admin
+      .from("member_documents")
+      .update({ document_label: label })
+      .eq("id", documentId)
+      .eq("organisation_id", caller.organisation_id);
+
+    if (updateError) return { success: false, error: updateError.message };
+    return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }

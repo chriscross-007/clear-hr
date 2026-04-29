@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { TimesheetGrid } from "@/components/timesheet/timesheet-grid";
 import { ClockingEditDialog } from "@/components/timesheet/clocking-edit-dialog";
 import { ClockingsMapDialog } from "@/components/timesheet/clockings-map-dialog";
-import { triggerInference, setDayShift } from "@/app/(dashboard)/timesheets/actions";
+import { triggerInference, setDayShift } from "@/app/(dashboard)/timesheet-actions";
 import type { CellClickContext, WorkPeriodData, RoundingConfig, OvertimeBandDef, BreakRuleDef } from "@/components/timesheet/timesheet-types";
 import { ClockingsDebug, type DebugClocking } from "./clockings-debug";
 
@@ -106,7 +106,7 @@ export function TimesheetClient({
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="icon" asChild>
-            <Link href={`/timesheets/${memberId}?week=${prevWeek}`}>
+            <Link href={`/members/${memberId}/timesheet?week=${prevWeek}`}>
               <ChevronLeft className="h-4 w-4" />
             </Link>
           </Button>
@@ -114,7 +114,7 @@ export function TimesheetClient({
             {formatWeekLabel(weekStart, weekEnd)}
           </span>
           <Button variant="outline" size="icon" asChild>
-            <Link href={`/timesheets/${memberId}?week=${nextWeek}`}>
+            <Link href={`/members/${memberId}/timesheet?week=${nextWeek}`}>
               <ChevronRight className="h-4 w-4" />
             </Link>
           </Button>
@@ -172,7 +172,6 @@ export function TimesheetClient({
       {/* Debug: clockings CRUD */}
       <ClockingsDebug
         memberId={memberId}
-        weekStart={weekStart}
         clockings={debugClockings}
         onRefresh={() => startReinference(runRecalculate)}
       />

@@ -555,7 +555,7 @@ export async function addClocking(
     getCallerName(memberId),
   ]);
 
-  const { data: created, error: insertErr } = await admin
+  const { error: insertErr } = await admin
     .from("clockings")
     .insert({
       organisation_id: caller.organisation_id,
@@ -564,9 +564,7 @@ export async function addClocking(
       raw_type:        rawType,
       override_type:   overrideType ?? null,
       source:          "manual",
-    })
-    .select("id")
-    .single();
+    });
 
   if (insertErr) return { success: false, error: insertErr.message };
 

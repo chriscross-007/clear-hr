@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { editClocking, deleteClockingEdit, deleteClocking, addClocking, overrideClockingType } from "@/app/(dashboard)/timesheets/actions";
+import { editClocking, deleteClockingEdit, deleteClocking, addClocking, overrideClockingType } from "@/app/(dashboard)/timesheet-actions";
 import { effectiveTime } from "./timesheet-types";
 import type { CellClickContext } from "./timesheet-types";
 
