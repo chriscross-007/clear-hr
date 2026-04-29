@@ -301,7 +301,7 @@ export async function getConversationMessages(
           .from("member_documents")
           .select("id, conversation_message_id, file_name, content_type, file_size, document_label")
           .in("conversation_message_id", messageIds)
-      : { data: [] as Array<{ id: string; conversation_message_id: string; file_name: string; content_type: string; file_size: number }> };
+      : { data: [] as Array<{ id: string; conversation_message_id: string; file_name: string; content_type: string; file_size: number; document_label: string | null }> };
 
     const docsByMessage = new Map<string, ConversationMessage["documents"]>();
     for (const d of docs ?? []) {
