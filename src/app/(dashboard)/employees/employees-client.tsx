@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { type ColPref, saveGridPrefs } from "@/lib/grid-prefs-actions";
 import type { GridPrefs } from "@/lib/grid-prefs";
-import { type ColumnDef } from "@tanstack/react-table";
+import { type ColumnDef, type Row } from "@tanstack/react-table";
 import { DataGrid } from "@/components/data-grid/data-grid";
 import {
   buildEmployeeColumns,
@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/dialog";
 import { EditEmployeeDialog } from "./edit-employee-dialog";
 import { BulkEditSheet } from "./bulk-edit-sheet";
+import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 import { AddEmployeeDialog } from "./add-employee-dialog";
 import type { Profile } from "./profile-actions";
 import type { FieldDef } from "./custom-field-actions";
@@ -135,6 +136,21 @@ export function EmployeesClient({
 
   const handleDeselectAll = () => {
     setSelectedIds(new Set());
+  };
+
+  // Add or remove every supplied id from the current selection (additive).
+  // Used by the group-header tri-state checkbox so toggling one group never
+  // discards selections made in other groups.
+  const handleSetSelected = (ids: string[], selected: boolean) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (selected) {
+        for (const id of ids) next.add(id);
+      } else {
+        for (const id of ids) next.delete(id);
+      }
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -378,10 +394,13 @@ export function EmployeesClient({
   void DATE_PRESET_LABELS; // imported for re-export use in other files
 
   return (
-    <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
-      <h1 className="text-2xl font-bold mb-6">
-        {capitalize(pluralize(memberLabel))} Directory
-      </h1>
+    <div className="w-full px-4 sm:px-6 lg:px-8">
+      <StickyPageHeader>
+        <h1 className="text-2xl font-bold">
+          {capitalize(pluralize(memberLabel))} Directory
+        </h1>
+      </StickyPageHeader>
+      <div className="pb-8 pt-4">
 
       {/* DataGrid — always mounted so state (filters/sort) survives view toggle */}
       <div className={view !== "list" ? "hidden" : "flex justify-center w-full"}>
@@ -409,6 +428,21 @@ export function EmployeesClient({
           initialFilters={initialFiltersArray}
           initialSorting={initialSorting}
           onPrefsChange={handlePrefsChange}
+          stickyHeader
+          renderGroupHeaderPrefix={({ rowsInGroup, groupValue }) => {
+            const ids = rowsInGroup.map((r: Row<Member>) => r.original.member_id);
+            const selectedInGroup = ids.filter((id) => selectedIds.has(id)).length;
+            const allSelected = ids.length > 0 && selectedInGroup === ids.length;
+            const someSelected = selectedInGroup > 0 && !allSelected;
+            return (
+              <Checkbox
+                checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                onCheckedChange={(value) => handleSetSelected(ids, value === true)}
+                onClick={(e) => e.stopPropagation()}
+                aria-label={`Select all in ${groupValue}`}
+              />
+            );
+          }}
         />
         </div>
       </div>
@@ -642,6 +676,7 @@ export function EmployeesClient({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </div>
     </div>
   );
 }

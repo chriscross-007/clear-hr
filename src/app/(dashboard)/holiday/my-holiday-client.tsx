@@ -40,6 +40,7 @@ import type {
   BalanceSummary,
   AbsenceReasonOption,
 } from "../holiday-booking-actions";
+import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 
 interface MyHolidayClientProps {
   memberId: string;
@@ -137,19 +138,20 @@ export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings
 
   return (
     <>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">My Holiday</h1>
-        <Button onClick={() => setBookSheetOpen(true)}>
-          <Plus className="h-4 w-4 mr-1.5" />
-          Request Holiday
-        </Button>
-      </div>
-
       <Tabs defaultValue="overview" className="w-full mb-6">
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="calendar">Calendar</TabsTrigger>
-        </TabsList>
+        <StickyPageHeader>
+          <div className="flex items-center justify-between gap-4 mb-3">
+            <h1 className="text-2xl font-bold">My Holiday</h1>
+            <Button onClick={() => setBookSheetOpen(true)}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              Request Holiday
+            </Button>
+          </div>
+          <TabsList>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="calendar">Calendar</TabsTrigger>
+          </TabsList>
+        </StickyPageHeader>
 
         <TabsContent value="overview" className="mt-4">
       {/* Balance summary — current period */}

@@ -260,19 +260,36 @@ export async function getMyBalance(): Promise<BalanceSummary | null> {
   const { supabase, member } = await getCallerMember();
   const today = new Date().toISOString().slice(0, 10);
 
-  // Get current year record
-  const { data: yearRec } = await supabase
-    .from("holiday_year_records")
-    .select("id, absence_type_id, year_start, year_end, pro_rata_amount, base_amount, adjustment, carried_over")
+  // CLE-167 — read the current holiday_period (replaces the dropped
+  // holiday_year_records + absence_profiles tables). Adapt the period
+  // shape into the input the existing calculateEntitlement helper expects
+  // so My Holiday balance card keeps working until Phase 4 rebuilds the
+  // computation chain.
+  const { data: currentPeriod } = await supabase
+    .from("holiday_periods")
+    .select("start_date, end_date, allowance, adjust, units, max_carry_forward")
     .eq("member_id", member.id)
-    .lte("year_start", today)
-    .gte("year_end", today)
+    .lte("start_date", today)
+    .gte("end_date", today)
     .limit(1)
     .single();
 
-  if (!yearRec) return null;
+  if (!currentPeriod) return null;
 
-  // Get bookings in this year
+  const yearRec = {
+    year_start: currentPeriod.start_date as string,
+    year_end: currentPeriod.end_date as string,
+    base_amount: Number(currentPeriod.allowance ?? 0),
+    pro_rata_amount: null,
+    adjustment: Number(currentPeriod.adjust ?? 0),
+    carried_over: 0,
+  };
+  const unit = (currentPeriod.units as string) ?? "days";
+  const carryOverMax = currentPeriod.max_carry_forward !== null
+    ? Number(currentPeriod.max_carry_forward)
+    : null;
+
+  // Get bookings in this period
   const { data: bookings } = await supabase
     .from("holiday_bookings")
     .select("days_deducted, hours_deducted, status, end_date")
@@ -280,23 +297,6 @@ export async function getMyBalance(): Promise<BalanceSummary | null> {
     .gte("start_date", yearRec.year_start)
     .lte("start_date", yearRec.year_end)
     .in("status", ["pending", "approved"]);
-
-  // Determine measurement mode and carry-over cap from the absence profile
-  let unit = "days";
-  let carryOverMax: number | null = null;
-  if (yearRec) {
-    const { data: profile } = await supabase
-      .from("absence_profiles")
-      .select("measurement_mode, carry_over_max")
-      .eq("absence_type_id", yearRec.absence_type_id)
-      .eq("organisation_id", member.organisation_id)
-      .limit(1)
-      .single();
-    if (profile) {
-      unit = profile.measurement_mode;
-      carryOverMax = profile.carry_over_max !== null ? Number(profile.carry_over_max) : null;
-    }
-  }
 
   const result = calculateEntitlement(
     yearRec,

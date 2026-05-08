@@ -116,6 +116,36 @@ interface DataGridProps<T> {
   onPrefsChange?: (snapshot: GridPrefs) => void;
   /** Column IDs to pin before the prefs-managed columns (e.g. ["select"]) */
   leadingColumnIds?: string[];
+  /**
+   * Optional renderer for content placed at the leading edge of each group header row
+   * (e.g. a tri-state select-all checkbox for the group). When provided, the group
+   * header is split into a fixed-width leading cell and a `colSpan - 1` label cell.
+   * Receives the full filtered set of rows in the group, not just the visible page.
+   */
+  renderGroupHeaderPrefix?: (info: {
+    groupValue: string;
+    rowsInGroup: Row<T>[];
+    count: number;
+  }) => ReactNode;
+  /**
+   * When true, the toolbar, column header row and filter row remain pinned to
+   * the top of the viewport as the body scrolls. The page itself is the scroll
+   * context — the caller is responsible for providing any sticky page header
+   * (e.g. a `<StickyPageHeader>`) that sits above the toolbar.
+   *
+   * Combined with `stickyHeaderTop` to set where the toolbar pins. Default is
+   * 120 (matches a single-line `<StickyPageHeader>` containing one `<h1>`).
+   * Increase for pages whose sticky region is taller (e.g. multi-row title +
+   * action row).
+   */
+  stickyHeader?: boolean;
+  /**
+   * Distance in px from the viewport top where the DataGrid toolbar pins. The
+   * column header row pins at `stickyHeaderTop + 56`, and the filter row at
+   * `stickyHeaderTop + 96` (toolbar height + column-header h-10). Defaults to
+   * 120.
+   */
+  stickyHeaderTop?: number;
   /** When true, hide Customise/PDF/CSV buttons from DataGrid toolbar (caller renders them externally via toolbarRef) */
   hideToolbarActions?: boolean;
   /** Ref populated with handlers to trigger customiser/PDF/CSV from outside DataGrid */
@@ -151,7 +181,13 @@ export function DataGrid<T extends object>({
   leadingColumnIds,
   hideToolbarActions,
   toolbarRef,
+  renderGroupHeaderPrefix,
+  stickyHeader,
+  stickyHeaderTop = 120,
 }: DataGridProps<T>) {
+  const stickyToolbarTop = stickyHeaderTop;
+  const stickyColumnHeaderTop = stickyHeaderTop + 56;
+  const stickyFilterRowTop = stickyHeaderTop + 96;
   const [sorting, setSorting] = useState<SortingState>(initialSorting ?? []);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(initialFilters ?? []);
   const [pageIndex, setPageIndex] = useState(0);
@@ -347,12 +383,14 @@ export function DataGrid<T extends object>({
   const allFilteredRows = table.getPrePaginationRowModel().rows;
   const grandTotalAggs = hasAggregates ? computeAggs(allFilteredRows) : null;
 
-  // Per-group aggregates and group-end row IDs (computed across all pages)
+  // Per-group aggregates and group-end row IDs (computed across all pages).
+  // `groupRows` is hoisted so the group-header prefix renderer (e.g. a select-all
+  // checkbox) can see every filtered row in the group, not just the visible page.
   const lastRowIdOfGroup = new Set<string>();
   const groupAggregates = new Map<string, Map<string, AggValues>>();
   const allGroupCounts = new Map<string, number>();
+  const groupRows = new Map<string, Row<T>[]>();
   if (groupBy) {
-    const groupRows = new Map<string, Row<T>[]>();
     const groupLastRow = new Map<string, string>();
     for (const row of allFilteredRows) {
       const gv = String(row.getValue(groupBy) ?? "—");
@@ -372,7 +410,13 @@ export function DataGrid<T extends object>({
   return (
     <div>
       {/* Toolbar */}
-      <div className="mb-4 flex items-center justify-between gap-4">
+      <div
+        className={cn(
+          "mb-4 flex items-center justify-between gap-4",
+          stickyHeader && "sticky z-30 bg-background py-2",
+        )}
+        style={stickyHeader ? { top: stickyToolbarTop } : undefined}
+      >
         <div className="flex items-center gap-2">
           {!hideToolbarActions && <ColumnCustomiserTrigger onClick={() => setShowCustomiser(true)} />}
           {columnFilters.length > 0 && (
@@ -417,7 +461,10 @@ export function DataGrid<T extends object>({
 
       {/* Table */}
       <div className="rounded-md border">
-        <Table className="w-full">
+        <Table
+          className="w-full"
+          containerClassName={stickyHeader ? "overflow-x-visible" : undefined}
+        >
           <TableHeader>
             {/* Column header row */}
             {table.getHeaderGroups().map((headerGroup) => (
@@ -425,7 +472,11 @@ export function DataGrid<T extends object>({
                 {headerGroup.headers.map((header) => (
                   <TableHead
                     key={header.id}
-                    className={header.column.columnDef.meta?.headerClassName ?? ""}
+                    className={cn(
+                      header.column.columnDef.meta?.headerClassName ?? "",
+                      stickyHeader && "sticky z-20 bg-background",
+                    )}
+                    style={stickyHeader ? { top: stickyColumnHeaderTop } : undefined}
                   >
                     {header.isPlaceholder
                       ? null
@@ -437,11 +488,14 @@ export function DataGrid<T extends object>({
             {/* Filter row */}
             <TableRow className="bg-muted/50 hover:bg-muted/50">
               {table.getHeaderGroups()[0]?.headers.map((header) => {
+                const stickyFilterCls = stickyHeader ? "sticky z-20 bg-muted/95" : "";
+                const stickyFilterStyle = stickyHeader ? { top: stickyFilterRowTop } : undefined;
                 if (!header.column.getCanFilter()) {
                   return (
                     <TableHead
                       key={`filter-${header.id}`}
-                      className={cn(header.column.columnDef.meta?.headerClassName ?? "")}
+                      className={cn(header.column.columnDef.meta?.headerClassName ?? "", stickyFilterCls)}
+                      style={stickyFilterStyle}
                     />
                   );
                 }
@@ -450,13 +504,21 @@ export function DataGrid<T extends object>({
                 );
                 if (filterEl != null) {
                   return (
-                    <TableHead key={`filter-${header.id}`} className="py-2">
+                    <TableHead
+                      key={`filter-${header.id}`}
+                      className={cn("py-2", stickyFilterCls)}
+                      style={stickyFilterStyle}
+                    >
                       {filterEl}
                     </TableHead>
                   );
                 }
                 return (
-                  <TableHead key={`filter-${header.id}`} className="py-2">
+                  <TableHead
+                    key={`filter-${header.id}`}
+                    className={cn("py-2", stickyFilterCls)}
+                    style={stickyFilterStyle}
+                  >
                     <Input
                       placeholder="Filter..."
                       className="h-8 text-sm"
@@ -486,12 +548,27 @@ export function DataGrid<T extends object>({
                     if (groupValue !== lastGroupValue) {
                       lastGroupValue = groupValue;
                       const count = allGroupCounts.get(groupValue) ?? 0;
+                      const rowsInGroup = groupRows.get(groupValue) ?? [];
+                      const labelCell = (
+                        <TableCell
+                          colSpan={renderGroupHeaderPrefix ? Math.max(1, colSpan - 1) : colSpan}
+                          className="py-2 px-4 text-base font-bold"
+                        >
+                          {colLabels[groupBy] ?? groupBy}: {groupValue}{" "}
+                          <span className="font-normal text-muted-foreground text-sm">({count})</span>
+                        </TableCell>
+                      );
                       result.push(
                         <TableRow key={`grp-${groupValue}-${row.id}`} className="bg-blue-50/60 dark:bg-blue-950/30 hover:bg-blue-50/60 dark:hover:bg-blue-950/30">
-                          <TableCell colSpan={colSpan} className="py-2 px-4 text-base font-bold">
-                            {colLabels[groupBy] ?? groupBy}: {groupValue}{" "}
-                            <span className="font-normal text-muted-foreground text-sm">({count})</span>
-                          </TableCell>
+                          {renderGroupHeaderPrefix && (
+                            <TableCell
+                              className="w-10 py-2 px-2 text-center"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {renderGroupHeaderPrefix({ groupValue, rowsInGroup, count })}
+                            </TableCell>
+                          )}
+                          {labelCell}
                         </TableRow>
                       );
                     }

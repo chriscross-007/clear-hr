@@ -74,6 +74,13 @@ interface OrganisationEditDialogProps {
   bankHolidayHandling: string;
   bankHolidayColour: string;
   defaultWorkProfileId: string | null;
+  defaultHolidayType: "fixed" | "earned";
+  defaultHolidayUnits: "days" | "hours";
+  defaultHolidayEarnedFactor: number;
+  defaultHolidayAllowance: number;
+  defaultHolidayToilHoursPerDay: number;
+  defaultHolidayMaxCarryForward: number;
+  defaultHolidayMinCarryForward: number;
 }
 
 export function OrganisationEditDialog({
@@ -103,6 +110,13 @@ export function OrganisationEditDialog({
   bankHolidayHandling: initialBankHolidayHandling,
   bankHolidayColour: initialBankHolidayColour,
   defaultWorkProfileId: initialDefaultWorkProfileId,
+  defaultHolidayType: initialDefaultHolidayType,
+  defaultHolidayUnits: initialDefaultHolidayUnits,
+  defaultHolidayEarnedFactor: initialDefaultHolidayEarnedFactor,
+  defaultHolidayAllowance: initialDefaultHolidayAllowance,
+  defaultHolidayToilHoursPerDay: initialDefaultHolidayToilHoursPerDay,
+  defaultHolidayMaxCarryForward: initialDefaultHolidayMaxCarryForward,
+  defaultHolidayMinCarryForward: initialDefaultHolidayMinCarryForward,
 }: OrganisationEditDialogProps) {
   const [name, setName] = useState(orgName);
   const [label, setLabel] = useState(memberLabel);
@@ -136,6 +150,17 @@ export function OrganisationEditDialog({
   const [bankHolidayColour, setBankHolidayColour] = useState(initialBankHolidayColour);
   const [workProfiles, setWorkProfiles] = useState<WorkProfile[]>([]);
   const [defaultWorkProfileId, setDefaultWorkProfileId] = useState<string>(initialDefaultWorkProfileId ?? "__none__");
+  // CLE-169 — Default Cascade values for Profileless Holiday Management.
+  // Numeric fields are held as strings while editing so the user can type
+  // partial values like "-", "" or "1." without the parser snapping them
+  // back to 0. Parsed to numbers at save time (and for the dirty check).
+  const [defaultHolidayType, setDefaultHolidayType] = useState<"fixed" | "earned">(initialDefaultHolidayType);
+  const [defaultHolidayUnits, setDefaultHolidayUnits] = useState<"days" | "hours">(initialDefaultHolidayUnits);
+  const [defaultHolidayEarnedFactor, setDefaultHolidayEarnedFactor] = useState<string>(String(initialDefaultHolidayEarnedFactor));
+  const [defaultHolidayAllowance, setDefaultHolidayAllowance] = useState<string>(String(initialDefaultHolidayAllowance));
+  const [defaultHolidayToilHoursPerDay, setDefaultHolidayToilHoursPerDay] = useState<string>(String(initialDefaultHolidayToilHoursPerDay));
+  const [defaultHolidayMaxCarryForward, setDefaultHolidayMaxCarryForward] = useState<string>(String(initialDefaultHolidayMaxCarryForward));
+  const [defaultHolidayMinCarryForward, setDefaultHolidayMinCarryForward] = useState<string>(String(initialDefaultHolidayMinCarryForward));
   const [adminProfiles, setAdminProfiles] = useState<Profile[]>([]);
   const [employeeProfiles, setEmployeeProfiles] = useState<Profile[]>([]);
   const [userRightsType, setUserRightsType] = useState<"admin" | "employee">("admin");
@@ -176,6 +201,13 @@ export function OrganisationEditDialog({
     bankHolidayColour !== initialBankHolidayColour ||
     countryCode !== originalCountryCode ||
     defaultWorkProfileId !== (initialDefaultWorkProfileId ?? "__none__") ||
+    defaultHolidayType !== initialDefaultHolidayType ||
+    defaultHolidayUnits !== initialDefaultHolidayUnits ||
+    (Number(defaultHolidayEarnedFactor) || 0) !== initialDefaultHolidayEarnedFactor ||
+    (Number(defaultHolidayAllowance) || 0) !== initialDefaultHolidayAllowance ||
+    (Number(defaultHolidayToilHoursPerDay) || 0) !== initialDefaultHolidayToilHoursPerDay ||
+    (Number(defaultHolidayMaxCarryForward) || 0) !== initialDefaultHolidayMaxCarryForward ||
+    (Number(defaultHolidayMinCarryForward) || 0) !== initialDefaultHolidayMinCarryForward ||
     fieldDefsModified ||
     JSON.stringify(noticePeriodRules) !== noticePeriodRulesOriginal ||
     teams.some((t) => {
@@ -212,6 +244,13 @@ export function OrganisationEditDialog({
       setBankHolidayHandling(initialBankHolidayHandling);
       setBankHolidayColour(initialBankHolidayColour);
       setDefaultWorkProfileId(initialDefaultWorkProfileId ?? "__none__");
+      setDefaultHolidayType(initialDefaultHolidayType);
+      setDefaultHolidayUnits(initialDefaultHolidayUnits);
+      setDefaultHolidayEarnedFactor(String(initialDefaultHolidayEarnedFactor));
+      setDefaultHolidayAllowance(String(initialDefaultHolidayAllowance));
+      setDefaultHolidayToilHoursPerDay(String(initialDefaultHolidayToilHoursPerDay));
+      setDefaultHolidayMaxCarryForward(String(initialDefaultHolidayMaxCarryForward));
+      setDefaultHolidayMinCarryForward(String(initialDefaultHolidayMinCarryForward));
       setFieldDefsModified(false);
       // Load teams
       getTeams().then((result) => {
@@ -337,6 +376,13 @@ export function OrganisationEditDialog({
       bankHolidayColour,
       countryCode,
       defaultWorkProfileId: defaultWorkProfileId === "__none__" ? null : defaultWorkProfileId,
+      defaultHolidayType,
+      defaultHolidayUnits,
+      defaultHolidayEarnedFactor: Number(defaultHolidayEarnedFactor) || 0,
+      defaultHolidayAllowance: Number(defaultHolidayAllowance) || 0,
+      defaultHolidayToilHoursPerDay: Number(defaultHolidayToilHoursPerDay) || 0,
+      defaultHolidayMaxCarryForward: Number(defaultHolidayMaxCarryForward) || 0,
+      defaultHolidayMinCarryForward: Number(defaultHolidayMinCarryForward) || 0,
     });
 
     if (!result.success) {
@@ -373,7 +419,9 @@ export function OrganisationEditDialog({
 
     setLoading(false);
     setFieldDefsModified(false);
-    onOpenChange(false);
+    // Keep the dialog open so the admin can keep editing or switch tabs;
+    // router.refresh() updates the layout server props which flow back through
+    // as new initial* values, so hasChanges naturally goes false.
     router.refresh();
   }
 
@@ -415,8 +463,57 @@ export function OrganisationEditDialog({
     setFieldDefsModified(true);
   }
 
+  // Reset every editable form field to its initial value. Called by both
+  // Cancel (stays open) and Close (closes after).
+  function resetFormFields() {
+    setName(orgName);
+    setLabel(memberLabel);
+    setError(null);
+    setTeamError(null);
+    setBreachWarning(null);
+    setNewTeamName("");
+    setEditingTeamId(null);
+    setEditingTeamName("");
+    setMfaRequired(requireMfa);
+    setCurrencySymbol(initialCurrencySymbol);
+    setTsMaxShiftHours(initialTsMaxShiftHours);
+    setTsMaxBreakMinutes(initialTsMaxBreakMinutes);
+    setTsShiftStartVarianceMinutes(initialTsShiftStartVarianceMinutes);
+    setTsRoundFirstInMins(initialTsRoundFirstInMins);
+    setTsRoundFirstInGraceMins(initialTsRoundFirstInGraceMins);
+    setTsRoundBreakOutMins(initialTsRoundBreakOutMins);
+    setTsRoundBreakOutGraceMins(initialTsRoundBreakOutGraceMins);
+    setTsRoundBreakInMins(initialTsRoundBreakInMins);
+    setTsRoundBreakInGraceMins(initialTsRoundBreakInGraceMins);
+    setTsRoundLastOutMins(initialTsRoundLastOutMins);
+    setTsRoundLastOutGraceMins(initialTsRoundLastOutGraceMins);
+    setHolidayYearStartType(initialHolidayYearStartType);
+    setHolidayYearStartDay(initialHolidayYearStartDay);
+    setHolidayYearStartMonth(initialHolidayYearStartMonth);
+    setBankHolidayHandling(initialBankHolidayHandling);
+    setBankHolidayColour(initialBankHolidayColour);
+    setDefaultWorkProfileId(initialDefaultWorkProfileId ?? "__none__");
+    setDefaultHolidayType(initialDefaultHolidayType);
+    setDefaultHolidayUnits(initialDefaultHolidayUnits);
+    setDefaultHolidayEarnedFactor(String(initialDefaultHolidayEarnedFactor));
+    setDefaultHolidayAllowance(String(initialDefaultHolidayAllowance));
+    setDefaultHolidayToilHoursPerDay(String(initialDefaultHolidayToilHoursPerDay));
+    setDefaultHolidayMaxCarryForward(String(initialDefaultHolidayMaxCarryForward));
+    setDefaultHolidayMinCarryForward(String(initialDefaultHolidayMinCarryForward));
+    setTeams(originalTeams);
+    setNoticePeriodRules(JSON.parse(noticePeriodRulesOriginal || "[]"));
+    setFieldDefsModified(false);
+  }
+
+  // Cancel — discards in-flight edits; dialog stays open.
+  function handleCancel() {
+    resetFormFields();
+  }
+
+  // Close — discards in-flight edits AND closes the dialog.
   function handleClose() {
     if (fieldDefsModified) router.refresh();
+    resetFormFields();
     onOpenChange(false);
   }
 
@@ -981,6 +1078,166 @@ export function OrganisationEditDialog({
                   </div>
                 )}
 
+                {/* CLE-169 — Default Cascade for Profileless Holiday Management */}
+                <div className="border-t pt-4 space-y-3">
+                  <div>
+                    <Label className="text-sm font-medium">Default Holiday Settings</Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Used to seed the per-employee Holiday cog at employee creation.
+                      Changes here only affect <strong>new</strong> employees — existing
+                      employees keep the cog values they already have.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="text-xs text-muted-foreground">Type</Label>
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="defaultHolidayType"
+                          value="fixed"
+                          checked={defaultHolidayType === "fixed"}
+                          onChange={() => setDefaultHolidayType("fixed")}
+                          className="accent-primary"
+                        />
+                        <span className="text-sm">Fixed</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="defaultHolidayType"
+                          value="earned"
+                          checked={defaultHolidayType === "earned"}
+                          onChange={() => setDefaultHolidayType("earned")}
+                          className="accent-primary"
+                        />
+                        <span className="text-sm">Earned</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="text-xs text-muted-foreground">Units</Label>
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="defaultHolidayUnits"
+                          value="days"
+                          checked={defaultHolidayUnits === "days"}
+                          onChange={() => setDefaultHolidayUnits("days")}
+                          className="accent-primary"
+                        />
+                        <span className="text-sm">Days</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="defaultHolidayUnits"
+                          value="hours"
+                          checked={defaultHolidayUnits === "hours"}
+                          onChange={() => setDefaultHolidayUnits("hours")}
+                          className="accent-primary"
+                        />
+                        <span className="text-sm">Hours</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs text-muted-foreground">
+                        Allowance ({defaultHolidayUnits})
+                      </Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step={defaultHolidayUnits === "days" ? "0.5" : "0.01"}
+                        value={defaultHolidayAllowance}
+                        onChange={(e) => setDefaultHolidayAllowance(e.target.value)}
+                      />
+                    </div>
+
+                    {defaultHolidayType === "earned" && (
+                      <div className="flex flex-col gap-1.5">
+                        <Label className="text-xs text-muted-foreground">
+                          Earned Factor (% of worked unit)
+                        </Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.001"
+                          value={defaultHolidayEarnedFactor}
+                          onChange={(e) => setDefaultHolidayEarnedFactor(e.target.value)}
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs text-muted-foreground">Toil hours per Day</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={defaultHolidayToilHoursPerDay}
+                        onChange={(e) => setDefaultHolidayToilHoursPerDay(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs text-muted-foreground">
+                        Max Carry Forward ({defaultHolidayUnits})
+                      </Label>
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        value={defaultHolidayMaxCarryForward}
+                        onChange={(e) => {
+                          // Max Carry Forward must be ≥ 0 — only digits and a single decimal.
+                          // Rejects leading +, leading −, alphabetics, etc.
+                          if (/^\d*\.?\d*$/.test(e.target.value)) {
+                            setDefaultHolidayMaxCarryForward(e.target.value);
+                          }
+                        }}
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs text-muted-foreground">
+                        Min Carry Forward ({defaultHolidayUnits}, ≤ 0)
+                      </Label>
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        value={defaultHolidayMinCarryForward}
+                        onChange={(e) => {
+                          // Min Carry Forward must be ≤ 0. Allow:
+                          //   ""               (empty while editing)
+                          //   "-"              (typing minus first)
+                          //   "0", "0.", "0.0…" (zero variants)
+                          //   "-…"             (anything starting with minus — negative)
+                          // Rejects bare positives (e.g. "5", "0.5") and leading +.
+                          const v = e.target.value;
+                          const ok =
+                            v === "" ||
+                            v === "-" ||
+                            /^0\.?0*$/.test(v) ||                       // 0, 0., 0.0, 0.00…
+                            /^-(\d*\.?\d*|\.\d*)$/.test(v);             // -, -1, -1., -.5, -1.5
+                          if (ok) {
+                            setDefaultHolidayMinCarryForward(v);
+                          }
+                        }}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Leave at <code>-999</code> for &ldquo;no clamping&rdquo; — negative balances will
+                        carry forward unchanged. Set to a less-negative value (e.g. <code>0</code>) to
+                        wipe debt at period end.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="border-t pt-4 space-y-3">
                   <Label className="text-sm font-medium">Notice period rules</Label>
                   <p className="text-xs text-muted-foreground">
@@ -1122,9 +1379,18 @@ export function OrganisationEditDialog({
               <Button
                 type="button"
                 variant="outline"
-                onClick={handleClose}
+                onClick={handleCancel}
+                disabled={loading || !hasChanges}
               >
                 Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleClose}
+                disabled={loading}
+              >
+                Close
               </Button>
               <Button type="submit" disabled={loading || !hasChanges}>
                 {loading ? "Saving..." : "Save changes"}

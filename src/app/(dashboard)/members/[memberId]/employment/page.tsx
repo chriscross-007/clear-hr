@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { EmploymentForm } from "./employment-form";
+import type { WorkProfileAssignmentRow } from "./work-profile-section";
 
 export default async function EmploymentPage({
   params,
@@ -42,20 +43,38 @@ export default async function EmploymentPage({
     .single();
   if (!member) redirect("/employees");
 
-  // Supporting data (mirrors the main Employees page)
+  // Supporting data (mirrors the main Employees page) — plus the
+  // Work Profile assignment surface relocated from the Holiday page (CLE-170).
   const [
     { data: teams },
     { data: adminProfiles },
     { data: employeeProfiles },
     { data: customFieldDefs },
     { data: teamsAssignments },
+    { data: empWorkProfiles },
+    { data: orgWorkProfiles },
+    { data: orgRow },
   ] = await Promise.all([
     supabase.from("teams").select("id, name").eq("organisation_id", caller.organisation_id).order("name"),
     supabase.from("admin_profiles").select("id, name").eq("organisation_id", caller.organisation_id).order("name"),
     supabase.from("employee_profiles").select("id, name").eq("organisation_id", caller.organisation_id).order("name"),
     supabase.from("custom_field_definitions").select("id, label, field_key, field_type, options, required, sort_order, max_decimal_places").eq("organisation_id", caller.organisation_id).eq("object_type", "member").order("sort_order"),
     supabase.from("member_teams").select("team_id").eq("member_id", memberId),
+    supabase.from("employee_work_profiles").select("id, work_profile_id, effective_from, work_profiles(name)").eq("member_id", memberId).order("effective_from", { ascending: false }),
+    supabase.from("work_profiles").select("id, name").eq("organisation_id", caller.organisation_id).is("member_id", null).order("name"),
+    supabase.from("organisations").select("default_work_profile_id").eq("id", caller.organisation_id).single(),
   ]);
+
+  const workProfileAssignments: WorkProfileAssignmentRow[] = (empWorkProfiles ?? []).map((r) => {
+    const wp = r.work_profiles as unknown as { name: string } | null;
+    return {
+      id: r.id,
+      work_profile_id: r.work_profile_id,
+      work_profile_name: wp?.name ?? "—",
+      effective_from: r.effective_from,
+    };
+  });
+  const orgDefaultWorkProfileId = (orgRow as { default_work_profile_id: string | null } | null)?.default_work_profile_id ?? null;
 
   const allDefs = (customFieldDefs ?? []) as { id: string; label: string; field_key: string; field_type: string; options: string[] | null; required: boolean; sort_order: number; max_decimal_places: number | null }[];
   const visibleDefs = canSeeCurrency ? allDefs : allDefs.filter((d) => d.field_type !== "currency");
@@ -102,6 +121,9 @@ export default async function EmploymentPage({
         employeeProfiles={(employeeProfiles ?? []) as { id: string; name: string }[]}
         customFieldDefs={visibleDefs}
         currencySymbol={currencySymbol}
+        workProfileAssignments={workProfileAssignments}
+        orgWorkProfiles={(orgWorkProfiles ?? []) as { id: string; name: string }[]}
+        orgDefaultWorkProfileId={orgDefaultWorkProfileId}
       />
     </div>
   );

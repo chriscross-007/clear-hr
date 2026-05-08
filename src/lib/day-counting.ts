@@ -23,6 +23,35 @@ export type WorkPatternHours = {
   hours_sunday: number;
 };
 
+/**
+ * One Work Profile assignment in an employee's history. The org default
+ * profile (when one exists) is included as an early-dated entry so the
+ * lookup always falls back gracefully.
+ */
+export type WorkPatternAssignment = {
+  /** ISO date — assignment is active on or after this date. */
+  effectiveFrom: string;
+  pattern: WorkPatternHours;
+};
+
+/**
+ * Find the Work Pattern that applies on `iso`. Walks the history and picks
+ * the entry with the latest `effectiveFrom <= iso`. Returns null if none
+ * apply (e.g. a date earlier than the org default's effective_from).
+ */
+export function patternForDate(
+  history: WorkPatternAssignment[],
+  iso: string,
+): WorkPatternHours | null {
+  let best: WorkPatternAssignment | null = null;
+  for (const a of history) {
+    if (a.effectiveFrom <= iso) {
+      if (!best || a.effectiveFrom > best.effectiveFrom) best = a;
+    }
+  }
+  return best?.pattern ?? null;
+}
+
 /** Default Mon–Fri 8h pattern used as final fallback */
 const DEFAULT_PATTERN: WorkPatternHours = {
   hours_monday: 8,

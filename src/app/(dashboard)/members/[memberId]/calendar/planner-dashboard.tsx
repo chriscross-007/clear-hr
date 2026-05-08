@@ -3,6 +3,7 @@ import type { ComponentType, ReactNode } from "react";
 import { HolidayDonut } from "./holiday-donut";
 import { SickDonut } from "./sick-donut";
 import { SickPlot } from "./sick-plot";
+import { HolidayUnitsPill } from "@/components/holiday-units-pill";
 
 export type HolidayStats = {
   allowance: number;
@@ -95,6 +96,7 @@ export function PlannerDashboard({
   holidayBaseColour,
   holidayPeriodStart,
   holidayPeriodEnd,
+  holidayUnits,
   sick,
   sickPlot,
   bradfordFactor,
@@ -103,6 +105,9 @@ export function PlannerDashboard({
   holidayBaseColour?: string;
   holidayPeriodStart?: string;
   holidayPeriodEnd?: string;
+  /** Units of the displayed Holiday Period — drives the pill under the
+   *  "Holidays" title and signals what the donut numbers mean. */
+  holidayUnits?: "days" | "hours";
   sick?: SickStats;
   sickPlot?: SickPlotStats;
   bradfordFactor?: number;
@@ -112,13 +117,21 @@ export function PlannerDashboard({
   );
   const last365 = subtitle("(last 365 days)");
 
-  const holidaysTitle = holidayPeriodStart && holidayPeriodEnd ? (
-    <span>
-      Holidays{" "}
-      {subtitle(`(${fmtShortDate(holidayPeriodStart)} – ${fmtShortDate(holidayPeriodEnd)})`)}
+  const holidaysTitle = (
+    <span className="flex flex-wrap items-baseline gap-x-2">
+      <span>
+        Holidays
+        {holidayPeriodStart && holidayPeriodEnd && (
+          <>
+            {" "}
+            {subtitle(`(${fmtShortDate(holidayPeriodStart)} – ${fmtShortDate(holidayPeriodEnd)})`)}
+          </>
+        )}
+      </span>
+      {holidayUnits && (
+        <HolidayUnitsPill units={holidayUnits} className="self-center" />
+      )}
     </span>
-  ) : (
-    "Holidays"
   );
   const sickTitle = <span>Sick {last365}</span>;
   const bradfordTitle = <span>Bradford Factor {last365}</span>;

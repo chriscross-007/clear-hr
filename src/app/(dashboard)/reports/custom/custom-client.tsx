@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/select";
 import { ALL_STANDARD_REPORTS } from "../definitions";
 import { createCustomReport, deleteCustomReport } from "../actions";
+import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 
 type CustomReport = {
   id: string;
@@ -98,13 +99,15 @@ export function CustomReportsClient({
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Custom Reports</h1>
-        <Button onClick={() => setShowCreateDialog(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          New Report
-        </Button>
-      </div>
+      <StickyPageHeader>
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="text-2xl font-bold">Custom Reports</h1>
+          <Button onClick={() => setShowCreateDialog(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            New Report
+          </Button>
+        </div>
+      </StickyPageHeader>
 
       {reports.length === 0 ? (
         <p className="text-muted-foreground">No custom reports yet. Create one from a standard report.</p>

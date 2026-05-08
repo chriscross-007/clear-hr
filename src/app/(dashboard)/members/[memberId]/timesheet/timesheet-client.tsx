@@ -11,6 +11,7 @@ import { ClockingsMapDialog } from "@/components/timesheet/clockings-map-dialog"
 import { triggerInference, setDayShift } from "@/app/(dashboard)/timesheet-actions";
 import type { CellClickContext, WorkPeriodData, RoundingConfig, OvertimeBandDef, BreakRuleDef } from "@/components/timesheet/timesheet-types";
 import { ClockingsDebug, type DebugClocking } from "./clockings-debug";
+import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 
 interface TimesheetClientProps {
   memberId: string;
@@ -96,58 +97,56 @@ export function TimesheetClient({
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      {/* Header */}
-      <div className="mb-6">
+      {/* Sticky band: title + week navigation + actions */}
+      <StickyPageHeader>
         <p className="text-sm text-muted-foreground">Timesheet</p>
-        <h1 className="text-2xl font-bold">{memberName}</h1>
-      </div>
-
-      {/* Week navigation */}
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="icon" asChild>
-            <Link href={`/members/${memberId}/timesheet?week=${prevWeek}`}>
-              <ChevronLeft className="h-4 w-4" />
-            </Link>
-          </Button>
-          <span className="text-sm font-medium min-w-48 text-center">
-            {formatWeekLabel(weekStart, weekEnd)}
-          </span>
-          <Button variant="outline" size="icon" asChild>
-            <Link href={`/members/${memberId}/timesheet?week=${nextWeek}`}>
-              <ChevronRight className="h-4 w-4" />
-            </Link>
-          </Button>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {totalConflicts > 0 && (
-            <span className="flex items-center gap-1.5 text-sm text-amber-600 dark:text-amber-400">
-              <AlertTriangle className="h-4 w-4" />
-              {totalConflicts} conflict{totalConflicts > 1 ? "s" : ""} need attention
+        <h1 className="text-2xl font-bold mb-3">{memberName}</h1>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="icon" asChild>
+              <Link href={`/members/${memberId}/timesheet?week=${prevWeek}`}>
+                <ChevronLeft className="h-4 w-4" />
+              </Link>
+            </Button>
+            <span className="text-sm font-medium min-w-48 text-center">
+              {formatWeekLabel(weekStart, weekEnd)}
             </span>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setMapOpen(true)}
-          >
-            <Map className="h-4 w-4 mr-1.5" />
-            Map
-          </Button>
-          {canEdit && (
+            <Button variant="outline" size="icon" asChild>
+              <Link href={`/members/${memberId}/timesheet?week=${nextWeek}`}>
+                <ChevronRight className="h-4 w-4" />
+              </Link>
+            </Button>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {totalConflicts > 0 && (
+              <span className="flex items-center gap-1.5 text-sm text-amber-600 dark:text-amber-400">
+                <AlertTriangle className="h-4 w-4" />
+                {totalConflicts} conflict{totalConflicts > 1 ? "s" : ""} need attention
+              </span>
+            )}
             <Button
               variant="outline"
               size="sm"
-              onClick={handleRecalculate}
-              disabled={isReinferring}
+              onClick={() => setMapOpen(true)}
             >
-              <RefreshCw className={`h-4 w-4 mr-1.5 ${isReinferring ? "animate-spin" : ""}`} />
-              Recalculate Timesheet
+              <Map className="h-4 w-4 mr-1.5" />
+              Map
             </Button>
-          )}
+            {canEdit && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRecalculate}
+                disabled={isReinferring}
+              >
+                <RefreshCw className={`h-4 w-4 mr-1.5 ${isReinferring ? "animate-spin" : ""}`} />
+                Recalculate Timesheet
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
+      </StickyPageHeader>
 
       {reinferResult && (
         <p className={`mb-3 text-sm ${reinferResult.ok ? "text-muted-foreground" : "text-destructive font-medium"}`}>

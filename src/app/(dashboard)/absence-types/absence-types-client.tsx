@@ -45,6 +45,7 @@ import {
   type AbsenceType,
   type AbsenceReason,
 } from "../absence-actions";
+import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 
 type ReasonFilter = "active" | "inactive" | "all";
 
@@ -220,36 +221,38 @@ export function AbsenceTypesClient({ initialTypes, initialReasons }: AbsenceType
 
   return (
     <>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <p className="text-sm text-muted-foreground">Absence Management</p>
-          <h1 className="text-2xl font-bold">Absence Types & Reasons</h1>
+      <StickyPageHeader>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm text-muted-foreground">Absence Management</p>
+            <h1 className="text-2xl font-bold">Absence Types & Reasons</h1>
+          </div>
+          <div className="flex items-center gap-3">
+            {hasAnyInactive && (
+              <div className="flex items-center gap-1">
+                {(["active", "all", "inactive"] as const).map((f) => (
+                  <button
+                    key={f}
+                    className={cn(
+                      "px-2.5 py-1 rounded text-xs font-medium transition-colors",
+                      reasonFilter === f
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:bg-muted"
+                    )}
+                    onClick={() => setReasonFilter(f)}
+                  >
+                    {f === "active" ? "Active" : f === "inactive" ? "Inactive" : "All"}
+                  </button>
+                ))}
+              </div>
+            )}
+            <Button onClick={openCreateType}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              Add Type
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          {hasAnyInactive && (
-            <div className="flex items-center gap-1">
-              {(["active", "all", "inactive"] as const).map((f) => (
-                <button
-                  key={f}
-                  className={cn(
-                    "px-2.5 py-1 rounded text-xs font-medium transition-colors",
-                    reasonFilter === f
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:bg-muted"
-                  )}
-                  onClick={() => setReasonFilter(f)}
-                >
-                  {f === "active" ? "Active" : f === "inactive" ? "Inactive" : "All"}
-                </button>
-              ))}
-            </div>
-          )}
-          <Button onClick={openCreateType}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Add Type
-          </Button>
-        </div>
-      </div>
+      </StickyPageHeader>
 
       <div className="flex justify-center w-full">
         <div className="w-auto max-w-[90%] min-w-0">

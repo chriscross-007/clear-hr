@@ -20,6 +20,7 @@ import {
   createWorkProfile, updateWorkProfile, deleteWorkProfile,
   type WorkProfile, type WorkProfileInput,
 } from "../work-profile-actions";
+import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 
 const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -104,16 +105,18 @@ export function WorkProfilesClient({ initialProfiles }: { initialProfiles: WorkP
 
   return (
     <>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <p className="text-sm text-muted-foreground">Absence Management</p>
-          <h1 className="text-2xl font-bold">Work Profiles</h1>
+      <StickyPageHeader>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm text-muted-foreground">Absence Management</p>
+            <h1 className="text-2xl font-bold">Work Profiles</h1>
+          </div>
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4 mr-1.5" />
+            Add Profile
+          </Button>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4 mr-1.5" />
-          Add Profile
-        </Button>
-      </div>
+      </StickyPageHeader>
 
       <div className="flex justify-center w-full">
         <div className="w-auto max-w-[90%] min-w-0">

@@ -15,6 +15,7 @@ import {
   setMemberTeams,
 } from "@/app/(dashboard)/employees/team-actions";
 import { saveCustomFieldValues } from "@/app/(dashboard)/employees/custom-field-actions";
+import { WorkProfileSection, type WorkProfileAssignmentRow } from "./work-profile-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -86,6 +87,9 @@ interface EmploymentFormProps {
   employeeProfiles: { id: string; name: string }[];
   customFieldDefs: FieldDef[];
   currencySymbol: string;
+  workProfileAssignments: WorkProfileAssignmentRow[];
+  orgWorkProfiles: { id: string; name: string }[];
+  orgDefaultWorkProfileId: string | null;
 }
 
 export function EmploymentForm({
@@ -97,6 +101,9 @@ export function EmploymentForm({
   employeeProfiles,
   customFieldDefs,
   currencySymbol,
+  workProfileAssignments,
+  orgWorkProfiles,
+  orgDefaultWorkProfileId,
 }: EmploymentFormProps) {
   const { memberLabel } = useMemberLabel();
   const router = useRouter();
@@ -429,6 +436,14 @@ export function EmploymentForm({
                   )}
                 </div>
               )}
+
+              <WorkProfileSection
+                memberId={member.member_id}
+                assignments={workProfileAssignments}
+                orgWorkProfiles={orgWorkProfiles}
+                orgDefaultWorkProfileId={orgDefaultWorkProfileId}
+                canEdit={canEdit}
+              />
 
               {!isOwner && (() => {
                 const applicable = role === "admin" ? adminProfiles : employeeProfiles;

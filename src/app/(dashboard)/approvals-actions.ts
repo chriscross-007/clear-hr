@@ -74,6 +74,26 @@ export async function getPendingApprovals(): Promise<ApprovalRow[]> {
   return fetchAndMapBookings(supabase, member.organisation_id, "pending");
 }
 
+/** Count of pending holiday bookings — used by the Admin Dashboard card. */
+export async function getPendingApprovalsCount(): Promise<{ success: boolean; error?: string; count: number }> {
+  try {
+    const { supabase, member } = await getCallerAdmin();
+    const { count, error } = await supabase
+      .from("holiday_bookings")
+      .select("id", { count: "exact", head: true })
+      .eq("organisation_id", member.organisation_id)
+      .eq("status", "pending");
+    if (error) return { success: false, error: error.message, count: 0 };
+    return { success: true, count: count ?? 0 };
+  } catch (e) {
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : "An error occurred",
+      count: 0,
+    };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Get all requests (with optional status filter)
 // ---------------------------------------------------------------------------

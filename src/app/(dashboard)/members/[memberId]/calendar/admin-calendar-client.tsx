@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { HolidayCalendar, type CalendarBooking, type CalendarBankHoliday } from "@/components/holiday-calendar";
+import { HolidayUnitsPill } from "@/components/holiday-units-pill";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog,
@@ -14,7 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Trash2 } from "lucide-react";
+import { Trash2, ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -52,8 +53,19 @@ import {
 } from "../../../holiday-booking-actions";
 import {
   countWorkingDaysSimple,
+  patternForDate,
   type WorkPatternHours,
+  type WorkPatternAssignment,
 } from "@/lib/day-counting";
+
+/** A Holiday Period option exposed to the prev/next nav above the calendar. */
+export type PeriodNavOption = {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  units: "days" | "hours";
+};
 
 export type AbsenceReasonOption = {
   id: string;
@@ -80,12 +92,25 @@ interface AdminCalendarClientProps {
   /** True if the org has uploaded a self-certification PDF template. */
   hasSelfCertTemplate: boolean;
   yearStart: string;
+  /** Number of months the calendar should render — sized to the selected
+   *  Holiday Period's range (CLE-174). */
+  monthCount: number;
+  /** All Holiday Periods for this employee, sorted ascending by startDate. */
+  periods: PeriodNavOption[];
+  /** Currently displayed period. Drives calendar range + dashboard widget. */
+  selectedPeriodId: string;
+  /** The period covering today, if any — enables the "Current" jump button. */
+  currentPeriodId: string | null;
   bookings: CalendarBooking[];
   bankHolidays: CalendarBankHoliday[];
   bankHolidayColour: string;
   absenceReasons: AbsenceReasonOption[];
   absenceTypes: AbsenceTypeOption[];
   workPattern: WorkPatternHours | null;
+  /** Full Work Profile history — passed through to HolidayCalendar so that
+   *  the schedule overlay shows the correct pattern for each visible date,
+   *  including future-dated assignments. */
+  workPatternHistory: WorkPatternAssignment[];
   bankHolidayHandling: string;
   /** If set, auto-open this booking's edit form on mount. */
   initialBookingId?: string | null;
@@ -144,16 +169,39 @@ export function AdminCalendarClient({
   orgAdmins,
   hasSelfCertTemplate,
   yearStart,
+  monthCount,
+  periods,
+  selectedPeriodId,
+  currentPeriodId,
   bookings,
   bankHolidays,
   bankHolidayColour,
   absenceReasons,
   absenceTypes,
   workPattern,
+  workPatternHistory,
   bankHolidayHandling,
   initialBookingId,
 }: AdminCalendarClientProps) {
   const router = useRouter();
+  const pathname = usePathname();
+
+  // CLE-174 — period nav. Prev/next walk the periods list (sorted ascending),
+  // and the Current button jumps to the period covering today.
+  const selectedIndex = periods.findIndex((p) => p.id === selectedPeriodId);
+  const displayedPeriod = periods[selectedIndex] ?? periods[0];
+  const prevPeriod = selectedIndex > 0 ? periods[selectedIndex - 1] : null;
+  const nextPeriod =
+    selectedIndex >= 0 && selectedIndex < periods.length - 1
+      ? periods[selectedIndex + 1]
+      : null;
+  const viewingCurrentPeriod = currentPeriodId === selectedPeriodId;
+  const navigateToPeriod = useCallback(
+    (id: string) => {
+      router.push(`${pathname}?periodId=${id}`);
+    },
+    [router, pathname],
+  );
 
   // Per-user filter state (key is `calendar-filters-{userId}` — not scoped per
   // employee, so toggles persist as the admin moves between team members).
@@ -424,16 +472,24 @@ export function AdminCalendarClient({
     const effectiveEnd = range.end ?? new Date().toISOString().slice(0, 10);
     const sh = startHalf !== "full";
     const eh = sameDay ? false : endHalf !== "full";
+    // Resolve the pattern at the start of the booking range. If a future-
+    // dated Work Profile applies to the picked dates, this picks it up.
+    // (countWorkingDaysSimple still walks with a single pattern; spanning
+    // an assignment boundary inside one booking is rare enough that this
+    // approximation is acceptable.)
+    const rangePattern = workPatternHistory.length > 0
+      ? patternForDate(workPatternHistory, range.start) ?? workPattern
+      : workPattern;
     return countWorkingDaysSimple(
       range.start,
       effectiveEnd,
       sh,
       eh,
-      workPattern,
+      rangePattern,
       bankHolidaySet,
       bankHolidayHandling,
     );
-  }, [range, sameDay, startHalf, endHalf, workPattern, bankHolidaySet, bankHolidayHandling]);
+  }, [range, sameDay, startHalf, endHalf, workPattern, workPatternHistory, bankHolidaySet, bankHolidayHandling]);
 
   async function handleBook() {
     if (!range || !reasonId) return;
@@ -537,6 +593,20 @@ export function AdminCalendarClient({
     setToast(editingBookingId ? "Booking updated" : `Absence booked for ${memberName}`);
     setTimeout(() => setToast(null), 3000);
 
+    // Ensure the just-booked absence type is visible on the calendar. The
+    // hidden-type filter is per-user and persists across sessions, so a type
+    // toggled off earlier (or via "All") would otherwise hide the booking
+    // the admin just created.
+    const bookedTypeId = absenceReasons.find((r) => r.id === reasonId)?.absence_type_id;
+    if (bookedTypeId) {
+      setHiddenTypeIds((prev) => {
+        if (!prev.has(bookedTypeId)) return prev;
+        const next = new Set(prev);
+        next.delete(bookedTypeId);
+        return next;
+      });
+    }
+
     // If the user arrived via a deep-link (e.g. from the incomplete sick
     // bookings widget), navigate back to where they came from after saving.
     const shouldGoBack = initialBookingId && editingBookingId === initialBookingId;
@@ -567,8 +637,58 @@ export function AdminCalendarClient({
         {/* min-w-0 lets the calendar shrink inside the flex row instead of
             pushing the whole layout wider than the viewport. */}
         <div className="min-w-0 flex-1">
+          {/* CLE-174 — period nav header */}
+          <div className="mb-2 flex items-center justify-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => prevPeriod && navigateToPeriod(prevPeriod.id)}
+              disabled={!prevPeriod}
+              title={prevPeriod ? `Previous: ${prevPeriod.name}` : "No earlier period"}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-2">
+                <span className="text-base font-semibold">{displayedPeriod?.name ?? "—"}</span>
+                {displayedPeriod && <HolidayUnitsPill units={displayedPeriod.units} />}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {displayedPeriod
+                  ? `${formatLongDate(displayedPeriod.startDate)} – ${formatLongDate(displayedPeriod.endDate)}`
+                  : ""}
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => nextPeriod && navigateToPeriod(nextPeriod.id)}
+              disabled={!nextPeriod}
+              title={nextPeriod ? `Next: ${nextPeriod.name}` : "No later period"}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => currentPeriodId && navigateToPeriod(currentPeriodId)}
+              disabled={!currentPeriodId || viewingCurrentPeriod}
+              className="ml-2"
+              title={
+                !currentPeriodId
+                  ? "No Holiday Period covers today"
+                  : viewingCurrentPeriod
+                    ? "Already viewing the current period"
+                    : "Jump to the period covering today"
+              }
+            >
+              <CalendarDays className="h-3.5 w-3.5 mr-1.5" />
+              Current
+            </Button>
+          </div>
           <HolidayCalendar
             yearStart={yearStart}
+            monthCount={monthCount}
             bookings={bookings}
             bankHolidays={bankHolidays}
             bankHolidayColour={bankHolidayColour}
@@ -577,6 +697,7 @@ export function AdminCalendarClient({
             hideLegend
             visibleAbsenceTypeIds={visibleAbsenceTypeIds}
             workPattern={workPattern}
+            workPatternHistory={workPatternHistory}
             showSchedule={showSchedule}
             showBankHolidays={showBankHolidays}
           />

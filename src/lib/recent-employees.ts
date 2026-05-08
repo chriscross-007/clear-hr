@@ -11,6 +11,13 @@ export type RecentEmployee = {
   avatarUrl: string | null;
   /** Date.now() at time of visit — used for ordering. */
   timestamp: number;
+  /**
+   * Sub-path within the per-member area that the admin was last viewing
+   * (e.g. "/holiday", "/timesheet", "/calendar"). Used to deep-link the
+   * Recent entry back to where they were. Optional for backward
+   * compatibility with entries recorded before the path was tracked.
+   */
+  path?: string;
 };
 
 // Keep one extra so that after the sidebar excludes the currently-viewed

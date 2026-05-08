@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { pluralize } from "@/lib/label-utils";
 import { useMemberLabel } from "@/contexts/member-label-context";
+import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 
 interface CustomReportViewClientProps {
   customReport: {
@@ -296,10 +297,12 @@ export function CustomReportViewClient({
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-6">
-        <p className="text-sm text-muted-foreground">Custom Report · based on {baseReport.groupLabel} — {baseReport.name}</p>
-        <h1 className="text-2xl font-bold">{customReport.name}</h1>
-      </div>
+      <StickyPageHeader>
+        <div>
+          <p className="text-sm text-muted-foreground">Custom Report · based on {baseReport.groupLabel} — {baseReport.name}</p>
+          <h1 className="text-2xl font-bold">{customReport.name}</h1>
+        </div>
+      </StickyPageHeader>
 
       <DataGrid<Member>
         data={members}
@@ -320,6 +323,8 @@ export function CustomReportViewClient({
         initialFilters={initialFilters}
         onExportPdf={handleExportPdf}
         onPrefsChange={(snap) => { currentPrefsRef.current = snap; }}
+        stickyHeader
+        stickyHeaderTop={160}
       />
 
       {/* Save As dialog */}

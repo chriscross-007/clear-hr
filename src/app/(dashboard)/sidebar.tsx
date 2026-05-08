@@ -42,6 +42,13 @@ interface SidebarProps {
   bankHolidayHandling: string;
   bankHolidayColour: string;
   defaultWorkProfileId: string | null;
+  defaultHolidayType: "fixed" | "earned";
+  defaultHolidayUnits: "days" | "hours";
+  defaultHolidayEarnedFactor: number;
+  defaultHolidayAllowance: number;
+  defaultHolidayToilHoursPerDay: number;
+  defaultHolidayMaxCarryForward: number;
+  defaultHolidayMinCarryForward: number;
   initialFavouriteIds?: string[];
   initialCustomReports?: { id: string; name: string }[];
   initialShiftDefs?: { id: string; name: string }[];
@@ -74,6 +81,13 @@ export function Sidebar({
   bankHolidayHandling,
   bankHolidayColour,
   defaultWorkProfileId,
+  defaultHolidayType,
+  defaultHolidayUnits,
+  defaultHolidayEarnedFactor,
+  defaultHolidayAllowance,
+  defaultHolidayToilHoursPerDay,
+  defaultHolidayMaxCarryForward,
+  defaultHolidayMinCarryForward,
   initialFavouriteIds = [],
   initialCustomReports = [],
   initialShiftDefs = [],
@@ -158,7 +172,7 @@ export function Sidebar({
   return (
     <>
       <nav className="w-48 shrink-0 border-r bg-background sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto">
-        {inEmployeeArea && recentVisible.length > 0 && (
+        {recentVisible.length > 0 && (
           <div className="border-b border-gray-200 px-2 pb-3 pt-4">
             <p className="mb-1 px-3 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
               Recent
@@ -173,7 +187,7 @@ export function Sidebar({
                 return (
                   <Link
                     key={emp.memberId}
-                    href={`/members/${emp.memberId}/calendar`}
+                    href={`/members/${emp.memberId}${emp.path ?? "/calendar"}`}
                     className="flex items-center gap-2 rounded-md px-2 py-1 text-sm transition-colors hover:bg-accent"
                   >
                     {emp.avatarUrl ? (
@@ -222,12 +236,6 @@ export function Sidebar({
             <Link href="/absence-types" className={linkClass("/absence-types")}>
               <CalendarDays className="h-4 w-4 shrink-0" />
               Absence Types
-            </Link>
-          )}
-          {(role === "owner" || role === "admin") && (
-            <Link href="/holiday-profiles" className={linkClass("/holiday-profiles")}>
-              <CalendarDays className="h-4 w-4 shrink-0" />
-              Holiday Profiles
             </Link>
           )}
           {(role === "owner" || role === "admin") && (
@@ -425,6 +433,13 @@ export function Sidebar({
           bankHolidayHandling={bankHolidayHandling}
           bankHolidayColour={bankHolidayColour}
           defaultWorkProfileId={defaultWorkProfileId}
+          defaultHolidayType={defaultHolidayType}
+          defaultHolidayUnits={defaultHolidayUnits}
+          defaultHolidayEarnedFactor={defaultHolidayEarnedFactor}
+          defaultHolidayAllowance={defaultHolidayAllowance}
+          defaultHolidayToilHoursPerDay={defaultHolidayToilHoursPerDay}
+          defaultHolidayMaxCarryForward={defaultHolidayMaxCarryForward}
+          defaultHolidayMinCarryForward={defaultHolidayMinCarryForward}
         />
       )}
     </>

@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 
 interface AuditEntry {
   id: string;
@@ -382,7 +383,7 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8">
-      <div className="sticky top-16 z-10 bg-background pt-8 pb-4">
+      <StickyPageHeader>
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-bold">Audit Trail</h1>
         <div className="flex items-center gap-2">
@@ -509,7 +510,7 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
             )}
           </div>
       </div>
-      </div>
+      </StickyPageHeader>
 
       <div className="pb-8">
       {filteredEntries.length === 0 ? (

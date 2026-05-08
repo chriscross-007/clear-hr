@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ShiftsListClient } from "./shifts-list-client";
+import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 
 export default async function ShiftsPage() {
   const supabase = await createClient();
@@ -31,18 +32,20 @@ export default async function ShiftsPage() {
 
   return (
     <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <p className="text-sm text-muted-foreground">Timesheets</p>
-          <h1 className="text-2xl font-bold">Shift Definitions</h1>
+      <StickyPageHeader>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm text-muted-foreground">Timesheets</p>
+            <h1 className="text-2xl font-bold">Shift Definitions</h1>
+          </div>
+          <Button asChild>
+            <Link href="/shifts/new">
+              <Plus className="h-4 w-4 mr-1.5" />
+              New Shift
+            </Link>
+          </Button>
         </div>
-        <Button asChild>
-          <Link href="/shifts/new">
-            <Plus className="h-4 w-4 mr-1.5" />
-            New Shift
-          </Link>
-        </Button>
-      </div>
+      </StickyPageHeader>
 
       <ShiftsListClient shiftDefs={(shiftDefs ?? []) as {
         id: string;

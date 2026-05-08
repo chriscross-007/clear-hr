@@ -21,7 +21,7 @@ export default async function DashboardLayout({
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role, permissions, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins, holiday_year_start_type, holiday_year_start_day, holiday_year_start_month, bank_holiday_handling, bank_holiday_colour, default_work_profile_id), admin_profiles(name), employee_profiles(name)")
+    .select("organisation_id, role, permissions, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins, holiday_year_start_type, holiday_year_start_day, holiday_year_start_month, bank_holiday_handling, bank_holiday_colour, default_work_profile_id, default_holiday_type, default_holiday_units, default_holiday_earned_factor, default_holiday_allowance, default_holiday_toil_hours_per_day, default_holiday_max_carry_forward, default_holiday_min_carry_forward), admin_profiles(name), employee_profiles(name)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -54,6 +54,13 @@ export default async function DashboardLayout({
     bank_holiday_handling: string;
     bank_holiday_colour: string;
     default_work_profile_id: string | null;
+    default_holiday_type: string;
+    default_holiday_units: string;
+    default_holiday_earned_factor: number;
+    default_holiday_allowance: number;
+    default_holiday_toil_hours_per_day: number;
+    default_holiday_max_carry_forward: number;
+    default_holiday_min_carry_forward: number;
   };
   const memberLabel = org?.member_label || "member";
 
@@ -201,6 +208,13 @@ export default async function DashboardLayout({
             bankHolidayHandling={org?.bank_holiday_handling ?? "additional"}
             bankHolidayColour={org?.bank_holiday_colour ?? "#EF4444"}
             defaultWorkProfileId={org?.default_work_profile_id ?? null}
+            defaultHolidayType={(org?.default_holiday_type as "fixed" | "earned") ?? "fixed"}
+            defaultHolidayUnits={(org?.default_holiday_units as "days" | "hours") ?? "days"}
+            defaultHolidayEarnedFactor={Number(org?.default_holiday_earned_factor ?? 0)}
+            defaultHolidayAllowance={Number(org?.default_holiday_allowance ?? 0)}
+            defaultHolidayToilHoursPerDay={Number(org?.default_holiday_toil_hours_per_day ?? 0)}
+            defaultHolidayMaxCarryForward={Number(org?.default_holiday_max_carry_forward ?? 0)}
+            defaultHolidayMinCarryForward={Number(org?.default_holiday_min_carry_forward ?? -999)}
             initialFavouriteIds={sidebarFavouriteIds}
             initialCustomReports={sidebarCustomReports}
             initialShiftDefs={sidebarShiftDefs}

@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/select";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { useMemberLabel } from "@/contexts/member-label-context";
+import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 
 interface ReportClientProps {
   report: StandardReport;
@@ -276,39 +277,39 @@ export function ReportClient({
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      {/* Row 1: Title + Customise / Show PDF / Export CSV */}
-      <div className="flex items-center justify-between mb-2">
-        <div>
-          <p className="text-sm text-muted-foreground">{report.groupLabel} · Report</p>
-          <h1 className="text-2xl font-bold">{report.name}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{report.description}</p>
+      {/* Sticky band: title + Customise/PDF/CSV (Row 1) + Favourite/Save/SaveAs (Row 2) */}
+      <StickyPageHeader>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm text-muted-foreground">{report.groupLabel} · Report</p>
+            <h1 className="text-2xl font-bold">{report.name}</h1>
+            <p className="text-sm text-muted-foreground mt-1">{report.description}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <ColumnCustomiserTrigger onClick={() => gridToolbarRef.current?.openCustomiser()} />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => gridToolbarRef.current?.openPdfDialog()}
+              disabled={gridToolbarRef.current?.pdfLoading}
+            >
+              <FileDown className="h-4 w-4 mr-2" />
+              {gridToolbarRef.current?.pdfLoading ? "Generating..." : "Show PDF"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => gridToolbarRef.current?.exportCsv()}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Export CSV
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <ColumnCustomiserTrigger onClick={() => gridToolbarRef.current?.openCustomiser()} />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => gridToolbarRef.current?.openPdfDialog()}
-            disabled={gridToolbarRef.current?.pdfLoading}
-          >
-            <FileDown className="h-4 w-4 mr-2" />
-            {gridToolbarRef.current?.pdfLoading ? "Generating..." : "Show PDF"}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => gridToolbarRef.current?.exportCsv()}
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Export CSV
-          </Button>
+        <div className="flex justify-end mt-3">
+          {toolbar2}
         </div>
-      </div>
-
-      {/* Row 2: Favourite / Save / Save As */}
-      <div className="flex justify-end mb-4">
-        {toolbar2}
-      </div>
+      </StickyPageHeader>
 
       <DataGrid<Member>
         data={members}
@@ -331,6 +332,8 @@ export function ReportClient({
         onPrefsChange={(snap) => { currentPrefsRef.current = snap; }}
         hideToolbarActions
         toolbarRef={gridToolbarRef}
+        stickyHeader
+        stickyHeaderTop={240}
       />
 
       {/* Save As dialog */}

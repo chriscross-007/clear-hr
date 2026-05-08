@@ -3,8 +3,23 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { type CalendarBooking, type CalendarBankHoliday } from "@/components/holiday-calendar";
-import { type WorkPatternHours } from "@/lib/day-counting";
-import { calculateEntitlement, type BookingUsage } from "@/lib/entitlement";
+import {
+  patternForDate,
+  type WorkPatternHours,
+  type WorkPatternAssignment,
+} from "@/lib/day-counting";
+import {
+  getMemberWorkPatternHistory,
+  getBankHolidaysForOrg,
+} from "@/lib/work-pattern-data";
+import {
+  bookingWorkingDaysInPeriod,
+  computeAllHolidayPeriodValues,
+  type ComputeBookingInput,
+  type ComputeContext,
+} from "@/app/(dashboard)/holiday-period-compute";
+import { getHolidayPeriodsForMember } from "@/app/(dashboard)/holiday-period-actions";
+import { getMemberWorkedHoursInRange } from "@/lib/timesheet-totals";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { AdminCalendarClient, type AbsenceReasonOption, type AbsenceTypeOption } from "./admin-calendar-client";
@@ -15,10 +30,10 @@ export default async function EmployeeCalendarPage({
   searchParams,
 }: {
   params: Promise<{ memberId: string }>;
-  searchParams: Promise<{ bookingId?: string }>;
+  searchParams: Promise<{ bookingId?: string; periodId?: string }>;
 }) {
   const { memberId } = await params;
-  const { bookingId: initialBookingId } = await searchParams;
+  const { bookingId: initialBookingId, periodId: requestedPeriodId } = await searchParams;
   const supabase = await createClient();
 
   const {
@@ -47,40 +62,62 @@ export default async function EmployeeCalendarPage({
   const fullName = [member.first_name, member.last_name].filter(Boolean).join(" ");
   const today = new Date().toISOString().slice(0, 10);
 
-  // Find current year record
-  const { data: yearRec } = await supabase
-    .from("holiday_year_records")
-    .select("year_start, year_end, base_amount, pro_rata_amount, adjustment, carried_over")
-    .eq("member_id", memberId)
-    .lte("year_start", today)
-    .gte("year_end", today)
-    .limit(1)
-    .single();
+  // CLE-174 — fetch every Holiday Period for the member so the planner can
+  // step prev/next/Current. Pick the selected period from ?periodId,
+  // falling back to the period covering today, then to the earliest period.
+  const periodsResult = await getHolidayPeriodsForMember(memberId);
+  const allPeriods = periodsResult.success ? periodsResult.periods : [];
+  const periodsAsc = [...allPeriods].sort((a, b) =>
+    a.startDate.localeCompare(b.startDate),
+  );
 
-  if (!yearRec) {
+  if (periodsAsc.length === 0) {
     return (
       <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
         <Link href="/employees" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4">
           <ArrowLeft className="h-3.5 w-3.5" />
           Back to directory
         </Link>
-        <p className="text-muted-foreground">No active holiday year record found.</p>
+        <p className="text-muted-foreground">No Holiday Periods set up for this employee yet.</p>
       </div>
     );
   }
 
-  // Calculate 13-month range
-  const rangeStart = yearRec.year_start;
-  const startDate = new Date(rangeStart + "T00:00:00Z");
-  const rangeEnd = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth() + 13, 0));
-  const rangeEndStr = rangeEnd.toISOString().slice(0, 10);
+  const periodCoveringToday = periodsAsc.find(
+    (p) => p.startDate <= today && p.endDate >= today,
+  );
+  const requestedPeriod = requestedPeriodId
+    ? periodsAsc.find((p) => p.id === requestedPeriodId)
+    : undefined;
+  const selectedPeriod = requestedPeriod ?? periodCoveringToday ?? periodsAsc[0];
+
+  const yearRec = {
+    year_start: selectedPeriod.startDate,
+    year_end: selectedPeriod.endDate,
+    base_amount: Number(selectedPeriod.allowance ?? 0),
+    pro_rata_amount: null,
+    adjustment: Number(selectedPeriod.adjust ?? 0),
+    carried_over: 0,
+  };
+
+  // Calendar range: month containing the period's startDate through month
+  // containing its endDate (inclusive). Short periods → short calendar.
+  const startDateObj = new Date(selectedPeriod.startDate + "T00:00:00Z");
+  const endDateObj = new Date(selectedPeriod.endDate + "T00:00:00Z");
+  const rangeStart = `${startDateObj.getUTCFullYear()}-${String(startDateObj.getUTCMonth() + 1).padStart(2, "0")}-01`;
+  const lastMonthEnd = new Date(Date.UTC(endDateObj.getUTCFullYear(), endDateObj.getUTCMonth() + 1, 0));
+  const rangeEndStr = lastMonthEnd.toISOString().slice(0, 10);
+  const monthCount =
+    (endDateObj.getUTCFullYear() - startDateObj.getUTCFullYear()) * 12
+    + (endDateObj.getUTCMonth() - startDateObj.getUTCMonth())
+    + 1;
 
   // Fetch bookings in range. Open-ended bookings (end_date = null) are
   // included when they start within or before the range — they'll be
   // projected forward to today on the calendar.
   const { data: bookingsData } = await supabase
     .from("holiday_bookings")
-    .select("id, start_date, end_date, status, days_deducted, leave_reason_id, absence_reasons(name, colour, absence_type_id, absence_types(colour, requires_approval)), sick_booking_details(completion_status)")
+    .select("id, start_date, end_date, start_half, end_half, status, days_deducted, leave_reason_id, absence_reasons(name, colour, absence_type_id, absence_types(colour, requires_approval)), sick_booking_details(completion_status)")
     .eq("member_id", memberId)
     .lte("start_date", rangeEndStr)
     .or(`end_date.gte.${rangeStart},end_date.is.null`)
@@ -148,29 +185,9 @@ export default async function EmployeeCalendarPage({
     };
   });
 
-  // Build the Holidays dashboard stats from in-year bookings using the same
-  // formula the My Holiday balance card uses (lib/entitlement.ts). Only count
-  // bookings whose absence type deducts from holiday entitlement (e.g. Annual
-  // Leave / Holiday) — sick, compassionate, etc. are excluded.
-  const inYearBookings: BookingUsage[] = (bookingsData ?? [])
-    .filter((b) =>
-      b.start_date >= yearRec.year_start
-      && b.start_date <= yearRec.year_end
-      && deductingReasonIds.has(b.leave_reason_id as string),
-    )
-    .map((b) => ({
-      days_deducted: b.days_deducted,
-      hours_deducted: null,
-      status: b.status,
-      end_date: b.end_date,
-    }));
-  const ent = calculateEntitlement(yearRec, inYearBookings, member.start_date ?? null, "days", today);
-  const holidayStats: HolidayStats = {
-    allowance: ent.effective_entitlement,
-    taken: ent.taken,
-    booked: ent.booked,
-    pending: ent.pending,
-  };
+  // Note: holidayStats is built later — needs the work pattern history and
+  // bank-holiday set so each booking's in-period working days are counted
+  // correctly (CLE-173 follow-up).
 
   // Fetch org bank holiday colour, handling, default work profile, and the
   // self-cert template path (used by the sick details panel).
@@ -184,27 +201,137 @@ export default async function EmployeeCalendarPage({
   const orgDefaultWorkProfileId = (orgRow as { default_work_profile_id?: string | null } | null)?.default_work_profile_id ?? null;
   const hasSelfCertTemplate = !!(orgRow as { self_cert_template_path?: string | null } | null)?.self_cert_template_path;
 
-  // Resolve the target member's work pattern as of today so the booking sheet
-  // can compute days_deducted live (matches the server's authoritative calc).
-  // Also used by the sick day counting below and the sick donut.
-  const { data: assignment } = await supabase
-    .from("employee_work_profiles")
-    .select("work_profile_id")
-    .eq("member_id", memberId)
-    .lte("effective_from", today)
-    .order("effective_from", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const profileId = assignment?.work_profile_id ?? orgDefaultWorkProfileId;
-  let workPattern: WorkPatternHours | null = null;
-  if (profileId) {
-    const { data: wp } = await supabase
-      .from("work_profiles")
-      .select("hours_monday, hours_tuesday, hours_wednesday, hours_thursday, hours_friday, hours_saturday, hours_sunday")
-      .eq("id", profileId)
-      .single();
-    workPattern = (wp as WorkPatternHours | null) ?? null;
+  // Resolve the target member's full Work Profile history so per-date
+  // patterns can be applied (CLE-173 follow-up). The calendar grid, the
+  // live booking-day-count preview, and the sick stats below all walk
+  // dates that may span Work Profile boundaries.
+  const workPatternHistory: WorkPatternAssignment[] = await getMemberWorkPatternHistory(
+    supabase,
+    memberId,
+    caller.organisation_id,
+  );
+  // Pre-resolved as-of-today snapshot for code paths that still want a
+  // single pattern (e.g. the live booking-day-count, which walks one
+  // contiguous range starting from the selected start date).
+  const workPattern: WorkPatternHours | null = patternForDate(workPatternHistory, today);
+  void orgDefaultWorkProfileId; // org default folded into history above
+
+  // -------------------------------------------------------------------------
+  // Holidays Dashboard widget stats — uses the same compute helper that
+  // drives the Holiday Periods table so allowance is correct for both Fixed
+  // (period.allowance ?? 0) and Earned (worked × factor%) periods. The
+  // taken/booked/pending split below is calculated separately because the
+  // compute helper combines pending with approved (the widget shows them
+  // distinctly).
+  // -------------------------------------------------------------------------
+  const widgetBankHolidays = await getBankHolidaysForOrg(
+    supabase,
+    caller.organisation_id,
+    // Span all periods so the compute chain has accurate bank-holiday data
+    // for any period the chain walks.
+    periodsAsc[0].startDate,
+    periodsAsc[periodsAsc.length - 1].endDate,
+  );
+
+  // Worked hours per Earned period — needed for the compute helper to
+  // produce a non-zero allowance for Earned-type periods (CLE-175).
+  const widgetEarnedPeriods = periodsAsc.filter((p) => p.type === "earned");
+  const widgetWorkedHoursByPeriodId = new Map<string, number>();
+  if (widgetEarnedPeriods.length > 0) {
+    const totals = await Promise.all(
+      widgetEarnedPeriods.map((p) =>
+        getMemberWorkedHoursInRange(
+          supabase,
+          memberId,
+          caller.organisation_id,
+          p.startDate,
+          p.endDate,
+        ),
+      ),
+    );
+    widgetEarnedPeriods.forEach((p, i) => {
+      widgetWorkedHoursByPeriodId.set(p.id, totals[i]);
+    });
   }
+
+  const widgetCtx: ComputeContext = {
+    workPatternHistory,
+    bankHolidays: widgetBankHolidays,
+    bankHolidayHandling,
+    workedHoursByPeriodId: widgetWorkedHoursByPeriodId,
+  };
+
+  // Bookings in ComputeBookingInput shape, filtered to absence types that
+  // deduct from holiday entitlement only (sick, compassionate etc. are
+  // excluded from the donut by design).
+  const widgetBookings: ComputeBookingInput[] = (bookingsData ?? [])
+    .filter((b) => deductingReasonIds.has(b.leave_reason_id as string))
+    .map((b) => ({
+      startDate: b.start_date as string,
+      endDate: (b.end_date as string | null) ?? null,
+      startHalf: ((b as Record<string, unknown>).start_half as string | null) ?? null,
+      endHalf: ((b as Record<string, unknown>).end_half as string | null) ?? null,
+      status: b.status as string,
+    }));
+
+  const widgetComputed = computeAllHolidayPeriodValues(
+    periodsAsc,
+    widgetBookings,
+    widgetCtx,
+    today,
+  );
+  const selectedComputed = widgetComputed.get(selectedPeriod.id);
+
+  // Total available for this period: brought forward + allowance + adjust + toil.
+  // (Equivalent to balance + taken + booked, but written as the inputs so it
+  // reads naturally.)
+  const widgetEffectiveEntitlement = selectedComputed
+    ? selectedComputed.broughtForward
+      + selectedComputed.allowance
+      + selectedPeriod.adjust
+      + selectedComputed.toil
+    : 0;
+
+  // Pending vs approved split for the donut — done per booking because the
+  // compute helper combines pending+approved into taken/booked.
+  let widgetTaken = 0;
+  let widgetBooked = 0;
+  let widgetPending = 0;
+  for (const b of bookingsData ?? []) {
+    if (!deductingReasonIds.has(b.leave_reason_id as string)) continue;
+    const startDate = b.start_date as string;
+    const endDate = (b.end_date as string | null) ?? null;
+    if (!endDate) continue;
+    if (endDate < selectedPeriod.startDate) continue;
+    if (startDate > selectedPeriod.endDate) continue;
+    const ci: ComputeBookingInput = {
+      startDate,
+      endDate,
+      startHalf: ((b as Record<string, unknown>).start_half as string | null) ?? null,
+      endHalf: ((b as Record<string, unknown>).end_half as string | null) ?? null,
+      status: b.status as string,
+    };
+    const amount = bookingWorkingDaysInPeriod(
+      ci,
+      selectedPeriod.startDate,
+      selectedPeriod.endDate,
+      selectedPeriod.units,
+      widgetCtx,
+    );
+    if (b.status === "pending") {
+      widgetPending += amount;
+    } else if (b.status === "approved" && endDate < today) {
+      widgetTaken += amount;
+    } else {
+      widgetBooked += amount;
+    }
+  }
+  const holidayStats: HolidayStats = {
+    allowance: widgetEffectiveEntitlement,
+    taken: widgetTaken,
+    booked: widgetBooked,
+    pending: widgetPending,
+  };
 
   // -------------------------------------------------------------------------
   // Sick plot — sick days by day of week over the trailing 365 days.
@@ -267,9 +394,13 @@ export default async function EmployeeCalendarPage({
         // 0=Mon .. 6=Sun
         const js = cursor.getUTCDay();
         const dow = js === 0 ? 6 : js - 1;
-        // Only count working days — skip days with 0 scheduled hours
-        const hours = workPattern
-          ? Number(workPattern[PATTERN_KEYS[dow]])
+        // Resolve the work pattern that applied on THIS specific date,
+        // not as-of-today — Work Profiles can change over the trailing
+        // 365-day window.
+        const dayIso = cursor.toISOString().slice(0, 10);
+        const dayPattern = patternForDate(workPatternHistory, dayIso);
+        const hours = dayPattern
+          ? Number(dayPattern[PATTERN_KEYS[dow]])
           : (dow < 5 ? 8 : 0); // Mon–Fri 8h fallback
         if (hours > 0) {
           let value = 1;
@@ -347,8 +478,10 @@ export default async function EmployeeCalendarPage({
     while (cursor.getTime() <= stopMs) {
       const js = cursor.getUTCDay();
       const dow = js === 0 ? 6 : js - 1; // 0=Mon..6=Sun
-      const hours = workPattern
-        ? Number(workPattern[PATTERN_KEYS[dow]])
+      const dayIso = cursor.toISOString().slice(0, 10);
+      const dayPattern = patternForDate(workPatternHistory, dayIso);
+      const hours = dayPattern
+        ? Number(dayPattern[PATTERN_KEYS[dow]])
         : (dow < 5 ? 8 : 0); // Mon–Fri 8h fallback
       if (hours > 0) workingDaysInWindow++;
       cursor.setUTCDate(cursor.getUTCDate() + 1);
@@ -371,6 +504,7 @@ export default async function EmployeeCalendarPage({
         holidayBaseColour={holidayBaseColour}
         holidayPeriodStart={yearRec.year_start}
         holidayPeriodEnd={yearRec.year_end}
+        holidayUnits={selectedPeriod.units}
         sick={sick}
         sickPlot={sickPlot}
         bradfordFactor={bradfordFactor}
@@ -383,12 +517,23 @@ export default async function EmployeeCalendarPage({
         orgAdmins={orgAdmins}
         hasSelfCertTemplate={hasSelfCertTemplate}
         yearStart={rangeStart}
+        monthCount={monthCount}
+        periods={periodsAsc.map((p) => ({
+          id: p.id,
+          name: p.name,
+          startDate: p.startDate,
+          endDate: p.endDate,
+          units: p.units,
+        }))}
+        selectedPeriodId={selectedPeriod.id}
+        currentPeriodId={periodCoveringToday?.id ?? null}
         bookings={bookings}
         bankHolidays={bhList}
         bankHolidayColour={bankHolidayColour}
         absenceReasons={absenceReasons}
         absenceTypes={absenceTypes}
         workPattern={workPattern}
+        workPatternHistory={workPatternHistory}
         bankHolidayHandling={bankHolidayHandling}
         initialBookingId={initialBookingId ?? null}
       />

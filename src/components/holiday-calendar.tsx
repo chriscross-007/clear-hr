@@ -2,7 +2,11 @@
 
 import { useMemo, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import type { WorkPatternHours } from "@/lib/day-counting";
+import {
+  patternForDate,
+  type WorkPatternHours,
+  type WorkPatternAssignment,
+} from "@/lib/day-counting";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -48,10 +52,19 @@ interface HolidayCalendarProps {
    * all bookings are shown (existing behaviour).
    */
   visibleAbsenceTypeIds?: Set<string> | null;
-  /** Employee work pattern, used by the schedule overlay. */
+  /** Employee work pattern, used by the schedule overlay (legacy single-pattern
+   *  prop — only consulted when `workPatternHistory` is empty/absent). */
   workPattern?: WorkPatternHours | null;
+  /** Full Work Profile history for the employee. When provided, the schedule
+   *  overlay resolves the pattern that applied on each cell's date — so a
+   *  future-dated assignment correctly tints cells from its `effectiveFrom`
+   *  onward. */
+  workPatternHistory?: WorkPatternAssignment[];
   /** Render a subtle background tint on the employee's working days. */
   showSchedule?: boolean;
+  /** Number of months to render (default 13). Sized to the Holiday Period
+   *  range when called from the planner. */
+  monthCount?: number;
   /**
    * Show bank holiday cells (background colour + tooltip). Defaults to true
    * for backwards compatibility with consumers that don't pass this prop.
@@ -113,12 +126,13 @@ interface MonthRow {
   firstDayCol: number;
 }
 
-function buildGrid(yearStart: string) {
+function buildGrid(yearStart: string, monthCount: number) {
   const start = new Date(yearStart + "T00:00:00Z");
   const firstMonth = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
 
   const months: MonthRow[] = [];
-  for (let i = 0; i < 13; i++) {
+  const safeCount = Math.max(1, Math.min(24, monthCount));
+  for (let i = 0; i < safeCount; i++) {
     const ms = new Date(Date.UTC(firstMonth.getUTCFullYear(), firstMonth.getUTCMonth() + i, 1));
     const y = ms.getUTCFullYear();
     const m = ms.getUTCMonth();
@@ -157,11 +171,13 @@ export function HolidayCalendar({
   hideLegend,
   visibleAbsenceTypeIds,
   workPattern,
+  workPatternHistory,
   showSchedule,
   showBankHolidays = true,
   onBookingClick,
+  monthCount = 13,
 }: HolidayCalendarProps) {
-  const { months, totalCols } = useMemo(() => buildGrid(yearStart), [yearStart]);
+  const { months, totalCols } = useMemo(() => buildGrid(yearStart, monthCount), [yearStart, monthCount]);
 
   // Apply the absence-type filter once, then everything downstream uses the
   // filtered list so the legend, tooltips, and grid all stay consistent.
@@ -321,10 +337,16 @@ export function HolidayCalendar({
                   // Schedule overlay: subtle tint on the employee's working days
                   // (col % 7 == 0..6 = Mon..Sun in this grid) — only when there's
                   // no booking or bank holiday taking precedence on that cell.
-                  const patternHours = workPattern
-                    ? Number(workPattern[DAY_KEY_BY_INDEX[col % 7]])
+                  // Resolve the pattern that applied on THIS specific date — so
+                  // a future-dated Work Profile change tints from its
+                  // effective_from onward.
+                  const cellPattern = workPatternHistory && workPatternHistory.length > 0
+                    ? patternForDate(workPatternHistory, dateStr) ?? workPattern ?? null
+                    : workPattern ?? null;
+                  const patternHours = cellPattern
+                    ? Number(cellPattern[DAY_KEY_BY_INDEX[col % 7]])
                     : 0;
-                  const isScheduledWorkDay = !!showSchedule && !!workPattern && patternHours > 0;
+                  const isScheduledWorkDay = !!showSchedule && !!cellPattern && patternHours > 0;
 
                   // Is this day a projected (virtual) day on an open-ended
                   // booking? i.e. the booking has no end_date and this cell is

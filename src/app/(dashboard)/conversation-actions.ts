@@ -432,3 +432,92 @@ export async function updateDocumentLabel(
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }
 }
+
+// ---------------------------------------------------------------------------
+// EmployeeDocument — shape returned by getEmployeeDocuments
+// ---------------------------------------------------------------------------
+
+export type EmployeeDocument = {
+  id: string;
+  fileName: string;
+  contentType: string;
+  fileSize: number;
+  documentCategory: string | null;
+  documentLabel: string | null;
+  entityType: string | null;
+  entityId: string | null;
+  uploadedBy: string;
+  createdAt: string;
+};
+
+// ---------------------------------------------------------------------------
+// getEmployeeDocuments — fetch all documents for a specific employee.
+// Admin/owner only, org-scoped.
+// ---------------------------------------------------------------------------
+
+export async function getEmployeeDocuments(
+  memberId: string,
+): Promise<{ success: boolean; error?: string; documents: EmployeeDocument[] }> {
+  try {
+    const { member: caller } = await getCallerMember();
+    if (caller.role !== "owner" && caller.role !== "admin") {
+      return { success: false, error: "Not authorised", documents: [] };
+    }
+
+    const admin = getAdminClient();
+
+    // Verify member belongs to caller's org
+    const { data: target } = await admin
+      .from("members")
+      .select("id")
+      .eq("id", memberId)
+      .eq("organisation_id", caller.organisation_id)
+      .single();
+    if (!target) return { success: false, error: "Member not found", documents: [] };
+
+    const { data: rows, error: fetchErr } = await admin
+      .from("member_documents")
+      .select(`
+        id,
+        file_name,
+        content_type,
+        file_size,
+        document_category,
+        document_label,
+        entity_type,
+        entity_id,
+        created_at,
+        members!member_documents_uploaded_by_member_id_fkey(
+          first_name,
+          last_name
+        )
+      `)
+      .eq("member_id", memberId)
+      .eq("organisation_id", caller.organisation_id)
+      .order("created_at", { ascending: false });
+
+    if (fetchErr) return { success: false, error: fetchErr.message, documents: [] };
+
+    const documents: EmployeeDocument[] = (rows ?? []).map((r) => {
+      const uploader = r.members as unknown as { first_name: string; last_name: string } | null;
+      return {
+        id: r.id as string,
+        fileName: r.file_name as string,
+        contentType: r.content_type as string,
+        fileSize: r.file_size as number,
+        documentCategory: (r.document_category as string | null) ?? null,
+        documentLabel: (r.document_label as string | null) ?? null,
+        entityType: (r.entity_type as string | null) ?? null,
+        entityId: (r.entity_id as string | null) ?? null,
+        uploadedBy: uploader
+          ? `${uploader.first_name ?? ""} ${uploader.last_name ?? ""}`.trim()
+          : "Unknown",
+        createdAt: r.created_at as string,
+      };
+    });
+
+    return { success: true, documents };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred", documents: [] };
+  }
+}

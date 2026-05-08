@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { recordRecentEmployee } from "@/lib/recent-employees";
+import { HolidayCogButton } from "./holiday-cog-button";
 
 export type EmployeeSidebarMember = {
   id: string;
@@ -37,13 +38,24 @@ export function EmployeeSidebar({ member, userId }: { member: EmployeeSidebarMem
   const base = `/members/${member.id}`;
 
   // Record this visit to the per-user "recent employees" list (browser-only).
+  // Re-records on every pathname change too, so the recent-employees sidebar
+  // entry deep-links back to whichever sub-page the admin was last viewing
+  // (Holiday, Timesheet, Audit, etc.) rather than always Calendar.
   useEffect(() => {
+    // Strip the `/members/{memberId}` prefix to get the sub-path. e.g.
+    //   "/members/abc-123/holiday" -> "/holiday"
+    //   "/members/abc-123"         -> "" (treated as no specific page)
+    const prefix = `/members/${member.id}`;
+    const rest = pathname.startsWith(prefix) ? pathname.slice(prefix.length) : "";
+    const subPath = rest.startsWith("/") ? rest : "";
+
     recordRecentEmployee(userId, {
       memberId: member.id,
       name: `${member.first_name} ${member.last_name}`.trim(),
       avatarUrl: member.avatar_url,
+      path: subPath || undefined,
     });
-  }, [userId, member.id, member.first_name, member.last_name, member.avatar_url]);
+  }, [userId, member.id, member.first_name, member.last_name, member.avatar_url, pathname]);
   const items: NavItem[] = [
     { href: `${base}/calendar`, label: "Planner", icon: Calendar },
     { href: `${base}/timesheet`, label: "Timesheet", icon: Clock },
@@ -89,6 +101,35 @@ export function EmployeeSidebar({ member, userId }: { member: EmployeeSidebarMem
         {items.map((item) => {
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
           const Icon = item.icon;
+          const isHoliday = item.label === "Holiday";
+
+          // Holiday gets a cog button (CLE-170) so admins can edit the
+          // per-employee Default Cascade values used when seeding new
+          // Holiday Periods. The cog sits to the right of the link.
+          if (isHoliday) {
+            return (
+              <div
+                key={item.href}
+                className={cn(
+                  "flex items-center gap-1 rounded-md pr-1 transition-colors hover:bg-accent",
+                  active && "bg-accent",
+                )}
+              >
+                <Link
+                  href={item.href}
+                  className={cn(
+                    "flex flex-1 items-center gap-2.5 px-3 py-2 text-sm",
+                    active && "font-medium",
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  {item.label}
+                </Link>
+                <HolidayCogButton memberId={member.id} />
+              </div>
+            );
+          }
+
           return (
             <Link
               key={item.href}

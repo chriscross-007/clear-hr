@@ -51,7 +51,7 @@ export default async function EmployeesPage({
   const canSeeCurrency = membership?.role === "owner" || (membership?.role === "admin" && (permissions.can_see_currency as boolean) === true);
 
   const today = new Date().toISOString().slice(0, 10);
-  const [{ data: members }, { data: teams }, { data: adminProfiles }, { data: employeeProfiles }, { data: columnPrefsRow }, { data: customFieldDefs }, { data: absenceProfiles }, { data: currentYearRecords }, { data: empWorkProfiles }] =
+  const [{ data: members }, { data: teams }, { data: adminProfiles }, { data: employeeProfiles }, { data: columnPrefsRow }, { data: customFieldDefs }, { data: currentHolidayPeriods }, { data: empWorkProfiles }] =
     await Promise.all([
       supabase.rpc("get_org_members"),
       supabase.from("teams").select("id, name").eq("organisation_id", membership!.organisation_id).order("name"),
@@ -59,19 +59,19 @@ export default async function EmployeesPage({
       supabase.from("employee_profiles").select("id, name, rights").eq("organisation_id", membership!.organisation_id).order("name"),
       supabase.from("user_grid_preferences").select("prefs").eq("user_id", user.id).eq("grid_id", "employees").maybeSingle(),
       supabase.from("custom_field_definitions").select("id, label, field_key, field_type, options, required, sort_order, max_decimal_places").eq("organisation_id", membership!.organisation_id).eq("object_type", "member").order("sort_order"),
-      supabase.from("absence_profiles").select("id, organisation_id, name, absence_type_id, type, allowance, measurement_mode, carry_over_max, carry_over_max_period, carry_over_min, borrow_ahead_max, borrow_ahead_max_period").eq("organisation_id", membership!.organisation_id).order("name"),
-      supabase.from("holiday_year_records").select("member_id, absence_type_id").eq("organisation_id", membership!.organisation_id).lte("year_start", today).gte("year_end", today),
+      // CLE-167 — read holiday_periods for the current period name per member,
+      // replacing the old absence_profiles + holiday_year_records lookup. The
+      // directory column "Holiday Profile" now shows the current Period name
+      // until Phase 4 redesigns the column properly.
+      supabase.from("holiday_periods").select("member_id, name").eq("organisation_id", membership!.organisation_id).lte("start_date", today).gte("end_date", today),
       supabase.from("employee_work_profiles").select("member_id, effective_from, work_profiles(name)").lte("effective_from", today).order("effective_from", { ascending: false }),
     ]);
 
-  // Build holiday profile name map: member_id → profile name (derived from current year record)
+  // Build current Holiday Period name map: member_id → period name
   const holidayProfileMap = new Map<string, string>();
-  const apByTypeId = new Map<string, string>();
-  for (const ap of absenceProfiles ?? []) apByTypeId.set(ap.absence_type_id, ap.name);
-  for (const rec of currentYearRecords ?? []) {
-    if (!holidayProfileMap.has(rec.member_id)) {
-      const name = apByTypeId.get(rec.absence_type_id);
-      if (name) holidayProfileMap.set(rec.member_id, name);
+  for (const period of currentHolidayPeriods ?? []) {
+    if (!holidayProfileMap.has(period.member_id)) {
+      holidayProfileMap.set(period.member_id, period.name);
     }
   }
 

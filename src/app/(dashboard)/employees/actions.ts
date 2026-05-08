@@ -82,10 +82,14 @@ export async function addEmployee(formData: {
     const membership = await getCallerMembership();
     const admin = createAdminClient();
 
-    // Check max_employees limit
+    // Check max_employees limit + fetch the org's Default Cascade values so
+    // we can snapshot them onto the new member's Holiday cog at creation.
+    // CLE-170 fix: previously the cog defaulted to the column hardcoded
+    // fallbacks (Fixed/Days/0/0/0/0/-999) regardless of what the org had
+    // configured.
     const { data: org } = await admin
       .from("organisations")
-      .select("max_employees")
+      .select("max_employees, default_holiday_type, default_holiday_units, default_holiday_earned_factor, default_holiday_allowance, default_holiday_toil_hours_per_day, default_holiday_max_carry_forward, default_holiday_min_carry_forward")
       .eq("id", membership.organisation_id)
       .single();
 
@@ -139,6 +143,20 @@ export async function addEmployee(formData: {
           can_add_members: false,
           can_edit_organisation: false,
         },
+        // CLE-170 — snapshot the org's Default Cascade values into the new
+        // member's Holiday cog. Subsequent changes to org defaults won't
+        // propagate (per the spec's two-stage snapshot model).
+        ...(org
+          ? {
+              holiday_type: org.default_holiday_type,
+              holiday_units: org.default_holiday_units,
+              holiday_earned_factor: org.default_holiday_earned_factor,
+              holiday_allowance: org.default_holiday_allowance,
+              holiday_toil_hours_per_day: org.default_holiday_toil_hours_per_day,
+              holiday_max_carry_forward: org.default_holiday_max_carry_forward,
+              holiday_min_carry_forward: org.default_holiday_min_carry_forward,
+            }
+          : {}),
       })
       .select("id, invite_token")
       .single();

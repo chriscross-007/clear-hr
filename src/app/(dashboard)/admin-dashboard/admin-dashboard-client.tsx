@@ -5,8 +5,10 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   AlertTriangle,
+  CalendarPlus,
   ChevronDown,
   ChevronUp,
+  ClipboardCheck,
   Stethoscope,
   UserX,
   Palmtree,
@@ -15,6 +17,11 @@ import {
 import { CompletionStatusBadge } from "@/components/completion-status-badge";
 import { getIncompleteSickBookings } from "@/app/(dashboard)/sick-booking-actions";
 import { getDashboardSummary } from "@/app/(dashboard)/dashboard-actions";
+import {
+  getEmployeesWithoutHolidayPeriod,
+  type EmployeeMissingHolidayPeriod,
+} from "@/app/(dashboard)/holiday-period-actions";
+import { getPendingApprovalsCount } from "@/app/(dashboard)/approvals-actions";
 import type { IncompleteSickBooking } from "@/app/(dashboard)/sick-booking-types";
 import type { AbsentMember, BirthdayMember } from "@/app/(dashboard)/dashboard-types";
 
@@ -37,6 +44,7 @@ function SummaryCard({
   emptyText,
   expanded,
   onToggle,
+  href,
   borderColour,
   children,
 }: {
@@ -47,42 +55,59 @@ function SummaryCard({
   loading: boolean;
   error: string | null;
   emptyText: string;
-  expanded: boolean;
-  onToggle: () => void;
+  expanded?: boolean;
+  onToggle?: () => void;
+  /** When set, the card is a link instead of an expand-toggle (no chevron). */
+  href?: string;
   borderColour?: string;
   children?: React.ReactNode;
 }) {
+  const interactive = count > 0 && (href !== undefined || onToggle !== undefined);
+  const cardClassName = `transition-colors ${interactive ? "cursor-pointer hover:bg-muted/50" : ""} ${count > 0 && borderColour ? borderColour : ""}`;
+
+  const cardBody = (
+    <>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <div className="flex items-center gap-2">
+          {icon}
+          <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        </div>
+        {count > 0 && href === undefined && onToggle !== undefined && (
+          <div className="text-muted-foreground">
+            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </div>
+        )}
+      </CardHeader>
+      <CardContent>
+        {loading && <p className="text-sm text-muted-foreground">Loading...</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {!loading && !error && count === 0 && (
+          <p className="text-sm text-muted-foreground">{emptyText}</p>
+        )}
+        {!loading && !error && count > 0 && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-2xl font-bold">{count}</span>
+            {subtitle}
+          </div>
+        )}
+      </CardContent>
+    </>
+  );
+
   return (
     <>
-      <Card
-        className={`cursor-pointer transition-colors hover:bg-muted/50 ${count > 0 && borderColour ? borderColour : ""}`}
-        onClick={() => count > 0 && onToggle()}
-      >
-        <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <div className="flex items-center gap-2">
-            {icon}
-            <CardTitle className="text-sm font-medium">{title}</CardTitle>
-          </div>
-          {count > 0 && (
-            <div className="text-muted-foreground">
-              {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </div>
-          )}
-        </CardHeader>
-        <CardContent>
-          {loading && <p className="text-sm text-muted-foreground">Loading...</p>}
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          {!loading && !error && count === 0 && (
-            <p className="text-sm text-muted-foreground">{emptyText}</p>
-          )}
-          {!loading && !error && count > 0 && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-2xl font-bold">{count}</span>
-              {subtitle}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {href !== undefined ? (
+        <Link href={count > 0 ? href : "#"} className="block">
+          <Card className={cardClassName}>{cardBody}</Card>
+        </Link>
+      ) : (
+        <Card
+          className={cardClassName}
+          onClick={() => interactive && onToggle?.()}
+        >
+          {cardBody}
+        </Card>
+      )}
       {children}
     </>
   );
@@ -108,6 +133,17 @@ export function AdminDashboardClient() {
   const [absentExpanded, setAbsentExpanded] = useState(false);
   const [holidayExpanded, setHolidayExpanded] = useState(false);
   const [birthdayExpanded, setBirthdayExpanded] = useState(false);
+
+  // Employees missing a Holiday Period (CLE-171)
+  const [missingHolidayPeriod, setMissingHolidayPeriod] = useState<EmployeeMissingHolidayPeriod[]>([]);
+  const [missingHolidayLoading, setMissingHolidayLoading] = useState(true);
+  const [missingHolidayError, setMissingHolidayError] = useState<string | null>(null);
+  const [missingHolidayExpanded, setMissingHolidayExpanded] = useState(false);
+
+  // Pending holiday approvals — card links straight to /approvals.
+  const [approvalsCount, setApprovalsCount] = useState(0);
+  const [approvalsLoading, setApprovalsLoading] = useState(true);
+  const [approvalsError, setApprovalsError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,6 +172,30 @@ export function AdminDashboardClient() {
         setBirthdaysToday(res.data.birthdaysToday);
       }
       setSummaryLoading(false);
+    })();
+
+    // Fetch employees with no Holiday Period (CLE-171)
+    (async () => {
+      const res = await getEmployeesWithoutHolidayPeriod();
+      if (cancelled) return;
+      if (!res.success) {
+        setMissingHolidayError(res.error ?? "Could not load Holiday Period status");
+      } else {
+        setMissingHolidayPeriod(res.employees);
+      }
+      setMissingHolidayLoading(false);
+    })();
+
+    // Pending holiday approvals count
+    (async () => {
+      const res = await getPendingApprovalsCount();
+      if (cancelled) return;
+      if (!res.success) {
+        setApprovalsError(res.error ?? "Could not load approvals");
+      } else {
+        setApprovalsCount(res.count);
+      }
+      setApprovalsLoading(false);
     })();
 
     return () => { cancelled = true; };
@@ -210,6 +270,45 @@ export function AdminDashboardClient() {
             borderColour="border-pink-300"
           />
         )}
+
+        {/* ---- Holiday Approvals — links straight to /approvals ---- */}
+        <SummaryCard
+          icon={<ClipboardCheck className="h-4 w-4 text-blue-500" />}
+          title="Holiday Approvals"
+          count={approvalsCount}
+          loading={approvalsLoading}
+          error={approvalsError}
+          emptyText="Nothing waiting"
+          href="/approvals"
+          borderColour="border-blue-300"
+          subtitle={
+            approvalsCount > 0 ? (
+              <span className="text-sm text-muted-foreground">
+                {approvalsCount === 1 ? "request" : "requests"} awaiting your decision
+              </span>
+            ) : undefined
+          }
+        />
+
+        {/* ---- Employees missing a Holiday Period (CLE-171) ---- */}
+        <SummaryCard
+          icon={<CalendarPlus className="h-4 w-4 text-amber-500" />}
+          title="Holiday Periods needed"
+          count={missingHolidayPeriod.length}
+          loading={missingHolidayLoading}
+          error={missingHolidayError}
+          emptyText="All set up"
+          expanded={missingHolidayExpanded}
+          onToggle={() => setMissingHolidayExpanded((e) => !e)}
+          borderColour="border-amber-300"
+          subtitle={
+            missingHolidayPeriod.length > 0 ? (
+              <span className="text-sm text-muted-foreground">
+                {missingHolidayPeriod.length === 1 ? "employee" : "employees"} need their first period
+              </span>
+            ) : undefined
+          }
+        />
       </div>
 
       {/* ---- Expanded: Sick bookings list ---- */}
@@ -333,6 +432,37 @@ export function AdminDashboardClient() {
                       </span>
                     )}
                   </div>
+                </Link>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ---- Expanded: Employees missing a Holiday Period ---- */}
+      {missingHolidayExpanded && missingHolidayPeriod.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center gap-2">
+              <CalendarPlus className="h-4 w-4 text-amber-500" />
+              <CardTitle className="text-sm font-medium">
+                Holiday Periods needed
+                <span className="ml-1.5 text-muted-foreground">({missingHolidayPeriod.length})</span>
+              </CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {missingHolidayPeriod.map((m) => (
+                <Link
+                  key={m.memberId}
+                  href={`/members/${m.memberId}/holiday`}
+                  className="flex items-center justify-between rounded-md border px-3 py-2 text-sm hover:bg-muted/50 transition-colors"
+                >
+                  <p className="font-medium truncate">{m.memberName}</p>
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {m.startDate ? `Started ${fmtDate(m.startDate)}` : "No Start Date set"}
+                  </span>
                 </Link>
               ))}
             </div>

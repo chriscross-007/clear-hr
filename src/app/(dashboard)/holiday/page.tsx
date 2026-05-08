@@ -38,32 +38,32 @@ export default async function MyHolidayPage() {
 
   const today = new Date().toISOString().slice(0, 10);
 
-  // Fetch current year record
-  const { data: yearRec } = await supabase
-    .from("holiday_year_records")
-    .select("id, absence_type_id, year_start, year_end, pro_rata_amount, base_amount, adjustment, carried_over")
+  // CLE-167 — read the current holiday_period (replaces the dropped
+  // holiday_year_records + absence_profiles tables). Adapt to the shape
+  // calculateEntitlement expects until Phase 4 rebuilds the chain.
+  const { data: currentPeriod } = await supabase
+    .from("holiday_periods")
+    .select("start_date, end_date, allowance, adjust, units, max_carry_forward")
     .eq("member_id", member.id)
-    .lte("year_start", today)
-    .gte("year_end", today)
+    .lte("start_date", today)
+    .gte("end_date", today)
     .limit(1)
     .single();
 
-  // Determine measurement mode and carry-over cap from current year record's profile
-  let measurementMode = "days";
-  let carryOverMax: number | null = null;
-  if (yearRec) {
-    const { data: profile } = await supabase
-      .from("absence_profiles")
-      .select("measurement_mode, carry_over_max")
-      .eq("absence_type_id", yearRec.absence_type_id)
-      .eq("organisation_id", member.organisation_id)
-      .limit(1)
-      .single();
-    if (profile) {
-      measurementMode = profile.measurement_mode;
-      carryOverMax = profile.carry_over_max !== null ? Number(profile.carry_over_max) : null;
-    }
-  }
+  const yearRec = currentPeriod
+    ? {
+        year_start: currentPeriod.start_date as string,
+        year_end: currentPeriod.end_date as string,
+        base_amount: Number(currentPeriod.allowance ?? 0),
+        pro_rata_amount: null,
+        adjustment: Number(currentPeriod.adjust ?? 0),
+        carried_over: 0,
+      }
+    : null;
+  const measurementMode = (currentPeriod?.units as string) ?? "days";
+  const carryOverMax = currentPeriod?.max_carry_forward !== null && currentPeriod?.max_carry_forward !== undefined
+    ? Number(currentPeriod.max_carry_forward)
+    : null;
 
   // Compute balance using centralised entitlement calculation
   let balance: BalanceSummary | null = null;
@@ -113,13 +113,24 @@ export default async function MyHolidayPage() {
     nextStart.setUTCDate(nextStart.getUTCDate() + 1);
     const nextStartStr = nextStart.toISOString().slice(0, 10);
 
-    const { data: nextYearRec } = await supabase
-      .from("holiday_year_records")
-      .select("id, absence_type_id, year_start, year_end, pro_rata_amount, base_amount, adjustment, carried_over")
+    // CLE-167 — read the next holiday_period (replaces holiday_year_records).
+    const { data: nextPeriod } = await supabase
+      .from("holiday_periods")
+      .select("start_date, end_date, allowance, adjust")
       .eq("member_id", member.id)
-      .eq("year_start", nextStartStr)
+      .eq("start_date", nextStartStr)
       .limit(1)
       .single();
+    const nextYearRec = nextPeriod
+      ? {
+          year_start: nextPeriod.start_date as string,
+          year_end: nextPeriod.end_date as string,
+          base_amount: Number(nextPeriod.allowance ?? 0),
+          pro_rata_amount: null,
+          adjustment: Number(nextPeriod.adjust ?? 0),
+          carried_over: 0,
+        }
+      : null;
 
     if (nextYearRec) {
       const { data: nextBookings } = await supabase

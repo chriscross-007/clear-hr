@@ -41,6 +41,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -499,27 +500,28 @@ export function HolidayReportClient({ rows, teams, absenceReasons, defaultFrom, 
 
   return (
     <>
-      {/* Row 1: Title + Customise / Show PDF / Export CSV */}
-      <div className="flex items-center justify-between mb-2">
-        <div>
-          <h1 className="text-2xl font-bold">Holiday Bookings</h1>
-          <p className="text-sm text-muted-foreground mt-1">Holiday Requests and Bookings</p>
+      {/* Sticky band: title + Row 1 (Customise/PDF/CSV) + Row 2 (Favourite/Save) + filters */}
+      <StickyPageHeader>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold">Holiday Bookings</h1>
+            <p className="text-sm text-muted-foreground mt-1">Holiday Requests and Bookings</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <ColumnCustomiserTrigger onClick={() => setShowCustomiser(true)} />
+            <Button variant="outline" size="sm" onClick={() => setShowPdfDialog(true)} disabled={pdfLoading}>
+              <FileDown className="h-4 w-4 mr-2" />
+              {pdfLoading ? "Generating..." : "Show PDF"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={exportCsv}>
+              <Download className="h-4 w-4 mr-2" />
+              Export CSV
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <ColumnCustomiserTrigger onClick={() => setShowCustomiser(true)} />
-          <Button variant="outline" size="sm" onClick={() => setShowPdfDialog(true)} disabled={pdfLoading}>
-            <FileDown className="h-4 w-4 mr-2" />
-            {pdfLoading ? "Generating..." : "Show PDF"}
-          </Button>
-          <Button variant="outline" size="sm" onClick={exportCsv}>
-            <Download className="h-4 w-4 mr-2" />
-            Export CSV
-          </Button>
-        </div>
-      </div>
 
       {/* Row 2: Favourite / Save / Save As */}
-      <div className="flex items-center justify-end gap-2 mb-6">
+      <div className="flex items-center justify-end gap-2 mt-3">
         <Button
           variant="ghost"
           size="sm"
@@ -547,7 +549,7 @@ export function HolidayReportClient({ rows, teams, absenceReasons, defaultFrom, 
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-end gap-4 mb-6">
+      <div className="flex flex-wrap items-end gap-4 mt-3">
         <div className="space-y-1">
           <Label className="text-xs text-muted-foreground">Payroll #</Label>
           <Input className="w-28" value={payrollFilter} onChange={(e) => setPayrollFilter(e.target.value)} placeholder="Search..." />
@@ -649,6 +651,7 @@ export function HolidayReportClient({ rows, teams, absenceReasons, defaultFrom, 
           </Select>
         </div>
       </div>
+      </StickyPageHeader>
 
       {/* Table */}
       <div className="rounded-md border">

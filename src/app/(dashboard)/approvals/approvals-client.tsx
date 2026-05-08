@@ -43,6 +43,7 @@ import { TeamCalendar, type TeamMember, type TeamBooking, type TeamBankHoliday }
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { CompletionStatusBadge } from "@/components/completion-status-badge";
+import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 import type { CompletionStatus } from "../sick-booking-types";
 
 interface ApprovalsClientProps {
@@ -191,11 +192,9 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
 
   return (
     <>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Holiday Approvals</h1>
-      </div>
-
       <Tabs defaultValue="pending" className="w-full">
+      <StickyPageHeader>
+        <h1 className="text-2xl font-bold mb-3">Holiday Approvals</h1>
         <div className="flex items-center justify-between gap-4">
           <TabsList>
             <TabsTrigger value="pending">
@@ -234,6 +233,7 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
             </Button>
           </div>
         </div>
+      </StickyPageHeader>
 
         <TabsContent value="pending" className="mt-4 space-y-3">
           {toastMessage && (
@@ -597,8 +597,14 @@ function ApprovalsTable({
     <div className="flex justify-center w-full">
       <div className="w-auto max-w-[90%] min-w-0">
         <div className="rounded-md border">
-          <Table>
-            <TableHeader>
+          {/* containerClassName="overflow-visible" disables the Table's own
+              vertical scroll context so the sticky thead anchors to the page
+              (just under the StickyPageHeader band — top-[184px] tucks the
+              thead a few pixels under the band's bottom border so no row
+              data peeks through as it scrolls past) rather than the
+              non-scrolling table container. */}
+          <Table containerClassName="overflow-visible">
+            <TableHeader className="[&_th]:sticky [&_th]:top-[184px] [&_th]:z-20 [&_th]:bg-background">
               <TableRow>
                 {selectable && (
                   <TableHead className="w-10">

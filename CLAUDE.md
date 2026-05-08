@@ -1,5 +1,17 @@
 # ClearHR - Project Guide
 
+## Working agreement with Chris
+- Chris directs at the strategic level. He does not read or edit the code, `CLAUDE.md`, or `.github/copilot-instructions.md`. Don't put discipline, follow-through, or maintenance work on him.
+- Claude owns the codebase and the design docs. When a session introduces a new convention, table, or pattern, update these docs as part of the work — not as a separate ask. Mirror rules that affect inline completion into `.github/copilot-instructions.md`.
+- Verification is Claude's job. Read the existing file before drafting changes — never speculate about file locations, action names, or DB column names. Catch mismatches with shipped code before reporting "done."
+- Don't write postambles that hand work back to Chris ("you may want to…", "if X happens, do Y…"). If something needs doing and Claude can do it, just do it.
+- **Linear "Done" is Chris's call.** Issues stay in **In Progress** through the whole life of the work — including after Claude has finished implementation and is waiting for Chris to test. Do not move to "In Review", "Ready for Review", or any intermediate state. The only state transitions Claude makes are: Backlog/Todo → In Progress when starting work, and In Progress → Done **only after Chris has tested the change and explicitly told Claude to mark it Done**. No exceptions. (Most issues are short-lived; minimising state changes keeps the Linear board calm.)
+
+## Where to start a new session
+- Active work and design intent live in Linear (team: **ClearHR**, https://linear.app/clearhr). Issue descriptions are dense and self-contained — read the relevant issue in full before touching code.
+- The repo at `C:\Lifeboat\VsCode\clear-hr` is the source of truth.
+- This `CLAUDE.md` captures conventions that aren't obvious from the code. If you catch yourself drifting from the codebase's actual patterns, fix this file so the next session benefits.
+
 ## Product Overview
 B2B HR management platform for web and mobile. Organisations sign up, add their employees, and manage day-to-day HR operations.
 
@@ -98,6 +110,32 @@ src/
 - `updateEmployee()` — updates names on `members`.
 - `getInviteDetails(token)` — public (no auth required), returns email/name/orgName for the accept-invite page.
 
+#### File location and import path
+- Page-specific actions are co-located with the page in `actions.ts` (e.g. `(dashboard)/employees/actions.ts`).
+- Cross-cutting actions used by multiple pages live at the dashboard root: `(dashboard)/<domain>-actions.ts` (e.g. `conversation-actions.ts`, `team-actions.ts`, `holiday-booking-actions.ts`, `holiday-period-actions.ts`).
+- **Pure helpers next to actions:** when a domain needs synchronous, non-server-action helpers (pure functions, types, computed-value calculators), put them in a sibling file *without* the `"use server"` directive — e.g. `holiday-period-compute.ts` next to `holiday-period-actions.ts`. Required because every export of a `"use server"` file must be an async function.
+- Import path is always `@/app/(dashboard)/<file>`. There is **no** `@/lib/actions/` directory — do not invent one.
+- Every actions file must start with `"use server";`.
+
+#### Return shape — result envelope, never thrown to the client
+- All server actions return a `{ success: boolean; error?: string; ...payload }` object.
+- Wrap the body in `try/catch`; convert any thrown error to `{ success: false, error: e instanceof Error ? e.message : "An error occurred" }`. The client should never see an unhandled rejection.
+- Client components destructure `success`/`error` and render the error inline. Do not throw from the client.
+- Example shapes from the codebase:
+  - `{ success: true, documentId }`
+  - `{ success: true, url, downloadUrl, fileName }`
+  - `{ success: false, error: "Document not found" }`
+
+#### DTO mapping (snake_case DB → camelCase TS)
+- DB columns are snake_case; action return types are camelCase. Always map at the action boundary — never leak raw DB shapes to the client.
+- Pre-flatten relations into scalars where possible (e.g. uploader's full name comes back as `uploadedBy: string`, not a nested `uploader: { first_name, last_name }` object).
+- Some standard renames in this codebase: `mime_type` → `contentType`, `file_name` → `fileName`, `file_size` → `fileSize`, `created_at` → `createdAt`, `document_label` → `documentLabel`.
+- Co-locate the exported DTO type next to the action that returns it (e.g. `export type EmployeeDocument` lives in `conversation-actions.ts` next to `getEmployeeDocuments`).
+
+#### Standard helpers (in `conversation-actions.ts` — reuse the same shape elsewhere)
+- `getCallerMember()` → `{ supabase, member }`. The `supabase` is the caller's session client; `member` is `{ id, organisation_id, role }` resolved from the caller's auth user. Throws if not authenticated or no membership found — wrap calls in the action's outer `try/catch`.
+- `getAdminClient()` → service-role Supabase client for cross-user reads/writes and storage operations. Always check the caller's permissions (via `getCallerMember()` plus a role/permission check) before using it.
+
 ### Cross-user server-side queries: always use getAdminClient()
 Any server action that needs to read data belonging to other members in the same org (e.g. team member lists, colleague bookings, team sizes) must use `getAdminClient()` (service role client) for those queries — NOT the caller's Supabase session client.
 
@@ -129,10 +167,16 @@ Using the caller's session client for cross-user queries will silently fail due 
 ## Database Schema
 
 ### Tables
-- **`organisations`** — Fields: `id`, `name`, `slug` (unique), `member_label` (default "member"), timestamps.
+- **`organisations`** — Fields: `id`, `name`, `slug` (unique), `member_label` (default "member"), timestamps. Holiday year settings: `holiday_year_start_type` (`'fixed' | 'employee_start_date'`), `holiday_year_start_day`, `holiday_year_start_month`. **Default Cascade columns** (CLE-167) seed each new employee's cog at creation: `default_holiday_type`, `default_holiday_units`, `default_holiday_earned_factor`, `default_holiday_allowance`, `default_holiday_toil_hours_per_day`, `default_holiday_max_carry_forward`, `default_holiday_min_carry_forward` — all NOT NULL with hardcoded fallbacks (`fixed` / `days` / `0` / `0` / `0` / `0` / `-999`).
 - **`teams`** — Groups within an org. Fields: `id`, `organisation_id` (FK), `name`, timestamp.
-- **`members`** — Core access control and member profile data (single source of truth). Fields: `id`, `organisation_id` (FK), `user_id` (FK, **nullable** — NULL until employee accepts invite), `email`, `first_name`, `last_name`, `known_as`, `avatar_url`, `team_id` (FK, nullable), `role` (owner/admin/employee), `permissions` (JSONB), `invite_token` (UUID, unique), `invited_at`, `accepted_at`, timestamps. Unique on (organisation_id, email). Partial unique on (organisation_id, user_id) WHERE user_id IS NOT NULL.
+- **`members`** — Core access control and member profile data (single source of truth). Fields: `id`, `organisation_id` (FK), `user_id` (FK, **nullable** — NULL until employee accepts invite), `email`, `first_name`, `last_name`, `known_as`, `avatar_url`, `team_id` (FK, nullable), `role` (owner/admin/employee), `permissions` (JSONB), `invite_token` (UUID, unique), `invited_at`, `accepted_at`, `start_date` (date, nullable), timestamps. **Per-employee Holiday cog columns** (CLE-167) snapshotted from org defaults at employee creation, non-null thereafter: `holiday_type`, `holiday_units`, `holiday_earned_factor`, `holiday_allowance`, `holiday_toil_hours_per_day`, `holiday_max_carry_forward`, `holiday_min_carry_forward`. These seed the values of new `holiday_periods` rows; admin can edit via the cog on the employee's Holiday secondary menu (changes affect only future periods, not existing ones). Unique on (organisation_id, email). Partial unique on (organisation_id, user_id) WHERE user_id IS NOT NULL.
 - **`superusers`** — Platform-level access. Fields: `id`, `user_id` (FK, unique), timestamp.
+- **Earned-period allowance from timesheet (CLE-175)** — Earned-type Holiday Periods derive `allowance` from actual worked hours pulled from the timesheet via `getMemberWorkedHoursInRange` (in `@/lib/timesheet-totals`). Formula: `worked × earnedFactor / 100`. For `units = "hours"` the worked value is hours; for `units = "days"` the helper divides by the Work Profile's average hours-per-working-day (resolved at `period.startDate`, fallback 8). The compute helper looks up worked hours via `ComputeContext.workedHoursByPeriodId`. Page (`members/[memberId]/holiday/page.tsx`) and `setHolidayPeriodLock` populate the map for Earned periods only — Fixed periods skip the timesheet round-trip. The Holiday Periods table renders **Worked** + **Factor %** columns (between Brought Fwd and Allowance) only when at least one period is Earned; Fixed rows show "—" in those cells.
+- **`holiday_bookings` × `holiday_periods` attribution (CLE-173)** — `computeAllHolidayPeriodValues` walks each booking day-by-day, attributes each working day to whichever period covers that date, and converts to the period's units (days-mode = +1 day per working day; hours-mode = + the Work Profile's hours-for-that-DOW). Straddling bookings are split correctly across periods, including across mismatched units (one days, one hours) and mismatched types (one fixed, one earned). Bank holidays follow the org's `bank_holiday_handling` (`additional` = skipped as free days; `deducted` = counted as normal). Half-day flags (`start_half`, `end_half`) apply at the booking ends. The booking's stored `days_deducted` / `hours_deducted` columns are display-only for the booking lists/reports — the compute helper ignores them and re-derives from the Work Profile. **Work Profile is resolved per-date, not as-of-today** — `getMemberWorkPatternHistory` returns every employee_work_profiles assignment plus the org default as a pre-history fallback, and `patternForDate(history, iso)` picks the entry that applies on each calendar day. Future-dated assignments (e.g. effective_from = 2027-01-01) are honoured for any date on or after their effective_from. The same history is also used by the planner calendar's schedule overlay so cells tint correctly across assignment boundaries. The compute helper requires a `ComputeContext` (work pattern history + bank holiday set + handling); fetch via the helpers in `@/lib/work-pattern-data`.
+- **`holiday_periods`** — Per-employee holiday period record (CLE-167). Replaces the old `absence_profiles` + `holiday_year_records` model. Stored fields: `id`, `organisation_id` (FK), `member_id` (FK), `name`, `start_date`, `end_date`, `type` (`'fixed' | 'earned'`), `units` (`'days' | 'hours'`), `allowance` (numeric, **null for `earned` type, NOT NULL for `fixed`** — enforced by `chk_holiday_periods_allowance_per_type`), `earned_factor`, `adjust`, `max_carry_forward`, `min_carry_forward` (≤ 0 by check), `locked` (boolean), `locked_snapshot` (jsonb, NULL when unlocked), timestamps. Computed at query time, never stored: Brought Forward, Worked, Toil, Taken, Booked, Balance, Carry Forward — derived from chained periods + `holiday_bookings` + timesheet data. **Lock semantics (CLE-172):** when a period is locked, `setHolidayPeriodLock` snapshots the period's `ComputedPeriodValues` into `locked_snapshot`. `computeAllHolidayPeriodValues` emits the snapshot directly for locked rows and uses `snapshot.carryForward` as the next period's broughtForward — so earlier manual edits do not propagate through a locked period. Legacy locked rows (NULL `locked_snapshot`) fall back to live compute; admin re-locks to opt them in. Constraints: unique `(member_id, name)` (Name uniqueness per employee), GiST exclusion `(member_id, daterange(start_date, end_date, '[]'))` blocks overlapping periods at the database level. RLS: employees see their own periods; admins/owners see all org periods and can INSERT/UPDATE/DELETE.
+- **`member_documents`** — Files uploaded for or by a member, including absence-booking attachments. Fields: `id`, `organisation_id` (FK), `member_id` (FK — the member the doc relates to), `uploaded_by` (FK `members.id`, nullable), `conversation_message_id` (FK, nullable — set when uploaded via chat), `storage_path`, `file_name`, `file_size`, `mime_type` (returned to clients as `contentType`), `entity_type` (e.g. `'absence_booking'`), `entity_id` (uuid of the linked entity), `document_category` (auto-set, e.g. `'absence_document'`), `document_label` (admin-set vocabulary: `self_certification` | `medical_certificate` | `fit_note` | `prescription` | `other`), `created_at`. RLS: employees see only rows where `member_id = self`; admins/owners see all org rows. UPDATE policy permits admin/owner to set `document_label`.
+
+**Note: `absence_profiles` and `holiday_year_records` were dropped in CLE-167.** Holiday Profiles are gone — the model is now profileless. Each employee has zero or more `holiday_periods` directly, with parameters seeded from the cog columns on `members`. The settled spec lives at https://linear.app/clearhr/document/profileless-holiday-management-settled-spec-bae7e878e485.
 
 ### Permissions (JSONB on members)
 Granular feature flags per member. No schema change needed to add new permissions.
@@ -176,11 +220,21 @@ Granular feature flags per member. No schema change needed to add new permission
 **Status badges in grid:** "Not invited" (grey) → "Invited" (amber) → "Active" (green)
 **Edit dialog invite button:** "Invite" → "Resend Invite" → "Accepted" (disabled)
 
+### Storage
+- **Bucket: `member-documents`** (note the hyphen). Private bucket holding everything in the `member_documents` table. Storage RLS is permissive; access is mediated by the action layer (e.g. `getDocumentDownloadUrl` in `conversation-actions.ts`), which checks the caller's row-level access on `member_documents` first via the session client, then issues a short-lived signed URL via the admin client.
+- **Signed-URL conventions:**
+  - Inline view URL: 120-second expiry.
+  - Download URL: 120-second expiry, with `{ download: fileName }` to set `Content-Disposition: attachment`.
+- **Allowed MIME types** and the **10 MB size cap** are defined in `conversation-actions.ts` as `ALLOWED_CONTENT_TYPES` and `MAX_DOCUMENT_SIZE`. Validate against these in any new upload path.
+
 ## Error Troubleshooting
-**First response to ANY build/runtime error:**
-```bash
-rm -rf .next node_modules/.cache && npm run dev
+**First response to ANY build/runtime error** — Chris runs on Windows PowerShell, so use the PowerShell form:
+```powershell
+Remove-Item -Recurse -Force .next, node_modules\.cache -ErrorAction SilentlyContinue
+npm run dev
 ```
+The bash form (`rm -rf .next node_modules/.cache && npm run dev`) doesn't work on PowerShell.
+
 Do NOT modify auth code to "fix" cache issues.
 
 | Error | NOT the cause | Actual cause | Fix |
@@ -191,9 +245,16 @@ Do NOT modify auth code to "fix" cache issues.
 
 ## UI Conventions
 - **Row editing:** Never use a pencil/edit icon button on list rows. Make the entire row clickable to open edit mode (`cursor-pointer hover:bg-muted/50 onClick={() => startEdit(...)}`). Only action buttons that are destructive (delete) or independent (drag handle) should remain as separate icons with `e.stopPropagation()`. The choice of modal vs page for the edit target is decided per screen based on complexity — do not default to inline editing.
+- **Inline-cell editing in tables:** When a table is essentially a spreadsheet of editable scalars (e.g. the Holiday Periods table on the employee Holiday page), edit the cells inline rather than via a slide-out form — the slide-out duplicates the column layout and gets confused with adjacent settings forms (cog, defaults). Pattern (see `members/[memberId]/holiday/employee-holiday-client.tsx`): track a single `editing: { rowId, field } | null` plus a string `draft`; click a cell → `startEdit(row, field)`; render `<input>`/`<select>` only for the matching cell; **Enter** blurs and commits, **blur** commits, **Escape** cancels; commit calls the row's full update server action with the current row + the changed field. Critical implementation detail — define the cell components (`TextCell`, `DateCell`, `SelectCell`) at module top-level and pass the inline-edit state bundle as a prop. Defining them inside the parent function recreates their identity each render, which makes React unmount the input on every keystroke and drop focus. Native `<select>` cells should commit immediately on `onChange` (with the new value passed as a `valueOverride`) since picking an option closes the dropdown. Locked rows render the cells as static text (no edit affordance). **Cell-width stability:** wrap the input/select in a `relative` container alongside an `aria-hidden invisible` ghost span carrying the at-rest display text — the ghost dictates the cell's natural width and the editor sits on top via `absolute inset-0`, so clicking a cell does not widen the column. Use `size={1}` and `min-w-0` on the input to neutralise its default ~20-char intrinsic width; padding/font-size on the ghost must match the editor for the widths to line up exactly.
 - **Boolean values in tables:** Never display "Yes" or "No" text for boolean columns. Use Lucide icons instead: `<Check className="h-5 w-5 text-green-500" />` for true, `<X className="h-5 w-5 text-red-500" />` for false. Icons should be sized to fill approximately 50% of the row height.
 - **Date filters:** Date and datetime columns use a preset dropdown ordered Last/This/Next per period (Last Week, This Week, Next Week, Last Month, This Month, Next Month, Last Year, This Year, Next Year, Custom range...) rather than raw date pickers. "Custom range..." reveals From/To date inputs. Filter value shape: `{ preset?: string; from?: string; to?: string }`. The `getDateRange(preset)` helper in `employees-client.tsx` resolves presets to `{ from, to }` ISO date strings. Applies to `last_log_in` and all `date`-type custom field columns.
 - **Dialogs and Sheets — Scrollable body:** Any Dialog or Sheet that contains a form must use a scrollable body layout to ensure the header and footer buttons remain visible at all screen heights. The header (title) sits outside the scrollable area. Form fields are wrapped in `overflow-y-auto max-h-[60vh]`. The footer (Save/Cancel buttons) sits outside the scrollable area. Structure: `<DialogHeader>...</DialogHeader>` then `<div className="overflow-y-auto max-h-[60vh] px-1">` containing all form fields, then `<DialogFooter>...</DialogFooter>`. This applies to ALL dialogs and sheets with forms, regardless of how few fields they currently have — forms grow over time.
+- **Date/time formatting:** Use `toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })` for human-facing date+time. UK locale, 24-hour clock. Do not pull in `date-fns` just for formatting.
+- **Signed-URL images:** Document/photo viewers that load a signed URL must use a plain `<img>` (with an `// eslint-disable-next-line @next/next/no-img-element` comment), not `next/image`. `next/image` cannot proxy signed URLs that change per request and will fail on configured-domain checks.
+- **Bulk-selection in `DataGrid` (`@/components/data-grid/data-grid`):** the parent owns the selection state (typically `selectedIds: Set<string>`) and supplies a `select` column via `leadingColumnIds={["select"]}` plus a column-def with header + per-row checkboxes. For group-level select-all (when `groupBy` is set), pass `renderGroupHeaderPrefix={({ rowsInGroup, groupValue }) => ...}` to render a tri-state checkbox at the leading edge of each group header. The renderer receives the **full filtered set** of rows in the group (not just the visible page) so the checkbox toggles every member of the group at once. Use additive/subtractive helpers (e.g. `handleSetSelected(ids, selected: boolean)`) so toggling one group doesn't discard selections in others.
+- **Sticky page header on every list page:** wrap the title in `<StickyPageHeader>` from `@/components/ui/sticky-page-header`, and put **every persistent control the user might want while the data scrolls** inside it — title, tabs, filter inputs, action buttons, secondary action rows, week-navigation, etc. The principle is that all controls stay fixed and only the rows of data scroll. If a control belongs with the page (not a row), it goes in the sticky band. The component is server-component safe and assumes the parent uses the standard `px-4 sm:px-6 lg:px-8` outer padding so its negative margins extend the band full-bleed.
+- **Tabs in the sticky header:** when a page uses `<Tabs>`, place the `<Tabs>` wrapper around both `<StickyPageHeader>` and the `<TabsContent>`s, then put the `<TabsList>` inside `<StickyPageHeader>`. The Tabs context spans both so triggers stay sticky while content scrolls.
+- **Sticky table-header on `DataGrid` pages:** when a page uses `<DataGrid>` AND has `<StickyPageHeader>`, also pass `stickyHeader` to `DataGrid` so its toolbar, column-header row and filter row stack into the same sticky group. The default `stickyHeaderTop={120}` assumes a single-line sticky title above. If the band is taller (multi-line title, extra action rows, page-level filters), pass a larger `stickyHeaderTop` value — DataGrid pins the toolbar at that offset, the column header at `stickyHeaderTop + 56`, and the filter row at `stickyHeaderTop + 96`. Approximate band heights (px) used in the codebase: single h1 ≈ 120, h1 + meta + Row 2 ≈ 240, two-line meta + h1 ≈ 160.
 
 ## Data Security — Non-Negotiable Rules
 
