@@ -4,6 +4,8 @@ import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { HolidayCalendar, type CalendarBooking, type CalendarBankHoliday } from "@/components/holiday-calendar";
 import { HolidayUnitsPill } from "@/components/holiday-units-pill";
+import { CalendarLegend } from "@/components/calendar/calendar-legend";
+import { CalendarFilterPanel, type AbsenceTypeOption } from "@/components/calendar/calendar-filter-panel";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog,
@@ -75,11 +77,10 @@ export type AbsenceReasonOption = {
   absence_type_name: string;
 };
 
-export type AbsenceTypeOption = {
-  id: string;
-  name: string;
-  colour: string;
-};
+// Re-export the shared AbsenceTypeOption type so existing imports from
+// './admin-calendar-client' keep working without touching the calendar
+// page's import line.
+export type { AbsenceTypeOption };
 
 interface AdminCalendarClientProps {
   memberId: string;
@@ -977,147 +978,7 @@ export function AdminCalendarClient({
   );
 }
 
-// ---------------------------------------------------------------------------
-// External legend — single-column list of active absence reasons, to the
-// left of the calendar grid. Caps at 20 visible entries and shows "+N more"
-// for any overflow.
-// ---------------------------------------------------------------------------
-
-const MAX_LEGEND_ITEMS = 20;
-
-function CalendarLegend({
-  bookings,
-}: {
-  bookings: CalendarBooking[];
-}) {
-  // Always shows every reason that exists in the bookings, regardless of the
-  // filter panel state — this is a colour key, not a filtered list, and a
-  // stable width prevents the calendar shifting when filters toggle.
-  const items = useMemo(() => {
-    const seen = new Map<string, { name: string; colour: string }>();
-    for (const b of bookings) {
-      if (b.status === "cancelled" || b.status === "rejected") continue;
-      if (!seen.has(b.reason_name)) {
-        seen.set(b.reason_name, { name: b.reason_name, colour: b.reason_colour });
-      }
-    }
-    return Array.from(seen.values());
-  }, [bookings]);
-
-  if (items.length === 0) return null;
-
-  const visible = items.slice(0, MAX_LEGEND_ITEMS);
-  const overflow = items.length - visible.length;
-
-  return (
-    <div className="w-40 shrink-0">
-      <div className="flex flex-col gap-1">
-        {visible.map((l) => (
-          <div key={l.name} className="flex items-center gap-1.5 text-xs">
-            <span className="inline-block h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: l.colour }} />
-            <span className="truncate">{l.name}</span>
-          </div>
-        ))}
-      </div>
-      {overflow > 0 && (
-        <p className="mt-2 text-xs text-muted-foreground">+{overflow} more</p>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Filter panel — absence-type checkboxes + Schedule overlay toggle, sits to
-// the right of the calendar.
-// ---------------------------------------------------------------------------
-
-function CalendarFilterPanel({
-  absenceTypes,
-  hiddenTypeIds,
-  onToggleType,
-  onToggleAll,
-  showSchedule,
-  onToggleSchedule,
-  showBankHolidays,
-  onToggleBankHolidays,
-  bankHolidayColour,
-}: {
-  absenceTypes: AbsenceTypeOption[];
-  hiddenTypeIds: Set<string>;
-  onToggleType: (id: string) => void;
-  onToggleAll: () => void;
-  showSchedule: boolean;
-  onToggleSchedule: () => void;
-  showBankHolidays: boolean;
-  onToggleBankHolidays: () => void;
-  bankHolidayColour: string;
-}) {
-  // Derived "All" state: true when nothing is hidden, false when everything is
-  // hidden, and "indeterminate" when only some are hidden.
-  const totalTypes = absenceTypes.length;
-  const hiddenCount = hiddenTypeIds.size;
-  const allChecked: boolean | "indeterminate" =
-    totalTypes === 0
-      ? false
-      : hiddenCount === 0
-      ? true
-      : hiddenCount === totalTypes
-      ? false
-      : "indeterminate";
-
-  return (
-    <div className="w-40 shrink-0">
-      <p className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        Filters
-      </p>
-
-      {totalTypes > 0 && (
-        <label className="mb-1.5 flex cursor-pointer items-center gap-2 px-1 text-sm font-medium">
-          <Checkbox checked={allChecked} onCheckedChange={onToggleAll} />
-          <span>All</span>
-        </label>
-      )}
-
-      <div className="flex flex-col gap-1.5 px-1">
-        {absenceTypes.map((t) => {
-          const checked = !hiddenTypeIds.has(t.id);
-          return (
-            <label
-              key={t.id}
-              className="flex cursor-pointer items-center gap-2 text-sm"
-            >
-              <Checkbox checked={checked} onCheckedChange={() => onToggleType(t.id)} />
-              <span
-                aria-hidden
-                className="inline-block h-3 w-3 shrink-0 rounded-sm border border-border"
-                style={{ backgroundColor: t.colour }}
-              />
-              <span className="truncate">{t.name}</span>
-            </label>
-          );
-        })}
-      </div>
-
-      <div className="mt-3 flex flex-col gap-1.5 border-t border-gray-200 pt-3">
-        <label className="flex cursor-pointer items-center gap-2 px-1 text-sm">
-          <Checkbox checked={showSchedule} onCheckedChange={onToggleSchedule} />
-          <span
-            aria-hidden
-            className="inline-block h-3 w-3 shrink-0 rounded-sm border border-border"
-            style={{ backgroundColor: "#e0f2fe" }}
-          />
-          <span>Schedule</span>
-        </label>
-        <label className="flex cursor-pointer items-center gap-2 px-1 text-sm">
-          <Checkbox checked={showBankHolidays} onCheckedChange={onToggleBankHolidays} />
-          <span
-            aria-hidden
-            className="inline-block h-3 w-3 shrink-0 rounded-sm border border-border"
-            style={{ backgroundColor: bankHolidayColour }}
-          />
-          <span>Bank Holidays</span>
-        </label>
-      </div>
-    </div>
-  );
-}
+// CalendarLegend and CalendarFilterPanel were extracted to
+// `@/components/calendar/calendar-legend` and
+// `@/components/calendar/calendar-filter-panel` so the My Holiday page can
+// reuse the same key + filter (CLE-176).

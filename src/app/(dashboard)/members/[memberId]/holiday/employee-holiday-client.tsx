@@ -780,6 +780,7 @@ export function EmployeeHolidayClient({
                     <TableHead className="text-right">Toil</TableHead>
                     <TableHead className="text-right">Taken</TableHead>
                     <TableHead className="text-right">Booked</TableHead>
+                    <TableHead className="text-right">Pending</TableHead>
                     <TableHead className="text-right font-semibold">Balance</TableHead>
                     <TableHead className="text-right">Max&nbsp;CF</TableHead>
                     <TableHead className="text-right">Min&nbsp;CF</TableHead>
@@ -926,6 +927,12 @@ export function EmployeeHolidayClient({
                         {/* Booked (computed, read-only) */}
                         <TableCell className="text-right tabular-nums">
                           {c ? formatHolidayValue(c.booked) : "—"}
+                        </TableCell>
+
+                        {/* Pending (computed, read-only) — pending bookings,
+                            past or future, deducted from balance. */}
+                        <TableCell className="text-right tabular-nums">
+                          {c ? formatHolidayValue(c.pending) : "—"}
                         </TableCell>
 
                         {/* Balance (computed, read-only) */}

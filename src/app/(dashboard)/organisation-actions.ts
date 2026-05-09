@@ -40,6 +40,10 @@ export async function updateOrganisation(data: {
   defaultHolidayToilHoursPerDay?: number;
   defaultHolidayMaxCarryForward?: number;
   defaultHolidayMinCarryForward?: number;
+  // CLE-178 — when true, server hard-rejects holiday requests that breach
+  // notice_period_rules. Default false: requests get through with a soft
+  // warning shown to the employee in the booking sheet.
+  noticeRulesBlockRequests?: boolean;
 }) {
   const supabase = await createClient();
   const {
@@ -127,6 +131,11 @@ export async function updateOrganisation(data: {
   // Default work profile
   if (data.defaultWorkProfileId !== undefined) {
     updatePayload.default_work_profile_id = data.defaultWorkProfileId;
+  }
+
+  // Notice-rules block flag (CLE-178)
+  if (typeof data.noticeRulesBlockRequests === "boolean") {
+    updatePayload.notice_rules_block_requests = data.noticeRulesBlockRequests;
   }
 
   // CLE-169 — Default Cascade fields (Profileless Holiday Management).

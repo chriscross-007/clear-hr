@@ -49,6 +49,7 @@ interface SidebarProps {
   defaultHolidayToilHoursPerDay: number;
   defaultHolidayMaxCarryForward: number;
   defaultHolidayMinCarryForward: number;
+  noticeRulesBlockRequests: boolean;
   initialFavouriteIds?: string[];
   initialCustomReports?: { id: string; name: string }[];
   initialShiftDefs?: { id: string; name: string }[];
@@ -88,6 +89,7 @@ export function Sidebar({
   defaultHolidayToilHoursPerDay,
   defaultHolidayMaxCarryForward,
   defaultHolidayMinCarryForward,
+  noticeRulesBlockRequests,
   initialFavouriteIds = [],
   initialCustomReports = [],
   initialShiftDefs = [],
@@ -440,6 +442,7 @@ export function Sidebar({
           defaultHolidayToilHoursPerDay={defaultHolidayToilHoursPerDay}
           defaultHolidayMaxCarryForward={defaultHolidayMaxCarryForward}
           defaultHolidayMinCarryForward={defaultHolidayMinCarryForward}
+          noticeRulesBlockRequests={noticeRulesBlockRequests}
         />
       )}
     </>

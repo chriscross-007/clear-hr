@@ -45,6 +45,10 @@ export type LockedHolidayPeriodSnapshot = {
   allowance: number;
   taken: number;
   booked: number;
+  /** Pending-status bookings — past, present, or future. Added in CLE-177.
+   *  Snapshots predating the change have `pending = 0` and may carry pending
+   *  amounts inside `taken` / `booked` until the admin re-locks. */
+  pending: number;
   balance: number;
   carryForward: number;
 };
@@ -187,6 +191,10 @@ function parseLockedSnapshot(raw: Record<string, unknown> | null): LockedHoliday
   const booked = num(raw.booked);
   const balance = num(raw.balance);
   const carryForward = num(raw.carryForward);
+  // CLE-177 — `pending` was added later. Legacy snapshots that lack it
+  // default to 0 (the pending amounts will be inside taken/booked from the
+  // old splitting rule until the admin re-locks).
+  const pending = num(raw.pending) ?? 0;
   if (
     broughtForward === null
     || worked === null
@@ -199,7 +207,7 @@ function parseLockedSnapshot(raw: Record<string, unknown> | null): LockedHoliday
   ) {
     return null;
   }
-  return { broughtForward, worked, toil, allowance, taken, booked, balance, carryForward };
+  return { broughtForward, worked, toil, allowance, taken, booked, pending, balance, carryForward };
 }
 
 function rowToPeriod(row: HolidayPeriodRow): HolidayPeriod {
@@ -761,18 +769,31 @@ export async function setHolidayPeriodLock(
         (r) => rowToPeriod(r as HolidayPeriodRow),
       );
 
+      // Only count bookings whose absence reason deducts from holiday
+      // entitlement — sick / compassionate / etc. track separately.
+      const { data: deductingReasons } = await admin
+        .from("absence_reasons")
+        .select("id, absence_types!inner(deducts_from_entitlement)")
+        .eq("organisation_id", member.organisation_id)
+        .eq("absence_types.deducts_from_entitlement", true);
+      const deductingReasonIds = new Set<string>(
+        (deductingReasons ?? []).map((r) => r.id as string),
+      );
+
       const { data: bookingsRaw } = await admin
         .from("holiday_bookings")
-        .select("start_date, end_date, start_half, end_half, status")
+        .select("start_date, end_date, start_half, end_half, status, leave_reason_id")
         .eq("member_id", targetMemberId)
         .in("status", ["approved", "pending"]);
-      const bookings: ComputeBookingInput[] = (bookingsRaw ?? []).map((b) => ({
-        startDate: b.start_date as string,
-        endDate: (b.end_date as string | null) ?? null,
-        startHalf: (b.start_half as string | null) ?? null,
-        endHalf: (b.end_half as string | null) ?? null,
-        status: b.status as string,
-      }));
+      const bookings: ComputeBookingInput[] = (bookingsRaw ?? [])
+        .filter((b) => deductingReasonIds.has(b.leave_reason_id as string))
+        .map((b) => ({
+          startDate: b.start_date as string,
+          endDate: (b.end_date as string | null) ?? null,
+          startHalf: (b.start_half as string | null) ?? null,
+          endHalf: (b.end_half as string | null) ?? null,
+          status: b.status as string,
+        }));
 
       // CLE-173 — context for day-by-day attribution.
       const todayISO = new Date().toISOString().slice(0, 10);
@@ -829,6 +850,7 @@ export async function setHolidayPeriodLock(
         allowance: computed.allowance,
         taken: computed.taken,
         booked: computed.booked,
+        pending: computed.pending,
         balance: computed.balance,
         carryForward: computed.carryForward,
       };

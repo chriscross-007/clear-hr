@@ -63,21 +63,34 @@ export default async function EmployeeHolidayPage({
   const periodsResult = await getHolidayPeriodsForMember(memberId);
   const periods: HolidayPeriod[] = periodsResult.success ? periodsResult.periods : [];
 
-  // Fetch the bookings the compute chain needs. Only approved/pending
-  // bookings count toward Taken/Booked.
+  // Reasons whose absence type deducts from holiday entitlement — only
+  // these contribute to Holiday Period balances. Sick / compassionate /
+  // other non-deducting absences track separately and would double-count
+  // if included here.
+  const { data: deductingReasons } = await supabase
+    .from("absence_reasons")
+    .select("id, absence_types!inner(deducts_from_entitlement)")
+    .eq("organisation_id", caller.organisation_id)
+    .eq("absence_types.deducts_from_entitlement", true);
+  const deductingReasonIds = new Set<string>((deductingReasons ?? []).map((r) => r.id as string));
+
+  // Fetch the bookings the compute chain needs. Approved/pending bookings
+  // whose absence reason deducts from holiday entitlement.
   const { data: bookingsRaw } = await supabase
     .from("holiday_bookings")
-    .select("start_date, end_date, start_half, end_half, status")
+    .select("start_date, end_date, start_half, end_half, status, leave_reason_id")
     .eq("member_id", memberId)
     .in("status", ["approved", "pending"]);
 
-  const bookings: ComputeBookingInput[] = (bookingsRaw ?? []).map((b) => ({
-    startDate: b.start_date as string,
-    endDate: (b.end_date as string | null) ?? null,
-    startHalf: (b.start_half as string | null) ?? null,
-    endHalf: (b.end_half as string | null) ?? null,
-    status: b.status as string,
-  }));
+  const bookings: ComputeBookingInput[] = (bookingsRaw ?? [])
+    .filter((b) => deductingReasonIds.has(b.leave_reason_id as string))
+    .map((b) => ({
+      startDate: b.start_date as string,
+      endDate: (b.end_date as string | null) ?? null,
+      startHalf: (b.start_half as string | null) ?? null,
+      endHalf: (b.end_half as string | null) ?? null,
+      status: b.status as string,
+    }));
 
   // CLE-173 — fetch the context the compute helper needs to split each
   // booking across periods in each period's units. The booking range needs

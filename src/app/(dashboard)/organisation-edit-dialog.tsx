@@ -81,6 +81,7 @@ interface OrganisationEditDialogProps {
   defaultHolidayToilHoursPerDay: number;
   defaultHolidayMaxCarryForward: number;
   defaultHolidayMinCarryForward: number;
+  noticeRulesBlockRequests: boolean;
 }
 
 export function OrganisationEditDialog({
@@ -117,6 +118,7 @@ export function OrganisationEditDialog({
   defaultHolidayToilHoursPerDay: initialDefaultHolidayToilHoursPerDay,
   defaultHolidayMaxCarryForward: initialDefaultHolidayMaxCarryForward,
   defaultHolidayMinCarryForward: initialDefaultHolidayMinCarryForward,
+  noticeRulesBlockRequests: initialNoticeRulesBlockRequests,
 }: OrganisationEditDialogProps) {
   const [name, setName] = useState(orgName);
   const [label, setLabel] = useState(memberLabel);
@@ -161,6 +163,7 @@ export function OrganisationEditDialog({
   const [defaultHolidayToilHoursPerDay, setDefaultHolidayToilHoursPerDay] = useState<string>(String(initialDefaultHolidayToilHoursPerDay));
   const [defaultHolidayMaxCarryForward, setDefaultHolidayMaxCarryForward] = useState<string>(String(initialDefaultHolidayMaxCarryForward));
   const [defaultHolidayMinCarryForward, setDefaultHolidayMinCarryForward] = useState<string>(String(initialDefaultHolidayMinCarryForward));
+  const [noticeRulesBlockRequests, setNoticeRulesBlockRequests] = useState<boolean>(initialNoticeRulesBlockRequests);
   const [adminProfiles, setAdminProfiles] = useState<Profile[]>([]);
   const [employeeProfiles, setEmployeeProfiles] = useState<Profile[]>([]);
   const [userRightsType, setUserRightsType] = useState<"admin" | "employee">("admin");
@@ -208,6 +211,7 @@ export function OrganisationEditDialog({
     (Number(defaultHolidayToilHoursPerDay) || 0) !== initialDefaultHolidayToilHoursPerDay ||
     (Number(defaultHolidayMaxCarryForward) || 0) !== initialDefaultHolidayMaxCarryForward ||
     (Number(defaultHolidayMinCarryForward) || 0) !== initialDefaultHolidayMinCarryForward ||
+    noticeRulesBlockRequests !== initialNoticeRulesBlockRequests ||
     fieldDefsModified ||
     JSON.stringify(noticePeriodRules) !== noticePeriodRulesOriginal ||
     teams.some((t) => {
@@ -251,6 +255,7 @@ export function OrganisationEditDialog({
       setDefaultHolidayToilHoursPerDay(String(initialDefaultHolidayToilHoursPerDay));
       setDefaultHolidayMaxCarryForward(String(initialDefaultHolidayMaxCarryForward));
       setDefaultHolidayMinCarryForward(String(initialDefaultHolidayMinCarryForward));
+      setNoticeRulesBlockRequests(initialNoticeRulesBlockRequests);
       setFieldDefsModified(false);
       // Load teams
       getTeams().then((result) => {
@@ -383,6 +388,7 @@ export function OrganisationEditDialog({
       defaultHolidayToilHoursPerDay: Number(defaultHolidayToilHoursPerDay) || 0,
       defaultHolidayMaxCarryForward: Number(defaultHolidayMaxCarryForward) || 0,
       defaultHolidayMinCarryForward: Number(defaultHolidayMinCarryForward) || 0,
+      noticeRulesBlockRequests,
     });
 
     if (!result.success) {
@@ -500,6 +506,7 @@ export function OrganisationEditDialog({
     setDefaultHolidayToilHoursPerDay(String(initialDefaultHolidayToilHoursPerDay));
     setDefaultHolidayMaxCarryForward(String(initialDefaultHolidayMaxCarryForward));
     setDefaultHolidayMinCarryForward(String(initialDefaultHolidayMinCarryForward));
+    setNoticeRulesBlockRequests(initialNoticeRulesBlockRequests);
     setTeams(originalTeams);
     setNoticePeriodRules(JSON.parse(noticePeriodRulesOriginal || "[]"));
     setFieldDefsModified(false);
@@ -1295,6 +1302,21 @@ export function OrganisationEditDialog({
                     <Plus className="h-3.5 w-3.5 mr-1.5" />
                     Add rule
                   </Button>
+
+                  {/* CLE-178 — block-or-warn switch. */}
+                  <div className="flex items-start justify-between gap-3 rounded-md border bg-muted/30 p-3">
+                    <div>
+                      <Label className="text-sm font-medium">Block requests that breach the rules</Label>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        When on, employees can&apos;t submit a request that breaks a notice rule.
+                        When off, they see a warning that the request is likely to be rejected — but can still submit.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={noticeRulesBlockRequests}
+                      onCheckedChange={setNoticeRulesBlockRequests}
+                    />
+                  </div>
                 </div>
 
                 <div className="border-t pt-4 space-y-3">

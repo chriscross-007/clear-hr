@@ -9,6 +9,53 @@ export type NoticePeriodRule = {
   notice_days: number;
 };
 
+/**
+ * Public-ish action: the booking sheet (employee-facing) reads the org's
+ * notice rules and the block-or-warn flag so it can preview a violation
+ * client-side. Authenticated callers in the same org only.
+ */
+export async function getMyOrgNoticeContext(): Promise<{
+  rules: { min_booking_days: number; notice_days: number }[];
+  blockRequests: boolean;
+}> {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { rules: [], blockRequests: false };
+
+    const { data: member } = await supabase
+      .from("members")
+      .select("organisation_id")
+      .eq("user_id", user.id)
+      .limit(1)
+      .single();
+    if (!member) return { rules: [], blockRequests: false };
+
+    const [{ data: rules }, { data: org }] = await Promise.all([
+      supabase
+        .from("notice_period_rules")
+        .select("min_booking_days, notice_days")
+        .eq("organisation_id", member.organisation_id)
+        .order("min_booking_days", { ascending: false }),
+      supabase
+        .from("organisations")
+        .select("notice_rules_block_requests")
+        .eq("id", member.organisation_id)
+        .single(),
+    ]);
+
+    return {
+      rules: (rules ?? []).map((r) => ({
+        min_booking_days: Number(r.min_booking_days),
+        notice_days: Number(r.notice_days),
+      })),
+      blockRequests: !!(org as { notice_rules_block_requests?: boolean } | null)?.notice_rules_block_requests,
+    };
+  } catch {
+    return { rules: [], blockRequests: false };
+  }
+}
+
 async function getCallerAdmin() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();

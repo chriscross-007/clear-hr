@@ -13,7 +13,6 @@ import {
   getBankHolidaysForOrg,
 } from "@/lib/work-pattern-data";
 import {
-  bookingWorkingDaysInPeriod,
   computeAllHolidayPeriodValues,
   type ComputeBookingInput,
   type ComputeContext,
@@ -282,55 +281,20 @@ export default async function EmployeeCalendarPage({
   );
   const selectedComputed = widgetComputed.get(selectedPeriod.id);
 
-  // Total available for this period: brought forward + allowance + adjust + toil.
-  // (Equivalent to balance + taken + booked, but written as the inputs so it
-  // reads naturally.)
+  // CLE-177 — pending is now first-class on the compute output, so the
+  // widget reads taken / booked / pending straight from the helper rather
+  // than re-walking bookings.
   const widgetEffectiveEntitlement = selectedComputed
     ? selectedComputed.broughtForward
       + selectedComputed.allowance
       + selectedPeriod.adjust
       + selectedComputed.toil
     : 0;
-
-  // Pending vs approved split for the donut — done per booking because the
-  // compute helper combines pending+approved into taken/booked.
-  let widgetTaken = 0;
-  let widgetBooked = 0;
-  let widgetPending = 0;
-  for (const b of bookingsData ?? []) {
-    if (!deductingReasonIds.has(b.leave_reason_id as string)) continue;
-    const startDate = b.start_date as string;
-    const endDate = (b.end_date as string | null) ?? null;
-    if (!endDate) continue;
-    if (endDate < selectedPeriod.startDate) continue;
-    if (startDate > selectedPeriod.endDate) continue;
-    const ci: ComputeBookingInput = {
-      startDate,
-      endDate,
-      startHalf: ((b as Record<string, unknown>).start_half as string | null) ?? null,
-      endHalf: ((b as Record<string, unknown>).end_half as string | null) ?? null,
-      status: b.status as string,
-    };
-    const amount = bookingWorkingDaysInPeriod(
-      ci,
-      selectedPeriod.startDate,
-      selectedPeriod.endDate,
-      selectedPeriod.units,
-      widgetCtx,
-    );
-    if (b.status === "pending") {
-      widgetPending += amount;
-    } else if (b.status === "approved" && endDate < today) {
-      widgetTaken += amount;
-    } else {
-      widgetBooked += amount;
-    }
-  }
   const holidayStats: HolidayStats = {
     allowance: widgetEffectiveEntitlement,
-    taken: widgetTaken,
-    booked: widgetBooked,
-    pending: widgetPending,
+    taken: selectedComputed?.taken ?? 0,
+    booked: selectedComputed?.booked ?? 0,
+    pending: selectedComputed?.pending ?? 0,
   };
 
   // -------------------------------------------------------------------------

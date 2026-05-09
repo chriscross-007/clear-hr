@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { Plus, X } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { useRouter, usePathname } from "next/navigation";
+import { Plus, X, ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +35,12 @@ import {
 import { BookHolidaySheet } from "./book-holiday-sheet";
 import { EditBookingSheet } from "./edit-booking-sheet";
 import { HolidayCalendar, type CalendarBooking, type CalendarBankHoliday } from "@/components/holiday-calendar";
+import type { WorkPatternHours, WorkPatternAssignment } from "@/lib/day-counting";
+import { CalendarLegend } from "@/components/calendar/calendar-legend";
+import { CalendarFilterPanel, type AbsenceTypeOption } from "@/components/calendar/calendar-filter-panel";
+import { HolidayUnitsPill } from "@/components/holiday-units-pill";
+import { PlannerDashboard, type HolidayStats, type SickPlotStats, type SickStats } from "../members/[memberId]/calendar/planner-dashboard";
+import type { PeriodNavOption } from "../members/[memberId]/calendar/admin-calendar-client";
 import type {
   HolidayBookingRow,
   BalanceSummary,
@@ -51,9 +57,25 @@ interface MyHolidayClientProps {
   reasons: AbsenceReasonOption[];
   measurementMode: string;
   calendarYearStart: string | null;
+  calendarMonthCount: number;
   calendarBookings: CalendarBooking[];
   calendarBankHolidays: CalendarBankHoliday[];
   bankHolidayColour?: string;
+  // Planner-style Calendar tab (CLE-176)
+  workPattern: WorkPatternHours | null;
+  workPatternHistory: WorkPatternAssignment[];
+  absenceTypes: AbsenceTypeOption[];
+  periods: PeriodNavOption[];
+  selectedPeriodId: string | null;
+  currentPeriodId: string | null;
+  holidayStats: HolidayStats | null;
+  holidayUnits: "days" | "hours";
+  holidayBaseColour: string;
+  holidayPeriodStart: string | null;
+  holidayPeriodEnd: string | null;
+  sick: SickStats | null;
+  sickPlot: SickPlotStats | null;
+  bradfordFactor: number | undefined;
 }
 
 function fmtDate(dateStr: string): string {
@@ -88,14 +110,130 @@ const STATUS_CHECKBOX_CLASS: Record<string, string> = {
   cancelled: "data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500",
 };
 
-export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings, reasons, measurementMode, calendarYearStart, calendarBookings, calendarBankHolidays, bankHolidayColour }: MyHolidayClientProps) {
+export function MyHolidayClient({
+  memberId,
+  role,
+  balance,
+  nextBalance,
+  bookings,
+  reasons,
+  measurementMode,
+  calendarYearStart,
+  calendarMonthCount,
+  calendarBookings,
+  calendarBankHolidays,
+  bankHolidayColour,
+  workPattern,
+  workPatternHistory,
+  absenceTypes,
+  periods,
+  selectedPeriodId,
+  currentPeriodId,
+  holidayStats,
+  holidayUnits,
+  holidayBaseColour,
+  holidayPeriodStart,
+  holidayPeriodEnd,
+  sick,
+  sickPlot,
+  bradfordFactor,
+}: MyHolidayClientProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [bookSheetOpen, setBookSheetOpen] = useState(false);
+  const [bookSheetInitialStart, setBookSheetInitialStart] = useState<string | null>(null);
+  const [bookSheetInitialEnd, setBookSheetInitialEnd] = useState<string | null>(null);
+  const [bookSheetExisting, setBookSheetExisting] = useState<HolidayBookingRow | null>(null);
   const [editingBooking, setEditingBooking] = useState<HolidayBookingRow | null>(null);
   const [cancellingBooking, setCancellingBooking] = useState<HolidayBookingRow | null>(null);
   const [cancelBookingLoading, setCancelBookingLoading] = useState(false);
   const isAdmin = role === "owner" || role === "admin";
   const unit = measurementMode === "hours" ? "hours" : "days";
+
+  // -------------------------------------------------------------------------
+  // Planner-style Calendar tab state (CLE-176)
+  // -------------------------------------------------------------------------
+  const [hiddenTypeIds, setHiddenTypeIds] = useState<Set<string>>(() => new Set());
+  const [showSchedule, setShowSchedule] = useState<boolean>(true);
+  const [showBankHolidays, setShowBankHolidays] = useState<boolean>(true);
+  const visibleAbsenceTypeIds = new Set(
+    absenceTypes.filter((t) => !hiddenTypeIds.has(t.id)).map((t) => t.id),
+  );
+  const toggleType = (id: string) => {
+    setHiddenTypeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const toggleAll = () => {
+    setHiddenTypeIds((prev) => {
+      if (prev.size === 0) return new Set(absenceTypes.map((t) => t.id));
+      return new Set();
+    });
+  };
+
+  const selectedIndex = periods.findIndex((p) => p.id === selectedPeriodId);
+  const displayedPeriod = periods[selectedIndex] ?? periods[0];
+  const prevPeriod = selectedIndex > 0 ? periods[selectedIndex - 1] : null;
+  const nextPeriod = selectedIndex >= 0 && selectedIndex < periods.length - 1
+    ? periods[selectedIndex + 1]
+    : null;
+  const viewingCurrentPeriod = currentPeriodId === selectedPeriodId;
+  const navigateToPeriod = useCallback(
+    (id: string) => {
+      router.push(`${pathname}?periodId=${id}`);
+    },
+    [router, pathname],
+  );
+
+  // Only Annual-Leave reasons count as "Holiday" bookings for the overlap
+  // detection — sick / compassionate / other absences shouldn't surface
+  // here because the employee can't cancel them via this flow.
+  const holidayReasonIds = new Set(
+    reasons.filter((r) => r.absence_type_name === "Annual Leave").map((r) => r.id),
+  );
+
+  function openBookSheetForRange(startDate: string, endDate: string) {
+    // If the picked range overlaps an existing PENDING Holiday booking,
+    // surface that booking in view+delete mode rather than treating the
+    // drag as a new request. Approved bookings are off-limits to employee
+    // editing — they have to go through the admin to cancel.
+    const overlapping = bookings.find((b) => {
+      if (b.status !== "pending") return false;
+      if (!holidayReasonIds.has(b.leave_reason_id)) return false;
+      if (b.end_date === null) return b.start_date <= endDate;
+      return b.start_date <= endDate && b.end_date >= startDate;
+    });
+    if (overlapping) {
+      setBookSheetExisting(overlapping);
+      setBookSheetInitialStart(null);
+      setBookSheetInitialEnd(null);
+    } else {
+      setBookSheetExisting(null);
+      setBookSheetInitialStart(startDate);
+      setBookSheetInitialEnd(endDate);
+    }
+    setBookSheetOpen(true);
+  }
+  function openBookSheetEmpty() {
+    setBookSheetExisting(null);
+    setBookSheetInitialStart(null);
+    setBookSheetInitialEnd(null);
+    setBookSheetOpen(true);
+  }
+
+  function formatLongDate(ymd: string): string {
+    const d = new Date(ymd + "T00:00:00Z");
+    return d.toLocaleDateString("en-GB", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+  }
 
   async function handleCancelBooking() {
     if (!cancellingBooking) return;
@@ -142,7 +280,7 @@ export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings
         <StickyPageHeader>
           <div className="flex items-center justify-between gap-4 mb-3">
             <h1 className="text-2xl font-bold">My Holiday</h1>
-            <Button onClick={() => setBookSheetOpen(true)}>
+            <Button onClick={openBookSheetEmpty}>
               <Plus className="h-4 w-4 mr-1.5" />
               Request Holiday
             </Button>
@@ -298,15 +436,107 @@ export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings
         </TabsContent>
 
         <TabsContent value="calendar" className="mt-4">
-          {calendarYearStart ? (
-            <HolidayCalendar
-              yearStart={calendarYearStart}
-              bookings={calendarBookings}
-              bankHolidays={calendarBankHolidays}
-              bankHolidayColour={bankHolidayColour}
-            />
+          {calendarYearStart && holidayStats && holidayPeriodStart && holidayPeriodEnd ? (
+            <>
+              {/* Dashboard widgets — same as the admin planner */}
+              <PlannerDashboard
+                holidayStats={holidayStats}
+                holidayBaseColour={holidayBaseColour}
+                holidayPeriodStart={holidayPeriodStart}
+                holidayPeriodEnd={holidayPeriodEnd}
+                holidayUnits={holidayUnits}
+                sick={sick ?? undefined}
+                sickPlot={sickPlot ?? undefined}
+                bradfordFactor={bradfordFactor}
+              />
+
+              <div className="flex w-full items-start gap-3">
+                <CalendarLegend bookings={calendarBookings} />
+                <div className="min-w-0 flex-1">
+                  {/* Period nav header */}
+                  <div className="mb-2 flex items-center justify-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => prevPeriod && navigateToPeriod(prevPeriod.id)}
+                      disabled={!prevPeriod}
+                      title={prevPeriod ? `Previous: ${prevPeriod.name}` : "No earlier period"}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <div className="text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <span className="text-base font-semibold">{displayedPeriod?.name ?? "—"}</span>
+                        {displayedPeriod && <HolidayUnitsPill units={displayedPeriod.units} />}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {displayedPeriod
+                          ? `${formatLongDate(displayedPeriod.startDate)} – ${formatLongDate(displayedPeriod.endDate)}`
+                          : ""}
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => nextPeriod && navigateToPeriod(nextPeriod.id)}
+                      disabled={!nextPeriod}
+                      title={nextPeriod ? `Next: ${nextPeriod.name}` : "No later period"}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => currentPeriodId && navigateToPeriod(currentPeriodId)}
+                      disabled={!currentPeriodId || viewingCurrentPeriod}
+                      className="ml-2"
+                      title={
+                        !currentPeriodId
+                          ? "No Holiday Period covers today"
+                          : viewingCurrentPeriod
+                            ? "Already viewing the current period"
+                            : "Jump to the period covering today"
+                      }
+                    >
+                      <CalendarDays className="h-3.5 w-3.5 mr-1.5" />
+                      Current
+                    </Button>
+                  </div>
+
+                  <HolidayCalendar
+                    yearStart={calendarYearStart}
+                    monthCount={calendarMonthCount}
+                    bookings={calendarBookings}
+                    bankHolidays={calendarBankHolidays}
+                    bankHolidayColour={bankHolidayColour}
+                    onRangeSelected={openBookSheetForRange}
+                    hideLegend
+                    visibleAbsenceTypeIds={visibleAbsenceTypeIds}
+                    workPattern={workPattern}
+                    workPatternHistory={workPatternHistory}
+                    showSchedule={showSchedule}
+                    showBankHolidays={showBankHolidays}
+                  />
+
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Tip: click and drag across dates to request a holiday.
+                  </p>
+                </div>
+                <CalendarFilterPanel
+                  absenceTypes={absenceTypes}
+                  hiddenTypeIds={hiddenTypeIds}
+                  onToggleType={toggleType}
+                  onToggleAll={toggleAll}
+                  showSchedule={showSchedule}
+                  onToggleSchedule={() => setShowSchedule((s) => !s)}
+                  showBankHolidays={showBankHolidays}
+                  onToggleBankHolidays={() => setShowBankHolidays((v) => !v)}
+                  bankHolidayColour={bankHolidayColour ?? "#EF4444"}
+                />
+              </div>
+            </>
           ) : (
-            <p className="text-muted-foreground">No active holiday year record found.</p>
+            <p className="text-muted-foreground">No active Holiday Period found.</p>
           )}
         </TabsContent>
       </Tabs>
@@ -328,12 +558,37 @@ export function MyHolidayClient({ memberId, role, balance, nextBalance, bookings
       {/* Book Holiday Sheet */}
       <BookHolidaySheet
         open={bookSheetOpen}
-        onOpenChange={setBookSheetOpen}
+        onOpenChange={(open) => {
+          setBookSheetOpen(open);
+          if (!open) {
+            setBookSheetInitialStart(null);
+            setBookSheetInitialEnd(null);
+            setBookSheetExisting(null);
+          }
+        }}
         reasons={reasons}
         balance={balance}
         measurementMode={measurementMode}
+        initialStartDate={bookSheetInitialStart}
+        initialEndDate={bookSheetInitialEnd}
+        existingBooking={bookSheetExisting}
+        existingHolidayBookings={bookings
+          .filter((b) =>
+            (b.status === "pending" || b.status === "approved")
+            && holidayReasonIds.has(b.leave_reason_id),
+          )
+          .map((b) => ({
+            id: b.id,
+            start_date: b.start_date,
+            end_date: b.end_date,
+            days_deducted: b.days_deducted,
+            status: b.status,
+          }))}
         onSuccess={() => {
           setBookSheetOpen(false);
+          setBookSheetInitialStart(null);
+          setBookSheetInitialEnd(null);
+          setBookSheetExisting(null);
           router.refresh();
         }}
       />

@@ -3,7 +3,12 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { headers } from "next/headers";
-import { countWorkingDays, type WorkPatternHours } from "@/lib/day-counting";
+import { countWorkingDays, patternForDate, type WorkPatternHours } from "@/lib/day-counting";
+import {
+  getMemberWorkPatternHistory,
+  getBankHolidaysForOrg,
+  getBankHolidayHandling,
+} from "@/lib/work-pattern-data";
 import { calculateEntitlement } from "@/lib/entitlement";
 import { sendRequestPendingEmail, sendBookingConfirmedEmail } from "@/lib/email";
 import { logAudit, diffChanges } from "@/lib/audit";
@@ -413,26 +418,140 @@ async function validateBookingRules(
   daysDeducted: number | null,
   excludeBookingId?: string,
 ): Promise<{ error?: string }> {
-  // Notice period validation
-  const { data: noticePeriodRules } = await supabase
-    .from("notice_period_rules")
-    .select("min_booking_days, notice_days")
-    .eq("organisation_id", orgId)
-    .order("min_booking_days", { ascending: false });
+  // Notice period validation — only blocks the submission when the org has
+  // notice_rules_block_requests=true. When the flag is FALSE the rule is
+  // informational only; the client surfaces a soft warning in the booking
+  // sheet, the server lets the request through.
+  //
+  // CLE-179 — consecutive bookings are folded together for the rule check
+  // so an employee can't dodge a notice rule by splitting one large
+  // request into two adjacent small ones. We look for any pending/approved
+  // holiday booking whose end_date is the day before the new start, or
+  // whose start_date is the day after the new end. Their days_deducted are
+  // added in, and the earliest start_date is used for the notice
+  // calculation.
+  const { data: orgRow } = await supabase
+    .from("organisations")
+    .select("notice_rules_block_requests")
+    .eq("id", orgId)
+    .single();
+  const blockOnNotice = !!(orgRow as { notice_rules_block_requests?: boolean } | null)?.notice_rules_block_requests;
 
-  if (noticePeriodRules && noticePeriodRules.length > 0) {
-    const bookingDays = daysDeducted ?? 1;
-    const matchingRule = noticePeriodRules.find((r) => bookingDays >= r.min_booking_days);
-    if (matchingRule) {
-      const today = new Date();
-      today.setUTCHours(0, 0, 0, 0);
-      const start = new Date(startDate + "T00:00:00Z");
-      const diffMs = start.getTime() - today.getTime();
-      const diffDays = Math.floor(diffMs / 86_400_000);
-      if (diffDays < matchingRule.notice_days) {
-        return {
-          error: `This booking requires at least ${matchingRule.notice_days} days' notice (applies to bookings of ${matchingRule.min_booking_days}+ days).`,
+  if (blockOnNotice) {
+    const { data: noticePeriodRules } = await supabase
+      .from("notice_period_rules")
+      .select("min_booking_days, notice_days")
+      .eq("organisation_id", orgId)
+      .order("min_booking_days", { ascending: false });
+
+    if (noticePeriodRules && noticePeriodRules.length > 0) {
+      // Reasons that deduct from holiday entitlement — only those count
+      // for "consecutive holiday" stitching.
+      const { data: deductingReasons } = await supabase
+        .from("absence_reasons")
+        .select("id, absence_types!inner(deducts_from_entitlement)")
+        .eq("organisation_id", orgId)
+        .eq("absence_types.deducts_from_entitlement", true);
+      const deductingReasonIds = new Set<string>(
+        (deductingReasons ?? []).map((r) => r.id as string),
+      );
+
+      // Fetch all pending/approved bookings for the member that could
+      // plausibly stitch to the new request. Fetching everything is fine —
+      // a single user has at most a few dozen open holiday bookings.
+      const { data: rawBookings } = await supabase
+        .from("holiday_bookings")
+        .select("id, start_date, end_date, days_deducted, leave_reason_id")
+        .eq("member_id", memberId)
+        .in("status", ["pending", "approved"]);
+
+      const candidateBookings = (rawBookings ?? []).filter((b) =>
+        b.end_date !== null
+        && deductingReasonIds.has(b.leave_reason_id as string)
+        && (excludeBookingId ? (b.id as string) !== excludeBookingId : true),
+      );
+
+      // Stitching uses "no working days between" — Wed → Fri then Mon →
+      // Tue stitches into one block because the only days in the gap are
+      // a weekend. Working-day determination uses the per-date Work
+      // Profile and the org's bank-holiday handling for symmetry with the
+      // rest of the compute path (CLE-179).
+      let combinedDays = daysDeducted ?? 1;
+      let earliestStart = startDate;
+      let stitched = false;
+
+      if (candidateBookings.length > 0) {
+        const workPatternHistory = await getMemberWorkPatternHistory(supabase, memberId, orgId);
+        // Wide-enough bank-holiday window to cover any plausible gap.
+        const candidateMinStart = candidateBookings.reduce(
+          (acc, b) => ((b.start_date as string) < acc ? (b.start_date as string) : acc),
+          startDate,
+        );
+        const candidateMaxEnd = candidateBookings.reduce(
+          (acc, b) => ((b.end_date as string) > acc ? (b.end_date as string) : acc),
+          endDate,
+        );
+        const bankHolidays = await getBankHolidaysForOrg(
+          supabase,
+          orgId,
+          candidateMinStart,
+          candidateMaxEnd,
+        );
+        const bankHolidayHandling = await getBankHolidayHandling(supabase, orgId);
+
+        const PATTERN_KEYS: (keyof WorkPatternHours)[] = [
+          "hours_monday", "hours_tuesday", "hours_wednesday", "hours_thursday",
+          "hours_friday", "hours_saturday", "hours_sunday",
+        ];
+        const isWorkingDay = (iso: string): boolean => {
+          const jsDay = new Date(iso + "T00:00:00Z").getUTCDay();
+          if (jsDay === 0 || jsDay === 6) return false;
+          const pattern = patternForDate(workPatternHistory, iso);
+          if (!pattern) return false;
+          const hours = Number(pattern[PATTERN_KEYS[jsDay - 1]]) || 0;
+          if (hours === 0) return false;
+          if (bankHolidays.has(iso) && bankHolidayHandling === "additional") return false;
+          return true;
         };
+        const workingDaysBetween = (after: string, before: string): number => {
+          if (after >= before) return 0;
+          let count = 0;
+          const cursor = new Date(after + "T00:00:00Z");
+          cursor.setUTCDate(cursor.getUTCDate() + 1);
+          const stop = new Date(before + "T00:00:00Z");
+          while (cursor < stop) {
+            if (isWorkingDay(cursor.toISOString().slice(0, 10))) count++;
+            cursor.setUTCDate(cursor.getUTCDate() + 1);
+          }
+          return count;
+        };
+
+        for (const b of candidateBookings) {
+          const bs = b.start_date as string;
+          const be = b.end_date as string;
+          const isBefore = be < startDate && workingDaysBetween(be, startDate) === 0;
+          const isAfter = bs > endDate && workingDaysBetween(endDate, bs) === 0;
+          if (isBefore || isAfter) {
+            combinedDays += Number(b.days_deducted ?? 0);
+            if (bs < earliestStart) earliestStart = bs;
+            stitched = true;
+          }
+        }
+      }
+
+      const matchingRule = noticePeriodRules.find((r) => combinedDays >= r.min_booking_days);
+      if (matchingRule) {
+        const today = new Date();
+        today.setUTCHours(0, 0, 0, 0);
+        const earliest = new Date(earliestStart + "T00:00:00Z");
+        const diffMs = earliest.getTime() - today.getTime();
+        const diffDays = Math.floor(diffMs / 86_400_000);
+        if (diffDays < matchingRule.notice_days) {
+          const error = stitched
+            ? `This booking is consecutive with an existing booking, making ${combinedDays} days in total — that needs at least ${matchingRule.notice_days} days' notice (applies to bookings of ${matchingRule.min_booking_days}+ days).`
+            : `This booking requires at least ${matchingRule.notice_days} days' notice (applies to bookings of ${matchingRule.min_booking_days}+ days).`;
+          return { error };
+        }
       }
     }
   }
@@ -551,6 +670,14 @@ export async function submitHolidayBooking(
 ): Promise<{ success: boolean; error?: string; warning?: string; status?: string }> {
   try {
     const { supabase, member } = await getCallerMember();
+
+    // Block retroactive requests up-front so the user sees a clearer error
+    // than the generic overlap message (an open-ended sick booking can also
+    // make the overlap check fire on past dates).
+    const todayISO = new Date().toISOString().slice(0, 10);
+    if (input.startDate < todayISO) {
+      return { success: false, error: "You can't request a holiday retrospectively." };
+    }
 
     // Check for same-employee overlap (open-ended bookings extend indefinitely)
     const { count: selfOverlap } = await supabase

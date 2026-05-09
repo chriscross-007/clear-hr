@@ -25,8 +25,12 @@ export type ComputedPeriodValues = {
   worked: number;          // stubbed to 0; timesheet integration is a follow-up
   toil: number;            // stubbed to 0; timesheet integration is a follow-up
   allowance: number;       // for Earned: worked × earnedFactor; for Fixed: the stored value
+  /** Working days/hours of approved bookings that have already happened (end_date < today). */
   taken: number;
+  /** Working days/hours of approved bookings that haven't happened yet (end_date >= today). */
   booked: number;
+  /** Working days/hours of pending bookings — past, present, or future. */
+  pending: number;
   balance: number;
   carryForward: number;
 };
@@ -117,6 +121,8 @@ function periodForDate(
   return null;
 }
 
+type PeriodSplitSlot = { taken: number; booked: number; pending: number };
+
 /**
  * Walk one booking day-by-day, attributing each working day to whichever
  * Holiday Period covers it. Non-working days, weekends, and 'additional'
@@ -125,14 +131,19 @@ function periodForDate(
  * derived from the work pattern so straddling bookings deduct correctly
  * from each side in each side's units.
  *
- * Days on or before `todayISO` count as Taken; later days count as Booked.
+ * Bucketing rules (consistent across every surface that reads compute output):
+ *  - status='pending' → `pending`, regardless of date.
+ *  - status='approved' && date ≤ today → `taken`.
+ *  - status='approved' && date > today → `booked`.
+ *
+ * Bookings of any other status are ignored (cancelled / rejected etc.).
  */
 function attributeBookingToPeriods(
   booking: ComputeBookingInput,
   sortedPeriods: HolidayPeriod[],
   ctx: ComputeContext,
   todayISO: string,
-  out: Map<string, { taken: number; booked: number }>,
+  out: Map<string, PeriodSplitSlot>,
 ): void {
   if (!booking.endDate) return;
   if (booking.status !== "approved" && booking.status !== "pending") return;
@@ -174,8 +185,10 @@ function attributeBookingToPeriods(
         const contribution =
           period.units === "hours" ? hoursToday * fraction : 1 * fraction;
 
-        const slot = out.get(period.id) ?? { taken: 0, booked: 0 };
-        if (iso <= todayISO) {
+        const slot = out.get(period.id) ?? { taken: 0, booked: 0, pending: 0 };
+        if (booking.status === "pending") {
+          slot.pending += contribution;
+        } else if (iso <= todayISO) {
           slot.taken += contribution;
         } else {
           slot.booked += contribution;
@@ -277,8 +290,9 @@ export function computeAllHolidayPeriodValues(
 ): Map<string, ComputedPeriodValues> {
   const sorted = [...periods].sort((a, b) => a.startDate.localeCompare(b.startDate));
 
-  // Pre-compute Taken / Booked per period from the day-by-day attribution.
-  const splitByPeriod = new Map<string, { taken: number; booked: number }>();
+  // Pre-compute Taken / Booked / Pending per period from the day-by-day
+  // attribution.
+  const splitByPeriod = new Map<string, PeriodSplitSlot>();
   for (const b of bookings) {
     attributeBookingToPeriods(b, sorted, ctx, todayISO, splitByPeriod);
   }
@@ -297,6 +311,7 @@ export function computeAllHolidayPeriodValues(
         allowance: p.lockedSnapshot.allowance,
         taken: p.lockedSnapshot.taken,
         booked: p.lockedSnapshot.booked,
+        pending: p.lockedSnapshot.pending,
         balance: p.lockedSnapshot.balance,
         carryForward: p.lockedSnapshot.carryForward,
       });
@@ -327,11 +342,12 @@ export function computeAllHolidayPeriodValues(
       allowance = p.allowance ?? 0;
     }
 
-    const split = splitByPeriod.get(p.id) ?? { taken: 0, booked: 0 };
+    const split = splitByPeriod.get(p.id) ?? { taken: 0, booked: 0, pending: 0 };
     const taken = split.taken;
     const booked = split.booked;
+    const pending = split.pending;
 
-    const balance = runningBroughtForward + allowance + p.adjust + toil - taken - booked;
+    const balance = runningBroughtForward + allowance + p.adjust + toil - taken - booked - pending;
     const carryForward = balance >= 0
       ? Math.min(balance, p.maxCarryForward)
       : Math.max(balance, p.minCarryForward);
@@ -343,6 +359,7 @@ export function computeAllHolidayPeriodValues(
       allowance,
       taken,
       booked,
+      pending,
       balance,
       carryForward,
     });
