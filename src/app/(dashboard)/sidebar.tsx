@@ -24,6 +24,7 @@ interface SidebarProps {
   plan: string;
   requireMfa: boolean;
   canDefineCustomFields: boolean;
+  canEditOrganisation: boolean;
   currencySymbol: string;
   tsMaxShiftHours: number;
   tsMaxBreakMinutes: number;
@@ -64,6 +65,7 @@ export function Sidebar({
   plan,
   requireMfa,
   canDefineCustomFields,
+  canEditOrganisation,
   currencySymbol,
   tsMaxShiftHours,
   tsMaxBreakMinutes,
@@ -127,7 +129,7 @@ export function Sidebar({
 
   const showEmployees = role !== "admin" || accessMembers === "read" || accessMembers === "write";
   const showShifts = role === "owner" || role === "admin";
-  const showOrg = role === "owner" || canDefineCustomFields;
+  const showOrg = role === "owner" || canDefineCustomFields || canEditOrganisation;
   const showBilling = role === "owner";
   const showAudit = role === "owner" || role === "admin";
   const showReports = hasPlanFeature(plan, "reports");
@@ -417,6 +419,7 @@ export function Sidebar({
           requireMfa={requireMfa}
           role={role}
           canDefineCustomFields={canDefineCustomFields}
+          canEditOrganisation={canEditOrganisation}
           currencySymbol={currencySymbol}
           tsMaxShiftHours={tsMaxShiftHours}
           tsMaxBreakMinutes={tsMaxBreakMinutes}

@@ -65,26 +65,76 @@ async function getCallerAdmin() {
   return { supabase, member };
 }
 
+/** CLE-181 — verify the caller is allowed to decide a specific pending
+ *  booking. Returns the booking_approvals row id (when one exists) so the
+ *  approve/reject flow can update it. Legacy bookings (no
+ *  current_approval_level) are decidable by any admin/owner. */
+async function checkApprovalAccess(
+  bookingId: string,
+  orgId: string,
+  callerMemberId: string,
+): Promise<{ allowed: boolean; error?: string; activeApprovalRowId: string | null }> {
+  const admin = getAdminClient();
+  const { data: booking } = await admin
+    .from("holiday_bookings")
+    .select("id, organisation_id, status, current_approval_level")
+    .eq("id", bookingId)
+    .single();
+  if (!booking) return { allowed: false, error: "Booking not found", activeApprovalRowId: null };
+  if (booking.organisation_id !== orgId) return { allowed: false, error: "Booking not found", activeApprovalRowId: null };
+  if (booking.status !== "pending") return { allowed: false, error: "Booking is no longer pending", activeApprovalRowId: null };
+
+  // Legacy fallback — current_approval_level NULL = any admin/owner.
+  if (booking.current_approval_level === null) {
+    return { allowed: true, activeApprovalRowId: null };
+  }
+
+  const { data: rows } = await admin
+    .from("booking_approvals")
+    .select("id, level, routed_to, main_approver_ids, delegate_approver_ids, status")
+    .eq("booking_id", bookingId)
+    .eq("level", booking.current_approval_level);
+  const active = (rows ?? []).find((r) => r.status === "pending") as
+    | {
+        id: string;
+        routed_to: "main" | "delegate";
+        main_approver_ids: string[];
+        delegate_approver_ids: string[];
+      }
+    | undefined;
+  if (!active) {
+    return { allowed: false, error: "Active approval level row missing", activeApprovalRowId: null };
+  }
+  const list = active.routed_to === "main" ? active.main_approver_ids : active.delegate_approver_ids;
+  if (!Array.isArray(list) || !list.includes(callerMemberId)) {
+    return { allowed: false, error: "You are not an approver for this request", activeApprovalRowId: null };
+  }
+  return { allowed: true, activeApprovalRowId: active.id };
+}
+
 // ---------------------------------------------------------------------------
 // Get pending approvals
 // ---------------------------------------------------------------------------
+//
+// CLE-181 — Holiday Approvals Phase A. Returns the union of:
+//   1. Profile-routed bookings where the caller is in the active level's
+//      routed list (mains when routed_to='main', delegates when 'delegate').
+//   2. Legacy bookings with current_approval_level = NULL (submitted before
+//      Phase A rollout, or via an absence type with no profile assigned).
+//      These continue to surface for any admin/owner — current behaviour.
 
 export async function getPendingApprovals(): Promise<ApprovalRow[]> {
   const { supabase, member } = await getCallerAdmin();
-  return fetchAndMapBookings(supabase, member.organisation_id, "pending");
+  const ids = await getPendingApprovalBookingIds(member.organisation_id, member.id);
+  return fetchAndMapBookings(supabase, member.organisation_id, "pending", ids);
 }
 
-/** Count of pending holiday bookings — used by the Admin Dashboard card. */
+/** Count of pending holiday bookings the caller can decide. */
 export async function getPendingApprovalsCount(): Promise<{ success: boolean; error?: string; count: number }> {
   try {
-    const { supabase, member } = await getCallerAdmin();
-    const { count, error } = await supabase
-      .from("holiday_bookings")
-      .select("id", { count: "exact", head: true })
-      .eq("organisation_id", member.organisation_id)
-      .eq("status", "pending");
-    if (error) return { success: false, error: error.message, count: 0 };
-    return { success: true, count: count ?? 0 };
+    const { member } = await getCallerAdmin();
+    const ids = await getPendingApprovalBookingIds(member.organisation_id, member.id);
+    return { success: true, count: ids.length };
   } catch (e) {
     return {
       success: false,
@@ -92,6 +142,52 @@ export async function getPendingApprovalsCount(): Promise<{ success: boolean; er
       count: 0,
     };
   }
+}
+
+/** Resolve the set of pending holiday_bookings IDs visible to the given
+ *  caller-member as an approver. */
+async function getPendingApprovalBookingIds(
+  orgId: string,
+  callerMemberId: string,
+): Promise<string[]> {
+  const admin = getAdminClient();
+
+  // Fetch all pending bookings in the org along with the active level's
+  // booking_approvals row (when one exists).
+  const { data: rows } = await admin
+    .from("holiday_bookings")
+    .select("id, current_approval_level, booking_approvals(level, routed_to, main_approver_ids, delegate_approver_ids, status)")
+    .eq("organisation_id", orgId)
+    .eq("status", "pending");
+
+  const visible: string[] = [];
+  for (const r of (rows ?? []) as Array<{
+    id: string;
+    current_approval_level: number | null;
+    booking_approvals: Array<{
+      level: number;
+      routed_to: "main" | "delegate";
+      main_approver_ids: string[];
+      delegate_approver_ids: string[];
+      status: string;
+    }> | null;
+  }>) {
+    // Legacy: any admin/owner can decide.
+    if (r.current_approval_level === null) {
+      visible.push(r.id);
+      continue;
+    }
+    const activeRow = (r.booking_approvals ?? []).find(
+      (ba) => ba.level === r.current_approval_level && ba.status === "pending",
+    );
+    if (!activeRow) continue;
+    const list =
+      activeRow.routed_to === "main" ? activeRow.main_approver_ids : activeRow.delegate_approver_ids;
+    if (Array.isArray(list) && list.includes(callerMemberId)) {
+      visible.push(r.id);
+    }
+  }
+  return visible;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,8 +204,13 @@ export async function getAllRequests(
 async function fetchAndMapBookings(
   supabase: Awaited<ReturnType<typeof createClient>>,
   orgId: string,
-  statusFilter?: string
+  statusFilter?: string,
+  /** When provided, restricts the result to these IDs. Used by
+   *  getPendingApprovals to show only bookings the caller can decide. */
+  restrictToBookingIds?: string[],
 ): Promise<ApprovalRow[]> {
+  if (restrictToBookingIds && restrictToBookingIds.length === 0) return [];
+
   // Fetch members separately to avoid FK ambiguity issues
   const { data: members } = await supabase
     .from("members")
@@ -129,6 +230,10 @@ async function fetchAndMapBookings(
 
   if (statusFilter && statusFilter !== "all") {
     query = query.eq("status", statusFilter);
+  }
+
+  if (restrictToBookingIds) {
+    query = query.in("id", restrictToBookingIds);
   }
 
   const { data } = await query;
@@ -172,18 +277,41 @@ export async function approveBooking(
   try {
     const { supabase, member } = await getCallerAdmin();
 
+    // CLE-181 — verify caller is allowed to decide this booking. Legacy
+    // bookings (current_approval_level NULL) fall through to "any admin can
+    // approve" behaviour. Profile-routed bookings require the caller to be
+    // in the active level's routed list.
+    const access = await checkApprovalAccess(bookingId, member.organisation_id, member.id);
+    if (!access.allowed) return { success: false, error: access.error ?? "Insufficient permissions" };
+
     const { error } = await supabase
       .from("holiday_bookings")
       .update({
         status: "approved",
         approver1_id: member.id,
         approver_note: note?.trim() || null,
+        current_approval_level: null,
       })
       .eq("id", bookingId)
       .eq("organisation_id", member.organisation_id)
       .eq("status", "pending");
 
     if (error) return { success: false, error: error.message };
+
+    // Mark the active booking_approvals row approved (Phase A: terminal — no
+    // L2 cascade. Phase B will add the next-level activation here.)
+    if (access.activeApprovalRowId) {
+      const adm = getAdminClient();
+      await adm
+        .from("booking_approvals")
+        .update({
+          status: "approved",
+          decided_by_member_id: member.id,
+          decided_at: new Date().toISOString(),
+          comment: note?.trim() || null,
+        })
+        .eq("id", access.activeApprovalRowId);
+    }
 
     // Fire-and-forget email to employee + audit log
     const admin = getAdminClient();
@@ -249,18 +377,37 @@ export async function rejectBooking(
   try {
     const { supabase, member } = await getCallerAdmin();
 
+    // CLE-181 — verify caller is allowed to decide this booking.
+    const access = await checkApprovalAccess(bookingId, member.organisation_id, member.id);
+    if (!access.allowed) return { success: false, error: access.error ?? "Insufficient permissions" };
+
     const { error } = await supabase
       .from("holiday_bookings")
       .update({
         status: "rejected",
         approver1_id: member.id,
         approver_note: note?.trim() || null,
+        current_approval_level: null,
       })
       .eq("id", bookingId)
       .eq("organisation_id", member.organisation_id)
       .eq("status", "pending");
 
     if (error) return { success: false, error: error.message };
+
+    // Reject is terminal at any level — mark the active row rejected.
+    if (access.activeApprovalRowId) {
+      const adm = getAdminClient();
+      await adm
+        .from("booking_approvals")
+        .update({
+          status: "rejected",
+          decided_by_member_id: member.id,
+          decided_at: new Date().toISOString(),
+          comment: note?.trim() || null,
+        })
+        .eq("id", access.activeApprovalRowId);
+    }
 
     // Fire-and-forget email to employee + audit log
     const admin = getAdminClient();
@@ -329,25 +476,57 @@ async function bulkDecision(
 
     const trimmedNote = note?.trim() || null;
 
+    // CLE-181 — restrict the bulk operation to bookings the caller is
+    // authorised to decide. Skip silently rather than failing the batch.
+    const accessChecks = await Promise.all(
+      bookingIds.map((id) => checkApprovalAccess(id, member.organisation_id, member.id)),
+    );
+    const allowedIds: string[] = [];
+    const allowedRowIds: string[] = [];
+    bookingIds.forEach((id, i) => {
+      if (accessChecks[i].allowed) {
+        allowedIds.push(id);
+        if (accessChecks[i].activeApprovalRowId) {
+          allowedRowIds.push(accessChecks[i].activeApprovalRowId as string);
+        }
+      }
+    });
+    if (allowedIds.length === 0) return { success: true, processed: 0 };
+
     const { error } = await supabase
       .from("holiday_bookings")
       .update({
         status,
         approver1_id: member.id,
         approver_note: trimmedNote,
+        current_approval_level: null,
       })
-      .in("id", bookingIds)
+      .in("id", allowedIds)
       .eq("organisation_id", member.organisation_id)
       .eq("status", "pending");
 
     if (error) return { success: false, error: error.message };
+
+    // Update active booking_approvals rows in the same batch.
+    if (allowedRowIds.length > 0) {
+      const adm = getAdminClient();
+      await adm
+        .from("booking_approvals")
+        .update({
+          status,
+          decided_by_member_id: member.id,
+          decided_at: new Date().toISOString(),
+          comment: trimmedNote,
+        })
+        .in("id", allowedRowIds);
+    }
 
     // Fetch booking details for emails (after update; note the status column now reflects new status)
     const admin = getAdminClient();
     const { data: bookings } = await admin
       .from("holiday_bookings")
       .select("id, member_id, start_date, end_date, days_deducted, employee_note, absence_reasons(name)")
-      .in("id", bookingIds)
+      .in("id", allowedIds)
       .eq("organisation_id", member.organisation_id);
 
     if (bookings && bookings.length > 0) {

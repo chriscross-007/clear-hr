@@ -600,6 +600,41 @@ export async function deleteEmployee(
       return { success: false, error: "Cannot delete the organisation owner" };
     }
 
+    // CLE-181 — block deletion if this member is referenced as a main or
+    // delegate approver in any active approval profile. Admin must reassign
+    // them out of those profiles first.
+    const { data: levels } = await admin
+      .from("approval_profile_levels")
+      .select("id, profile_id, main_approver_ids, delegate_approver_ids, approval_profiles!inner(organisation_id, name)");
+    const referencingProfileNames = new Set<string>();
+    // Cast through unknown: Supabase types the !inner join target as an
+    // array even when the FK guarantees a single row.
+    for (const lvl of (levels ?? []) as unknown as Array<{
+      profile_id: string;
+      main_approver_ids: string[];
+      delegate_approver_ids: string[];
+      approval_profiles: { organisation_id: string; name: string } | { organisation_id: string; name: string }[];
+    }>) {
+      const profile = Array.isArray(lvl.approval_profiles) ? lvl.approval_profiles[0] : lvl.approval_profiles;
+      if (profile?.organisation_id !== membership.organisation_id) continue;
+      const inMain = (lvl.main_approver_ids ?? []).includes(memberId);
+      const inDelegate = (lvl.delegate_approver_ids ?? []).includes(memberId);
+      if (inMain || inDelegate) {
+        referencingProfileNames.add(profile.name);
+      }
+    }
+    if (referencingProfileNames.size > 0) {
+      const names = [...referencingProfileNames].slice(0, 3).join(", ");
+      const more =
+        referencingProfileNames.size > 3
+          ? ` and ${referencingProfileNames.size - 3} other${referencingProfileNames.size - 3 === 1 ? "" : "s"}`
+          : "";
+      return {
+        success: false,
+        error: `${member.first_name} ${member.last_name} is an approver in ${referencingProfileNames.size} approval profile${referencingProfileNames.size === 1 ? "" : "s"} (${names}${more}). Reassign them first.`,
+      };
+    }
+
     // Delete the members record
     const { error: deleteError } = await admin
       .from("members")

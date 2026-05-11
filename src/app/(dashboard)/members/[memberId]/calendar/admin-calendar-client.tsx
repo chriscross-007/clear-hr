@@ -17,7 +17,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Trash2, ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
+import { Trash2, ChevronLeft, ChevronRight, CalendarDays, Check, X } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -54,11 +54,16 @@ import {
   getBookingDetails,
 } from "../../../holiday-booking-actions";
 import {
+  approveBooking,
+  rejectBooking,
+} from "../../../approvals-actions";
+import {
   countWorkingDaysSimple,
   patternForDate,
   type WorkPatternHours,
   type WorkPatternAssignment,
 } from "@/lib/day-counting";
+import { cn } from "@/lib/utils";
 
 /** A Holiday Period option exposed to the prev/next nav above the calendar. */
 export type PeriodNavOption = {
@@ -279,8 +284,15 @@ export function AdminCalendarClient({
 
   // Edit/delete state for existing bookings on the calendar
   const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
+  const [editingBookingStatus, setEditingBookingStatus] = useState<string | null>(null);
+  // CLE-181 — non-routed admins viewing a pending booking get a read-only
+  // form (no edit, no delete, no approve, no reject). Defaults to true on
+  // open and is set from getBookingDetails.caller_can_decide.
+  const [callerCanDecide, setCallerCanDecide] = useState(true);
   const [deletingBooking, setDeletingBooking] = useState<CalendarBooking | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // Approve/Reject state for pending bookings (CLE-181)
+  const [decisionLoading, setDecisionLoading] = useState<"approve" | "reject" | null>(null);
   // Snapshot of the booking as it was when the edit sheet opened — used to
   // drive the "is the form dirty?" check that gates Save Changes.
   const [originalEdit, setOriginalEdit] = useState<{
@@ -337,6 +349,8 @@ export function AdminCalendarClient({
 
   function openForRange(start: string, end: string) {
     setEditingBookingId(null);
+    setEditingBookingStatus(null);
+    setCallerCanDecide(true);
     setOriginalEdit(null);
     setRange({ start, end });
     setReasonId(defaultReasonId);
@@ -355,6 +369,8 @@ export function AdminCalendarClient({
     const wasDeepLinked = initialBookingId && editingBookingId === initialBookingId;
     setRange(null);
     setEditingBookingId(null);
+    setEditingBookingStatus(null);
+    setCallerCanDecide(true);
     setOriginalEdit(null);
     setFirstMessage("");
     setFirstMessageFiles([]);
@@ -416,6 +432,8 @@ export function AdminCalendarClient({
     const sh = half(b.start_half);
     const eh = half(b.end_half);
     setEditingBookingId(b.id);
+    setEditingBookingStatus(b.status);
+    setCallerCanDecide(b.caller_can_decide !== false);
     setRange({ start: b.start_date, end: b.end_date });
     setReasonId(b.leave_reason_id);
     setStartHalf(sh);
@@ -453,8 +471,47 @@ export function AdminCalendarClient({
     }
   }
 
+  // CLE-181 — admin can approve / reject a pending booking from the planner
+  // sheet without bouncing to the Approvals page.
+  async function handleApprove() {
+    if (!editingBookingId) return;
+    setDecisionLoading("approve");
+    setError(null);
+    const result = await approveBooking(editingBookingId);
+    setDecisionLoading(null);
+    if (!result.success) {
+      setError(result.error ?? "Failed to approve booking");
+      return;
+    }
+    setToast("Booking approved");
+    setTimeout(() => setToast(null), 3000);
+    closeSheet(false);
+    router.refresh();
+  }
+
+  async function handleReject() {
+    if (!editingBookingId) return;
+    setDecisionLoading("reject");
+    setError(null);
+    const result = await rejectBooking(editingBookingId);
+    setDecisionLoading(null);
+    if (!result.success) {
+      setError(result.error ?? "Failed to reject booking");
+      return;
+    }
+    setToast("Booking rejected");
+    setTimeout(() => setToast(null), 3000);
+    closeSheet(false);
+    router.refresh();
+  }
+
   const isOpenEnded = range !== null && range.end === null;
   const sameDay = range ? range.start === range.end : false;
+
+  // CLE-181 — when an admin who is not the routed approver opens a pending
+  // booking, the form fields and action buttons are read-only. They can
+  // still view the request and its history popover.
+  const formReadOnly = editingBookingId !== null && !callerCanDecide;
 
   // Edit-only: has the admin actually changed anything vs what they opened?
   const bookingFieldsDirty =
@@ -738,6 +795,20 @@ export function AdminCalendarClient({
           )}
 
           <div className="flex-1 space-y-4 overflow-y-auto px-1">
+            {formReadOnly && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
+                You aren&apos;t the routed approver for this request — viewing only.
+              </div>
+            )}
+            <fieldset
+              disabled={formReadOnly}
+              className={cn(
+                "space-y-4 border-0 p-0",
+                // CLE-181 — fieldset disables form controls; the opacity
+                // gives a visual cue that the inputs aren't interactive.
+                formReadOnly && "opacity-60",
+              )}
+            >
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label htmlFor="booking-start-date">Start Date</Label>
@@ -900,21 +971,22 @@ export function AdminCalendarClient({
                 onFirstMessageReady={handleFirstMessageReady}
               />
             </div>
+            </fieldset>
           </div>
 
           <SheetFooter className="flex-row justify-between gap-2">
-            <div>
+            <div className="flex gap-2">
               {editingBookingId && (
                 <Button
                   variant="destructive"
-                  disabled={saving}
+                  disabled={saving || decisionLoading !== null || formReadOnly}
                   onClick={() => {
                     const matched = absenceReasons.find((r) => r.id === reasonId);
                     const bk: CalendarBooking = {
                       id: editingBookingId,
                       start_date: range?.start ?? "",
                       end_date: range?.end ?? null,
-                      status: "approved",
+                      status: editingBookingStatus ?? "approved",
                       reason_name: matched?.name ?? "this",
                       reason_colour: matched?.colour ?? "#888",
                       days_deducted: null,
@@ -928,17 +1000,45 @@ export function AdminCalendarClient({
                   Delete
                 </Button>
               )}
+              {/* CLE-181 — admin can approve/reject pending bookings inline.
+                  Non-routed admins see the buttons but they're disabled. */}
+              {editingBookingId && editingBookingStatus === "pending" && (
+                <>
+                  <Button
+                    variant="outline"
+                    className="border-red-500 text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950"
+                    disabled={saving || decisionLoading !== null || formReadOnly}
+                    onClick={handleReject}
+                  >
+                    <X className="mr-2 h-4 w-4" />
+                    {decisionLoading === "reject" ? "Rejecting…" : "Reject"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="border-green-500 text-green-600 hover:bg-green-50 hover:text-green-700 dark:hover:bg-green-950"
+                    disabled={saving || decisionLoading !== null || formReadOnly}
+                    onClick={handleApprove}
+                  >
+                    <Check className="mr-2 h-4 w-4" />
+                    {decisionLoading === "approve" ? "Approving…" : "Approve"}
+                  </Button>
+                </>
+              )}
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => closeSheet()} disabled={saving}>Cancel</Button>
-              <Button
-                onClick={handleBook}
-                disabled={saving || !reasonId || (editingBookingId !== null && !isDirty)}
-              >
-                {saving
-                  ? (editingBookingId ? "Saving..." : "Booking...")
-                  : (editingBookingId ? "Save Changes" : "Book")}
+              <Button variant="outline" onClick={() => closeSheet()} disabled={saving || decisionLoading !== null}>
+                {formReadOnly ? "Close" : "Cancel"}
               </Button>
+              {!formReadOnly && (
+                <Button
+                  onClick={handleBook}
+                  disabled={saving || decisionLoading !== null || !reasonId || (editingBookingId !== null && !isDirty)}
+                >
+                  {saving
+                    ? (editingBookingId ? "Saving..." : "Booking...")
+                    : (editingBookingId ? "Save Changes" : "Book")}
+                </Button>
+              )}
             </div>
           </SheetFooter>
         </SheetContent>

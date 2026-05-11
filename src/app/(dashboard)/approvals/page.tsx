@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ApprovalsClient } from "./approvals-client";
-import type { ApprovalRow } from "../approvals-actions";
+import { getPendingApprovals, getAllRequests } from "../approvals-actions";
 import type { TeamMember, TeamBooking, TeamBankHoliday } from "@/components/team-calendar";
 
 export default async function ApprovalsPage() {
@@ -32,34 +32,18 @@ export default async function ApprovalsPage() {
   const orgCountryCode = (orgRow as { country_code?: string; bank_holiday_colour?: string } | null)?.country_code ?? "england-and-wales";
   const bankHolidayColour = (orgRow as { country_code?: string; bank_holiday_colour?: string } | null)?.bank_holiday_colour ?? "#EF4444";
 
-  // Fetch org members for name lookup and calendar
+  // Fetch org members for the calendar widget (calendarMembers below).
   const { data: orgMembers } = await supabase
     .from("members")
     .select("id, first_name, last_name, team_id")
     .eq("organisation_id", member.organisation_id)
     .order("first_name");
 
-  const memberMap = new Map<string, { name: string }>();
-  for (const m of orgMembers ?? []) {
-    memberMap.set(m.id, {
-      name: `${m.first_name} ${m.last_name}`,
-    });
-  }
-
-  // Fetch pending bookings
-  const { data: pendingData } = await supabase
-    .from("holiday_bookings")
-    .select("id, member_id, start_date, end_date, start_half, end_half, days_deducted, hours_deducted, status, approver1_id, approver_note, employee_note, created_at, absence_reasons(name, colour), sick_booking_details(completion_status)")
-    .eq("organisation_id", member.organisation_id)
-    .eq("status", "pending")
-    .order("created_at", { ascending: true });
-
-  // Fetch all bookings
-  const { data: allData } = await supabase
-    .from("holiday_bookings")
-    .select("id, member_id, start_date, end_date, start_half, end_half, days_deducted, hours_deducted, status, approver1_id, approver_note, employee_note, created_at, absence_reasons(name, colour), sick_booking_details(completion_status)")
-    .eq("organisation_id", member.organisation_id)
-    .order("start_date", { ascending: true });
+  // CLE-181 — fetch via actions so the pending list reflects only bookings
+  // the caller can decide (profile-routed approvers + legacy "any admin"
+  // bookings). The "All requests" tab still shows org-wide history.
+  const pendingRows = await getPendingApprovals();
+  const allRows = await getAllRequests();
 
   // --- Calendar data for inline TeamCalendar ---
 
@@ -134,41 +118,11 @@ export default async function ApprovalsPage() {
     else if (!excluded.has(bh.date)) calendarBankHolidays.push({ date: bh.date, name: bh.name });
   }
 
-  function mapRows(data: Record<string, unknown>[]): ApprovalRow[] {
-    return data.map((b) => {
-      const reason = b.absence_reasons as { name: string; colour: string } | null;
-      const sickDetails = b.sick_booking_details as { completion_status: string } | null;
-      const memberId = b.member_id as string;
-      const mem = memberMap.get(memberId);
-      const mode = "days"; // Simplified — measurement mode derived from booking context
-      return {
-        id: b.id as string,
-        member_id: memberId,
-        member_name: mem?.name ?? "—",
-        start_date: b.start_date as string,
-        end_date: b.end_date as string | null,
-        start_half: b.start_half as string | null,
-        end_half: b.end_half as string | null,
-        days_deducted: b.days_deducted as number | null,
-        hours_deducted: b.hours_deducted as number | null,
-        status: b.status as string,
-        approver_note: b.approver_note as string | null,
-        approver_name: (b.approver1_id as string | null) ? memberMap.get(b.approver1_id as string)?.name ?? null : null,
-        employee_note: b.employee_note as string | null,
-        created_at: b.created_at as string,
-        reason_name: reason?.name ?? "—",
-        reason_colour: reason?.colour ?? "#6366f1",
-        measurement_mode: mode,
-        completion_status: sickDetails?.completion_status ?? null,
-      };
-    });
-  }
-
   return (
     <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
       <ApprovalsClient
-        pendingRows={mapRows(pendingData ?? [])}
-        allRows={mapRows(allData ?? [])}
+        pendingRows={pendingRows}
+        allRows={allRows}
         calendarMembers={calendarMembers}
         calendarBookings={calendarBookings}
         calendarBankHolidays={calendarBankHolidays}

@@ -52,17 +52,22 @@ export async function updateOrganisation(data: {
 
   if (!user) return { success: false, error: "Not authenticated" };
 
-  // Verify caller is owner
+  // Verify caller is owner OR an admin with can_edit_organisation permission.
   const { data: membership } = await supabase
     .from("members")
-    .select("id, organisation_id, role, first_name, last_name")
+    .select("id, organisation_id, role, permissions, first_name, last_name")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!membership) return { success: false, error: "No organisation" };
-  if (membership.role !== "owner")
-    return { success: false, error: "Only the owner can edit organisation settings" };
+  const callerPerms = (membership.permissions as Record<string, unknown> | null) ?? {};
+  const isOwner = membership.role === "owner";
+  const isPermittedAdmin =
+    membership.role === "admin" && callerPerms.can_edit_organisation === true;
+  if (!isOwner && !isPermittedAdmin) {
+    return { success: false, error: "You do not have permission to edit organisation settings" };
+  }
 
   // Fetch before-state for audit diff
   const { data: beforeOrg } = await supabase

@@ -79,6 +79,9 @@ export default async function DashboardLayout({
   const canDefineCustomFields = membership.role === "admin"
     ? (memberPermissions.can_define_custom_fields as boolean) === true
     : false;
+  const canEditOrganisation = membership.role === "admin"
+    ? (memberPermissions.can_edit_organisation as boolean) === true
+    : false;
 
   // Member count for header display (bypasses RLS visibility so all users see the true total)
   const { data: countResult } = await supabase
@@ -191,6 +194,7 @@ export default async function DashboardLayout({
             plan={org?.plan}
             requireMfa={org?.require_mfa ?? false}
             canDefineCustomFields={canDefineCustomFields}
+            canEditOrganisation={canEditOrganisation}
             currencySymbol={org?.currency_symbol ?? "£"}
             tsMaxShiftHours={org?.ts_max_shift_hours ?? 14}
             tsMaxBreakMinutes={org?.ts_max_break_minutes ?? 60}

@@ -12,6 +12,11 @@ import {
 import { calculateEntitlement } from "@/lib/entitlement";
 import { sendRequestPendingEmail, sendBookingConfirmedEmail } from "@/lib/email";
 import { logAudit, diffChanges } from "@/lib/audit";
+import {
+  resolveProfileForBooking,
+  getUnavailableMemberIds,
+  type ApprovalProfileLevel,
+} from "@/app/(dashboard)/approval-profile-actions";
 
 function getAdminClient() {
   return createSupabaseClient(
@@ -19,6 +24,26 @@ function getAdminClient() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }
   );
+}
+
+/** Filter approval profile levels to those whose length threshold matches the
+ *  booking, using the booking's unit (days vs hours). NULL thresholds mean
+ *  "always required". Used by submitHolidayBooking for routing. */
+function pickApplicableLevels(
+  levels: ApprovalProfileLevel[],
+  daysDeducted: number | null,
+  hoursDeducted: number | null,
+): ApprovalProfileLevel[] {
+  const useDays = daysDeducted !== null;
+  const value = useDays ? (daysDeducted ?? 0) : (hoursDeducted ?? 0);
+  return levels
+    .filter((l) => {
+      if (useDays) {
+        return l.lengthThresholdDays === null || value >= l.lengthThresholdDays;
+      }
+      return l.lengthThresholdHours === null || value >= l.lengthThresholdHours;
+    })
+    .sort((a, b) => a.level - b.level);
 }
 
 // ---------------------------------------------------------------------------
@@ -732,7 +757,7 @@ export async function submitHolidayBooking(
     }
 
     // Create the booking
-    const { error: insertError } = await supabase
+    const { data: insertedBooking, error: insertError } = await supabase
       .from("holiday_bookings")
       .insert({
         organisation_id: member.organisation_id,
@@ -747,9 +772,74 @@ export async function submitHolidayBooking(
         status,
         employee_note: input.note || null,
         approver1_id: teamApproverId,
-      });
+      })
+      .select("id")
+      .single();
 
     if (insertError) return { success: false, error: insertError.message };
+    const bookingId = insertedBooking?.id as string | undefined;
+
+    // CLE-181 — Holiday Approvals Phase A. When the new booking requires
+    // approval, resolve the employee's Approval Profile for this absence
+    // type, write a booking_approvals row at level 1, and set
+    // current_approval_level on the booking. If no profile is assigned for
+    // this absence type the booking falls back to the legacy "any admin can
+    // approve" feed (current_approval_level stays NULL).
+    //
+    // The notifyApproverIds list captures who should receive the "request
+    // pending" email — every member in the routed list (mains-or-delegates,
+    // per spec "notify all, first-to-decide wins"). Falls back to the
+    // legacy team approver when no profile is assigned.
+    let notifyApproverIds: string[] = teamApproverId ? [teamApproverId] : [];
+    if (status === "pending" && bookingId && reason?.absence_type_id) {
+      const resolved = await resolveProfileForBooking(
+        member.id,
+        reason.absence_type_id as string,
+      );
+      if (resolved) {
+        const applicable = pickApplicableLevels(
+          resolved.levels,
+          daysDeducted,
+          input.hoursDeducted,
+        );
+        // Phase A only writes Level 1; L2/L3 are wired in Phase B.
+        const firstLevel = applicable.find((l) => l.level === 1) ?? null;
+        if (firstLevel && firstLevel.mainApproverIds.length > 0) {
+          const unavailable = await getUnavailableMemberIds(
+            firstLevel.mainApproverIds,
+            todayISO,
+          );
+          const allMainsOut =
+            firstLevel.mainApproverIds.every((id) => unavailable.has(id));
+          const routedTo: "main" | "delegate" =
+            allMainsOut && firstLevel.delegateApproverIds.length > 0
+              ? "delegate"
+              : "main";
+
+          const admin = getAdminClient();
+          const { error: baErr } = await admin.from("booking_approvals").insert({
+            booking_id: bookingId,
+            level: 1,
+            main_approver_ids: firstLevel.mainApproverIds,
+            delegate_approver_ids: firstLevel.delegateApproverIds,
+            routed_to: routedTo,
+            status: "pending",
+          });
+          if (!baErr) {
+            await admin
+              .from("holiday_bookings")
+              .update({ current_approval_level: 1 })
+              .eq("id", bookingId);
+            // Profile-routed: notify the routed approver list, not the
+            // legacy team approver.
+            notifyApproverIds =
+              routedTo === "main"
+                ? firstLevel.mainApproverIds
+                : firstLevel.delegateApproverIds;
+          }
+        }
+      }
+    }
 
     // Audit log — employee submitted a booking
     const memberName = `${member.first_name ?? ""} ${member.last_name ?? ""}`.trim();
@@ -759,6 +849,7 @@ export async function submitHolidayBooking(
       actorName: memberName,
       action: "booking.submitted",
       targetType: "booking",
+      targetId: bookingId ?? undefined,
       targetLabel: `${memberName} — ${leaveTypeName}`,
       changes: {
         start_date: { old: null, new: input.startDate },
@@ -777,21 +868,27 @@ export async function submitHolidayBooking(
     const headersList = await headers();
     const host = headersList.get("host") ?? "localhost:3000";
     const baseUrl = `${host.includes("localhost") ? "http" : "https"}://${host}`;
-    const emailData = {
-      bookingId: "",
+    const baseEmailData = {
+      bookingId: bookingId ?? "",
       memberId: member.id,
       startDate: input.startDate,
       endDate: input.endDate,
       days: daysDeducted,
       leaveType: leaveTypeName,
-      approverId: teamApproverId,
       employeeNote: input.note || null,
       baseUrl,
     };
     if (status === "pending") {
-      await sendRequestPendingEmail(emailData);
+      // CLE-181 — notify every routed approver. Phase A: mains OR delegates
+      // (not both) per the spec; the routedTo decision was already made.
+      // Legacy fallback: the team approver (preserved in notifyApproverIds
+      // when no profile was matched).
+      const uniqueApproverIds = [...new Set(notifyApproverIds)];
+      for (const approverId of uniqueApproverIds) {
+        await sendRequestPendingEmail({ ...baseEmailData, approverId });
+      }
     } else {
-      await sendBookingConfirmedEmail(emailData);
+      await sendBookingConfirmedEmail({ ...baseEmailData, approverId: teamApproverId });
     }
 
     // Check team overlap (warning only)
@@ -1100,6 +1197,15 @@ export type AdminBookingDetails = {
   end_half: string | null;
   employee_note: string | null;
   status: string;
+  /** CLE-181 — true when the calling admin/owner is authorised to edit,
+   *  approve, reject, or delete this booking. For pending bookings this
+   *  means the caller is in the active level's routed approver list (or
+   *  the booking is a legacy "any admin" booking). For non-pending
+   *  bookings any admin/owner retains edit/delete access (current
+   *  behaviour). The Edit Booking sheet on the planner uses this flag to
+   *  disable the form + action buttons for non-routed admins so they can
+   *  still see the request + history but not act on it. */
+  caller_can_decide: boolean;
 };
 
 export async function getBookingDetails(
@@ -1113,12 +1219,56 @@ export async function getBookingDetails(
     const admin = getAdminClient();
     const { data } = await admin
       .from("holiday_bookings")
-      .select("id, member_id, leave_reason_id, start_date, end_date, start_half, end_half, employee_note, status")
+      .select("id, member_id, leave_reason_id, start_date, end_date, start_half, end_half, employee_note, status, current_approval_level")
       .eq("id", bookingId)
       .eq("organisation_id", caller.organisation_id)
       .single();
     if (!data) return { success: false, error: "Booking not found" };
-    return { success: true, booking: data as AdminBookingDetails };
+
+    // CLE-181 — derive caller_can_decide. Non-pending bookings: any admin
+    // retains edit/delete (legacy behaviour). Pending bookings: must be in
+    // the active level's routed approver list, OR the booking is legacy
+    // (current_approval_level NULL).
+    let callerCanDecide = true;
+    if (data.status === "pending" && data.current_approval_level !== null) {
+      const { data: levelRows } = await admin
+        .from("booking_approvals")
+        .select("level, routed_to, main_approver_ids, delegate_approver_ids, status")
+        .eq("booking_id", bookingId)
+        .eq("level", data.current_approval_level);
+      const active = (levelRows ?? []).find((r) => r.status === "pending") as
+        | {
+            routed_to: "main" | "delegate";
+            main_approver_ids: string[];
+            delegate_approver_ids: string[];
+          }
+        | undefined;
+      if (!active) {
+        callerCanDecide = false;
+      } else {
+        const list =
+          active.routed_to === "main"
+            ? active.main_approver_ids
+            : active.delegate_approver_ids;
+        callerCanDecide = Array.isArray(list) && list.includes(caller.id);
+      }
+    }
+
+    return {
+      success: true,
+      booking: {
+        id: data.id as string,
+        member_id: data.member_id as string,
+        leave_reason_id: data.leave_reason_id as string,
+        start_date: data.start_date as string,
+        end_date: data.end_date as string | null,
+        start_half: data.start_half as string | null,
+        end_half: data.end_half as string | null,
+        employee_note: data.employee_note as string | null,
+        status: data.status as string,
+        caller_can_decide: callerCanDecide,
+      },
+    };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }

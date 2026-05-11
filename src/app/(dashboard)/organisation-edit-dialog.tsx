@@ -13,6 +13,7 @@ import { ProfileManager } from "./organisation-edit-dialog-profiles";
 import { CustomFieldsManager } from "./organisation-edit-dialog-custom-fields";
 import { BackupsManager } from "./organisation-edit-dialog-backups";
 import { RatesManager } from "./organisation-edit-dialog-rates";
+import { ApprovalsManager } from "./organisation-edit-dialog-approvals";
 import { getCustomFieldDefs } from "./employees/custom-field-actions";
 import type { FieldDef } from "./employees/custom-field-actions";
 import { getRates } from "./rates-actions";
@@ -56,6 +57,9 @@ interface OrganisationEditDialogProps {
   requireMfa: boolean;
   role: string;
   canDefineCustomFields: boolean;
+  /** True when an admin has the can_edit_organisation permission. Owners
+   *  always see all tabs regardless. */
+  canEditOrganisation: boolean;
   currencySymbol: string;
   tsMaxShiftHours: number;
   tsMaxBreakMinutes: number;
@@ -93,6 +97,7 @@ export function OrganisationEditDialog({
   requireMfa,
   role,
   canDefineCustomFields,
+  canEditOrganisation,
   currencySymbol: initialCurrencySymbol,
   tsMaxShiftHours: initialTsMaxShiftHours,
   tsMaxBreakMinutes: initialTsMaxBreakMinutes,
@@ -179,7 +184,12 @@ export function OrganisationEditDialog({
   const [seedingBankHolidays, setSeedingBankHolidays] = useState(false);
   const router = useRouter();
   const isOwner = role === "owner";
-  const showCustomFields = isOwner || canDefineCustomFields;
+  // Admins with can_edit_organisation see the same tabs as the owner. The
+  // server actions still verify the permission so lacking it on the client
+  // doesn't grant any real privilege. Owner remains the only role for
+  // role-altering operations (e.g. promoting members).
+  const canManageOrg = isOwner || canEditOrganisation;
+  const showCustomFields = canManageOrg || canDefineCustomFields;
 
   const hasChanges =
     name !== orgName ||
@@ -280,24 +290,24 @@ export function OrganisationEditDialog({
         getCustomFieldDefs().then(setFieldDefs);
       }
       // Load rates
-      if (isOwner) {
+      if (canManageOrg) {
         getRates().then(setRates);
       }
       // Load work profiles for default selection
-      if (isOwner) {
+      if (canManageOrg) {
         getWorkProfiles().then((wps) => {
           setWorkProfiles(wps);
         });
       }
       // Load country code and bank holidays
-      if (isOwner) {
+      if (canManageOrg) {
         getOrgCountryCode().then((cc) => { setCountryCode(cc); setOriginalCountryCode(cc); });
         getBankHolidays().then((result) => {
           if (result.success && result.holidays) setBankHolidaysList(result.holidays);
         });
       }
       // Load notice period rules
-      if (isOwner) {
+      if (canManageOrg) {
         getNoticePeriodRules().then((result) => {
           if (result.success && result.rules) {
             setNoticePeriodRules(result.rules);
@@ -541,21 +551,22 @@ export function OrganisationEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) handleClose(); else onOpenChange(true); }}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Organisation Settings</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
-          <Tabs defaultValue={isOwner ? "general" : "custom-fields"} className="w-full">
+          <Tabs defaultValue={canManageOrg ? "general" : "custom-fields"} className="w-full">
             <TabsList className="!h-auto w-full flex-wrap [&>button]:flex-none">
-              {isOwner && <TabsTrigger value="general">General</TabsTrigger>}
-              {isOwner && <TabsTrigger value="teams">Teams</TabsTrigger>}
-              {isOwner && <TabsTrigger value="user-rights">User Rights</TabsTrigger>}
-              {isOwner && <TabsTrigger value="timesheet">Timesheet</TabsTrigger>}
-              {isOwner && <TabsTrigger value="holiday-year">Holiday Year</TabsTrigger>}
-              {isOwner && <TabsTrigger value="rates">Rates</TabsTrigger>}
+              {canManageOrg && <TabsTrigger value="general">General</TabsTrigger>}
+              {canManageOrg && <TabsTrigger value="teams">Teams</TabsTrigger>}
+              {canManageOrg && <TabsTrigger value="user-rights">User Rights</TabsTrigger>}
+              {canManageOrg && <TabsTrigger value="timesheet">Timesheet</TabsTrigger>}
+              {canManageOrg && <TabsTrigger value="holiday-year">Holiday Year</TabsTrigger>}
+              {canManageOrg && <TabsTrigger value="approvals">Approvals</TabsTrigger>}
+              {canManageOrg && <TabsTrigger value="rates">Rates</TabsTrigger>}
               {showCustomFields && <TabsTrigger value="custom-fields">Custom Fields</TabsTrigger>}
-              {isOwner && <TabsTrigger value="backups">Backups</TabsTrigger>}
+              {canManageOrg && <TabsTrigger value="backups">Backups</TabsTrigger>}
             </TabsList>
 
             {/* General tab */}
@@ -772,7 +783,7 @@ export function OrganisationEditDialog({
             </TabsContent>
 
             {/* User Rights tab */}
-            {isOwner && (
+            {canManageOrg && (
               <TabsContent value="user-rights" className="mt-4 space-y-3">
                 <div className="flex overflow-hidden rounded-md border border-input text-sm w-fit">
                   {(["admin", "employee"] as const).map((type) => (
@@ -810,7 +821,7 @@ export function OrganisationEditDialog({
             )}
 
             {/* Timesheet tab */}
-            {isOwner && (
+            {canManageOrg && (
               <TabsContent value="timesheet" className="space-y-4 mt-4">
                 <div className="space-y-2">
                   <div className="flex items-center gap-1.5">
@@ -942,7 +953,7 @@ export function OrganisationEditDialog({
             )}
 
             {/* Holiday Year tab */}
-            {isOwner && (
+            {canManageOrg && (
               <TabsContent value="holiday-year" className="space-y-4 mt-4 max-h-[400px] overflow-y-auto">
                 <div className="space-y-3">
                   <Label className="text-sm font-medium">Holiday year starts on</Label>
@@ -1374,8 +1385,15 @@ export function OrganisationEditDialog({
               </TabsContent>
             )}
 
+            {/* Approvals tab — CLE-181 */}
+            {canManageOrg && (
+              <TabsContent value="approvals" className="mt-4 max-h-[400px] overflow-y-auto">
+                <ApprovalsManager />
+              </TabsContent>
+            )}
+
             {/* Rates tab */}
-            {isOwner && (
+            {canManageOrg && (
               <TabsContent value="rates" className="mt-4 max-h-[400px] overflow-y-auto">
                 <RatesManager rates={rates} onRatesChange={setRates} />
               </TabsContent>
@@ -1389,14 +1407,14 @@ export function OrganisationEditDialog({
             )}
 
             {/* Backups tab */}
-            {isOwner && (
+            {canManageOrg && (
               <TabsContent value="backups" className="mt-4 max-h-[400px] overflow-y-auto">
                 <BackupsManager orgName={name} />
               </TabsContent>
             )}
           </Tabs>
 
-          {isOwner && (
+          {canManageOrg && (
             <DialogFooter className="mt-4">
               <Button
                 type="button"
@@ -1419,7 +1437,7 @@ export function OrganisationEditDialog({
               </Button>
             </DialogFooter>
           )}
-          {!isOwner && (
+          {!canManageOrg && (
             <DialogFooter className="mt-4">
               <Button type="button" variant="outline" onClick={handleClose}>
                 Close
