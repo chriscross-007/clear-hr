@@ -80,6 +80,47 @@ function fmtDateRange(start: string, end: string | null, startHalf: string | nul
   return label;
 }
 
+/** CLE-183 — small "L1 ✓ → L2 ● → L3 ○" indicator under the status badge.
+ *  Shows where in the ladder the booking currently sits and which earlier
+ *  levels have already approved. Only renders for profile-routed bookings. */
+function LevelLadder(props: {
+  currentLevel: number;
+  history: {
+    level: number;
+    status: "pending" | "approved" | "rejected" | "withdrawn";
+    decided_at: string | null;
+    decided_by_name: string | null;
+    routed_to: "main" | "delegate" | null;
+  }[];
+}) {
+  // Build a synthetic 3-rung ladder. Rungs without a history row haven't been
+  // activated yet (either they were skipped by threshold, or they're still
+  // ahead in the cascade). We can't tell the two apart at this stage, so we
+  // render them as "—".
+  const byLevel = new Map(props.history.map((h) => [h.level, h]));
+  const rungs = [1, 2, 3].map((level) => {
+    const entry = byLevel.get(level);
+    if (level === props.currentLevel) {
+      return { level, mark: "●", className: "text-foreground font-medium" };
+    }
+    if (!entry) return { level, mark: "—", className: "text-muted-foreground/50" };
+    if (entry.status === "approved") return { level, mark: "✓", className: "text-emerald-600" };
+    if (entry.status === "rejected") return { level, mark: "✗", className: "text-red-600" };
+    if (entry.status === "withdrawn") return { level, mark: "—", className: "text-muted-foreground/50" };
+    return { level, mark: "○", className: "text-muted-foreground" };
+  });
+  return (
+    <div className="flex items-center gap-1 text-[11px] text-muted-foreground" title={`Approving at Level ${props.currentLevel}`}>
+      {rungs.map((r, i) => (
+        <span key={r.level} className="flex items-center gap-1">
+          <span className={r.className}>L{r.level} {r.mark}</span>
+          {i < rungs.length - 1 && <span className="text-muted-foreground/40">→</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const STATUS_BADGE: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
   pending: { label: "Pending", variant: "outline" },
   approved: { label: "Approved", variant: "default" },
@@ -672,10 +713,19 @@ function ApprovalsTable({
                         </div>
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <Badge variant={badge.variant}>{badge.label}</Badge>
-                          {row.completion_status && row.completion_status !== "complete" && (
-                            <CompletionStatusBadge status={row.completion_status as CompletionStatus} />
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <Badge variant={badge.variant}>{badge.label}</Badge>
+                            {row.completion_status && row.completion_status !== "complete" && (
+                              <CompletionStatusBadge status={row.completion_status as CompletionStatus} />
+                            )}
+                          </div>
+                          {/* CLE-183 — level context for multi-level approvals */}
+                          {row.status === "pending" && row.current_approval_level !== null && (
+                            <LevelLadder
+                              currentLevel={row.current_approval_level}
+                              history={row.level_history}
+                            />
                           )}
                         </div>
                       </TableCell>

@@ -1,17 +1,17 @@
 "use client";
 
-// Approvals tab for the Organisation Settings dialog (CLE-181).
+// Approvals tab for the Organisation Settings dialog (CLE-181, CLE-183).
 //
-// Phase A: only Level 1 main + delegate approvers are editable. L2 and L3
-// rows render disabled with a "coming in Phase B" tooltip per the settled
-// spec. Length thresholds are hidden in Phase A.
+// Phase A wired Level 1 only. Phase B enables L2 and L3 with per-level
+// length thresholds (days + hours, independent) so admins can require
+// additional approval for longer bookings. Empty mains list on L2/L3 =
+// level not used; the cascade simply skips it.
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2, X, Check, Info } from "lucide-react";
+import { Plus, Trash2, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -38,6 +38,34 @@ import { cn } from "@/lib/utils";
 
 type AbsenceTypeOption = { id: string; name: string };
 
+/** Per-level editor state. Threshold inputs are tracked as strings so
+ *  the user can type partial values without React fighting them on every
+ *  keystroke; we coerce to number-or-null at save time. */
+type LevelEdit = {
+  mains: string[];
+  delegates: string[];
+  thresholdDays: string;
+  thresholdHours: string;
+};
+
+function emptyLevel(): LevelEdit {
+  return { mains: [], delegates: [], thresholdDays: "", thresholdHours: "" };
+}
+
+function levelFromProfile(
+  profile: ApprovalProfile,
+  levelNumber: 1 | 2 | 3,
+): LevelEdit {
+  const lvl = profile.levels.find((l) => l.level === levelNumber);
+  if (!lvl) return emptyLevel();
+  return {
+    mains: lvl.mainApproverIds,
+    delegates: lvl.delegateApproverIds,
+    thresholdDays: lvl.lengthThresholdDays === null ? "" : String(lvl.lengthThresholdDays),
+    thresholdHours: lvl.lengthThresholdHours === null ? "" : String(lvl.lengthThresholdHours),
+  };
+}
+
 export function ApprovalsManager() {
   const [profiles, setProfiles] = useState<ApprovalProfile[]>([]);
   const [approvers, setApprovers] = useState<ApproverOption[]>([]);
@@ -48,10 +76,22 @@ export function ApprovalsManager() {
   const [editingId, setEditingId] = useState<string | "new" | null>(null);
   const [editName, setEditName] = useState("");
   const [editAbsenceTypeId, setEditAbsenceTypeId] = useState("");
-  const [editL1Mains, setEditL1Mains] = useState<string[]>([]);
-  const [editL1Delegates, setEditL1Delegates] = useState<string[]>([]);
+  /** Indexed by level - 1, i.e. editLevels[0] = L1, [1] = L2, [2] = L3. */
+  const [editLevels, setEditLevels] = useState<LevelEdit[]>([
+    emptyLevel(),
+    emptyLevel(),
+    emptyLevel(),
+  ]);
   const [editError, setEditError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  function updateLevel(index: 0 | 1 | 2, patch: Partial<LevelEdit>) {
+    setEditLevels((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], ...patch };
+      return next;
+    });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -79,9 +119,11 @@ export function ApprovalsManager() {
     setEditingId(profile.id);
     setEditName(profile.name);
     setEditAbsenceTypeId(profile.absenceTypeId);
-    const l1 = profile.levels.find((l) => l.level === 1);
-    setEditL1Mains(l1?.mainApproverIds ?? []);
-    setEditL1Delegates(l1?.delegateApproverIds ?? []);
+    setEditLevels([
+      levelFromProfile(profile, 1),
+      levelFromProfile(profile, 2),
+      levelFromProfile(profile, 3),
+    ]);
     setEditError(null);
   }
 
@@ -89,8 +131,7 @@ export function ApprovalsManager() {
     setEditingId("new");
     setEditName("");
     setEditAbsenceTypeId(absenceTypes[0]?.id ?? "");
-    setEditL1Mains([]);
-    setEditL1Delegates([]);
+    setEditLevels([emptyLevel(), emptyLevel(), emptyLevel()]);
     setEditError(null);
   }
 
@@ -109,20 +150,47 @@ export function ApprovalsManager() {
       setEditError("Absence Type is required");
       return;
     }
-    if (editL1Mains.length === 0) {
+    if (editLevels[0].mains.length === 0) {
       setEditError("Level 1 needs at least one main approver");
       return;
     }
+
+    // CLE-183 — coerce threshold inputs to number-or-null. Empty string =
+    // NULL = always required.
+    const parseThreshold = (raw: string, kind: "days" | "hours"): number | null | "invalid" => {
+      const v = raw.trim();
+      if (v === "") return null;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) return "invalid";
+      if (kind === "days" && !Number.isInteger(n)) return "invalid";
+      return n;
+    };
+
+    const levels: ApprovalLevelInput[] = [];
+    for (let i = 0; i < 3; i++) {
+      const lvl = editLevels[i];
+      // Drop the level if it has no mains — that means "not used".
+      if (lvl.mains.length === 0) continue;
+      const days = parseThreshold(lvl.thresholdDays, "days");
+      const hours = parseThreshold(lvl.thresholdHours, "hours");
+      if (days === "invalid") {
+        setEditError(`Level ${i + 1} days threshold must be a non-negative whole number`);
+        return;
+      }
+      if (hours === "invalid") {
+        setEditError(`Level ${i + 1} hours threshold must be a non-negative number`);
+        return;
+      }
+      levels.push({
+        level: i + 1,
+        lengthThresholdDays: days,
+        lengthThresholdHours: hours,
+        mainApproverIds: lvl.mains,
+        delegateApproverIds: lvl.delegates,
+      });
+    }
+
     setSaving(true);
-    const levels: ApprovalLevelInput[] = [
-      {
-        level: 1,
-        lengthThresholdDays: null,
-        lengthThresholdHours: null,
-        mainApproverIds: editL1Mains,
-        delegateApproverIds: editL1Delegates,
-      },
-    ];
     const profileId = editingId === "new" ? undefined : editingId ?? undefined;
     const res = await saveApprovalProfile(
       { name: editName.trim(), absenceTypeId: editAbsenceTypeId, levels },
@@ -188,10 +256,8 @@ export function ApprovalsManager() {
               absenceTypeId={editAbsenceTypeId}
               setAbsenceTypeId={setEditAbsenceTypeId}
               absenceTypes={absenceTypes}
-              l1Mains={editL1Mains}
-              setL1Mains={setEditL1Mains}
-              l1Delegates={editL1Delegates}
-              setL1Delegates={setEditL1Delegates}
+              levels={editLevels}
+              updateLevel={updateLevel}
               approvers={approvers}
               error={editError}
               saving={saving}
@@ -203,7 +269,6 @@ export function ApprovalsManager() {
 
         {profiles.map((p) => {
           const isEditing = editingId === p.id;
-          const l1 = p.levels.find((l) => l.level === 1);
           return (
             <div key={p.id}>
               {!isEditing && (
@@ -223,7 +288,7 @@ export function ApprovalsManager() {
                       )}
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5">
-                      {p.absenceTypeName || "—"} · {l1?.mainApproverIds.length ?? 0} main, {l1?.delegateApproverIds.length ?? 0} delegate
+                      {p.absenceTypeName || "—"} · {p.levels.length === 0 ? "no levels" : p.levels.map((l) => `L${l.level} (${l.mainApproverIds.length}m/${l.delegateApproverIds.length}d)`).join(" → ")}
                     </div>
                   </div>
                   {!p.isDefault && (
@@ -250,10 +315,8 @@ export function ApprovalsManager() {
                     absenceTypeId={editAbsenceTypeId}
                     setAbsenceTypeId={setEditAbsenceTypeId}
                     absenceTypes={absenceTypes}
-                    l1Mains={editL1Mains}
-                    setL1Mains={setEditL1Mains}
-                    l1Delegates={editL1Delegates}
-                    setL1Delegates={setEditL1Delegates}
+                    levels={editLevels}
+                    updateLevel={updateLevel}
                     approvers={approvers}
                     error={editError}
                     saving={saving}
@@ -286,10 +349,8 @@ function ProfileEditor(props: {
   absenceTypeId: string;
   setAbsenceTypeId: (id: string) => void;
   absenceTypes: AbsenceTypeOption[];
-  l1Mains: string[];
-  setL1Mains: (ids: string[]) => void;
-  l1Delegates: string[];
-  setL1Delegates: (ids: string[]) => void;
+  levels: LevelEdit[];
+  updateLevel: (index: 0 | 1 | 2, patch: Partial<LevelEdit>) => void;
   approvers: ApproverOption[];
   error: string | null;
   saving: boolean;
@@ -330,35 +391,23 @@ function ProfileEditor(props: {
         </div>
       </div>
 
-      <LevelRow
-        levelLabel="Level 1"
-        mains={props.l1Mains}
-        setMains={props.setL1Mains}
-        delegates={props.l1Delegates}
-        setDelegates={props.setL1Delegates}
-        approvers={props.approvers}
-        disabled={false}
-      />
+      {([0, 1, 2] as const).map((idx) => (
+        <LevelRow
+          key={idx}
+          levelLabel={`Level ${idx + 1}`}
+          level={props.levels[idx]}
+          onChange={(patch) => props.updateLevel(idx, patch)}
+          approvers={props.approvers}
+          requireMains={idx === 0}
+        />
+      ))}
 
-      <LevelRow
-        levelLabel="Level 2"
-        mains={[]}
-        setMains={() => {}}
-        delegates={[]}
-        setDelegates={() => {}}
-        approvers={props.approvers}
-        disabled
-      />
-
-      <LevelRow
-        levelLabel="Level 3"
-        mains={[]}
-        setMains={() => {}}
-        delegates={[]}
-        setDelegates={() => {}}
-        approvers={props.approvers}
-        disabled
-      />
+      <p className="text-xs text-muted-foreground">
+        Levels are evaluated in order. Leave Level 2 or 3 with no main approvers
+        if you don&apos;t need them. A level&apos;s thresholds apply only when the booking
+        unit matches — days threshold for days bookings, hours threshold for
+        hours bookings. Leave blank to mean &ldquo;always required&rdquo;.
+      </p>
 
       {props.error && (
         <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">
@@ -379,55 +428,82 @@ function ProfileEditor(props: {
 }
 
 // ---------------------------------------------------------------------------
-// LevelRow — one ladder rung. Renders disabled for L2/L3 in Phase A.
+// LevelRow — one ladder rung. Main + delegate pickers plus length thresholds.
 // ---------------------------------------------------------------------------
 
 function LevelRow(props: {
   levelLabel: string;
-  mains: string[];
-  setMains: (ids: string[]) => void;
-  delegates: string[];
-  setDelegates: (ids: string[]) => void;
+  level: LevelEdit;
+  onChange: (patch: Partial<LevelEdit>) => void;
   approvers: ApproverOption[];
-  disabled: boolean;
+  /** L1 must have at least one main approver (enforced at save). */
+  requireMains: boolean;
 }) {
+  const inactive = !props.requireMains && props.level.mains.length === 0;
   return (
     <div
       className={cn(
         "rounded-md border p-3 space-y-2",
-        props.disabled && "opacity-60",
+        inactive && "bg-muted/30",
       )}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium">{props.levelLabel}</span>
-        {props.disabled && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Info className="h-3.5 w-3.5 text-muted-foreground" />
-            </TooltipTrigger>
-            <TooltipContent>
-              <span className="text-xs">Coming in Phase B — multi-level escalation.</span>
-            </TooltipContent>
-          </Tooltip>
+        {inactive && (
+          <span className="text-xs text-muted-foreground">Not used</span>
         )}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <ApproverPicker
-          label="Main approver(s)"
-          selected={props.mains}
-          setSelected={props.setMains}
+          label={props.requireMains ? "Main approver(s) *" : "Main approver(s)"}
+          selected={props.level.mains}
+          setSelected={(ids) => props.onChange({ mains: ids })}
           approvers={props.approvers}
-          disabled={props.disabled}
-          placeholder={props.disabled ? "—" : "Choose approvers"}
+          disabled={false}
+          placeholder={props.requireMains ? "Choose approvers" : "Leave empty to skip this level"}
         />
         <ApproverPicker
           label="Delegate approver(s)"
-          selected={props.delegates}
-          setSelected={props.setDelegates}
+          selected={props.level.delegates}
+          setSelected={(ids) => props.onChange({ delegates: ids })}
           approvers={props.approvers}
-          disabled={props.disabled}
-          placeholder={props.disabled ? "—" : "Optional fallback"}
+          disabled={false}
+          placeholder="Optional fallback"
         />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">Required when booking ≥</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              step={1}
+              placeholder="any"
+              value={props.level.thresholdDays}
+              onChange={(e) => props.onChange({ thresholdDays: e.target.value })}
+              className="w-20"
+            />
+            <span className="text-sm text-muted-foreground">days</span>
+          </div>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">or ≥</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              inputMode="decimal"
+              min={0}
+              step="0.5"
+              placeholder="any"
+              value={props.level.thresholdHours}
+              onChange={(e) => props.onChange({ thresholdHours: e.target.value })}
+              className="w-20"
+            />
+            <span className="text-sm text-muted-foreground">hours</span>
+          </div>
+        </div>
       </div>
     </div>
   );

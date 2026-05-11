@@ -779,17 +779,23 @@ export async function submitHolidayBooking(
     if (insertError) return { success: false, error: insertError.message };
     const bookingId = insertedBooking?.id as string | undefined;
 
-    // CLE-181 — Holiday Approvals Phase A. When the new booking requires
-    // approval, resolve the employee's Approval Profile for this absence
-    // type, write a booking_approvals row at level 1, and set
-    // current_approval_level on the booking. If no profile is assigned for
-    // this absence type the booking falls back to the legacy "any admin can
-    // approve" feed (current_approval_level stays NULL).
+    // CLE-181 / CLE-183 — Holiday Approvals routing.
+    // When the new booking requires approval, resolve the employee's
+    // Approval Profile for this absence type and activate the lowest
+    // applicable level. Phase B: a level "applies" when its mains list is
+    // non-empty AND the booking length meets the level's threshold (NULL
+    // threshold = always applies). Higher applicable levels are written
+    // progressively as each lower one approves (cascade-on-approve in
+    // approvals-actions.ts).
     //
-    // The notifyApproverIds list captures who should receive the "request
-    // pending" email — every member in the routed list (mains-or-delegates,
-    // per spec "notify all, first-to-decide wins"). Falls back to the
-    // legacy team approver when no profile is assigned.
+    // If no level applies (e.g. all thresholds unmet) → fall back to the
+    // legacy "any admin" feed: current_approval_level stays NULL and the
+    // existing approvals page surfaces it to any admin.
+    //
+    // The notifyApproverIds list captures who receives the "request
+    // pending" email — every member in the active routed list (mains or
+    // delegates, per spec "notify all, first-to-decide wins"). Falls back
+    // to the legacy team approver when no profile / no level matches.
     let notifyApproverIds: string[] = teamApproverId ? [teamApproverId] : [];
     if (status === "pending" && bookingId && reason?.absence_type_id) {
       const resolved = await resolveProfileForBooking(
@@ -802,9 +808,11 @@ export async function submitHolidayBooking(
           daysDeducted,
           input.hoursDeducted,
         );
-        // Phase A only writes Level 1; L2/L3 are wired in Phase B.
-        const firstLevel = applicable.find((l) => l.level === 1) ?? null;
-        if (firstLevel && firstLevel.mainApproverIds.length > 0) {
+        // The lowest applicable level with mains gets activated. Higher
+        // applicable levels are deferred until cascade.
+        const firstLevel =
+          applicable.find((l) => l.mainApproverIds.length > 0) ?? null;
+        if (firstLevel) {
           const unavailable = await getUnavailableMemberIds(
             firstLevel.mainApproverIds,
             todayISO,
@@ -819,7 +827,7 @@ export async function submitHolidayBooking(
           const admin = getAdminClient();
           const { error: baErr } = await admin.from("booking_approvals").insert({
             booking_id: bookingId,
-            level: 1,
+            level: firstLevel.level,
             main_approver_ids: firstLevel.mainApproverIds,
             delegate_approver_ids: firstLevel.delegateApproverIds,
             routed_to: routedTo,
@@ -828,7 +836,7 @@ export async function submitHolidayBooking(
           if (!baErr) {
             await admin
               .from("holiday_bookings")
-              .update({ current_approval_level: 1 })
+              .update({ current_approval_level: firstLevel.level })
               .eq("id", bookingId);
             // Profile-routed: notify the routed approver list, not the
             // legacy team approver.
