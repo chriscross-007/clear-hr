@@ -53,6 +53,50 @@ export async function logAudit(entry: AuditEntry): Promise<void> {
 }
 
 /**
+ * Format an ISO date (YYYY-MM-DD) as "10 May 2026" for human-readable
+ * audit labels.
+ */
+function fmtAuditDate(iso: string): string {
+  // Anchor at UTC noon to avoid timezone wobble around midnight boundaries.
+  const d = new Date(`${iso}T12:00:00Z`);
+  return d.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/**
+ * Build the audit `target_label` for an absence booking. Includes the
+ * employee name, absence type, and date range so the audit history makes
+ * sense without having to cross-reference the booking. Open-ended (sick)
+ * bookings are rendered as "from <start>".
+ *
+ * Example: "Jane Smith — Annual Leave (10 May 2026 – 14 May 2026)"
+ */
+export function bookingAuditLabel(parts: {
+  memberName: string;
+  reasonName: string;
+  startDate: string | null;
+  endDate: string | null;
+}): string {
+  const name = parts.memberName.trim();
+  const reason = parts.reasonName.trim();
+  const head = name ? `${name} — ${reason}` : reason;
+  if (!parts.startDate) return head;
+  let dates = "";
+  if (parts.endDate === null) {
+    dates = `from ${fmtAuditDate(parts.startDate)}`;
+  } else if (parts.startDate === parts.endDate) {
+    dates = fmtAuditDate(parts.startDate);
+  } else {
+    dates = `${fmtAuditDate(parts.startDate)} – ${fmtAuditDate(parts.endDate)}`;
+  }
+  return `${head} (${dates})`;
+}
+
+/**
  * Compute a changes diff between old and new values.
  * Only includes fields that actually changed.
  */

@@ -35,6 +35,7 @@ import {
 import { cancelMyBooking } from "../approvals-actions";
 import { getMyOrgNoticeContext } from "../notice-period-actions";
 import { countWorkingDaysSimple, type WorkPatternHours } from "@/lib/day-counting";
+import { BookingHistoryPopover } from "@/components/booking-history-popover";
 
 interface BookHolidaySheetProps {
   open: boolean;
@@ -326,11 +327,19 @@ export function BookHolidaySheet({
     <Sheet open={open} onOpenChange={(v) => { if (!v) resetForm(); onOpenChange(v); }}>
       <SheetContent className="overflow-y-auto">
         <SheetHeader>
-          <SheetTitle>
-            {isExistingMode
-              ? "Existing Holiday Request"
-              : (requiresApproval ? "Request Holiday" : "Book Holiday")}
-          </SheetTitle>
+          <div className="flex items-center gap-2">
+            <SheetTitle>
+              {isExistingMode
+                ? "Existing Holiday Request"
+                : (requiresApproval ? "Request Holiday" : "Book Holiday")}
+            </SheetTitle>
+            {/* History popover — visible only on existing requests so the
+                employee can see who has acted on the request and how far
+                a multi-level approval has progressed. */}
+            {isExistingMode && existingBooking && (
+              <BookingHistoryPopover bookingId={existingBooking.id} />
+            )}
+          </div>
           <SheetDescription>
             {isExistingMode
               ? `Status: ${existingBooking?.status ?? "—"}. Use Delete Request to cancel this booking.`

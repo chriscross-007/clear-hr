@@ -99,6 +99,9 @@ export default async function DashboardLayout({
   let sidebarFavouriteIds: string[] = [];
   let sidebarCustomReports: { id: string; name: string }[] = [];
   let sidebarShiftDefs: { id: string; name: string }[] = [];
+  // CLE-185 — pending approvals count for the sidebar badge. Only admins/
+  // owners see the Approvals link, so only they need the count.
+  let sidebarPendingApprovalsCount = 0;
   if (isOwnerOrAdmin) {
     const shiftDefsPromise = supabase.from("shift_definitions").select("id, name").eq("organisation_id", membership.organisation_id).eq("active", true).order("sort_order").order("name");
     if (showReports) {
@@ -114,6 +117,9 @@ export default async function DashboardLayout({
       const { data: shiftsData } = await shiftDefsPromise;
       sidebarShiftDefs = (shiftsData ?? []) as { id: string; name: string }[];
     }
+    const { getPendingApprovalsCount } = await import("./approvals-actions");
+    const countRes = await getPendingApprovalsCount();
+    sidebarPendingApprovalsCount = countRes.success ? countRes.count : 0;
   }
 
   // Trial banner logic
@@ -224,6 +230,7 @@ export default async function DashboardLayout({
             initialFavouriteIds={sidebarFavouriteIds}
             initialCustomReports={sidebarCustomReports}
             initialShiftDefs={sidebarShiftDefs}
+            pendingApprovalsCount={sidebarPendingApprovalsCount}
           />
           <main className="min-w-0 flex-1">{children}</main>
         </div>

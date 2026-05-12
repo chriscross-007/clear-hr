@@ -5,7 +5,7 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import {
   computeCompletionStatus,
 } from "./sick-booking-types";
-import { logAudit, diffChanges } from "@/lib/audit";
+import { logAudit, diffChanges, bookingAuditLabel } from "@/lib/audit";
 import type {
   SickDetails,
   SickDetailsInput,
@@ -84,7 +84,7 @@ export async function saveSickDetails(
     // Verify booking is in the caller's org and get end_date for status calc
     const { data: booking } = await admin
       .from("holiday_bookings")
-      .select("id, organisation_id, member_id, end_date, absence_reasons(name), members!holiday_bookings_member_id_fkey(first_name, last_name)")
+      .select("id, organisation_id, member_id, start_date, end_date, absence_reasons(name), members!holiday_bookings_member_id_fkey(first_name, last_name)")
       .eq("id", input.bookingId)
       .eq("organisation_id", caller.organisation_id)
       .single();
@@ -214,7 +214,12 @@ export async function saveSickDetails(
         action: existing ? "sick_details.updated" : "sick_details.created",
         targetType: "booking",
         targetId: input.bookingId,
-        targetLabel: `${memberName} — ${reasonName}`,
+        targetLabel: bookingAuditLabel({
+          memberName,
+          reasonName,
+          startDate: (booking.start_date as string | null) ?? null,
+          endDate: (booking.end_date as string | null) ?? null,
+        }),
         changes,
         metadata: { member_id: booking.member_id as string, member_name: memberName },
       });

@@ -125,19 +125,23 @@ export async function getBookingHistory(
       .eq("user_id", user.id)
       .single();
     if (!member) return { success: false, error: "No membership found", entries: [] };
-    if (member.role !== "admin" && member.role !== "owner") {
-      return { success: false, error: "Not authorised", entries: [] };
-    }
 
-    // Verify the booking belongs to this org
+    // Verify the booking belongs to this org. Admins and owners can see any
+    // booking's history; an employee can see only their own bookings'
+    // history (so they can track progress through a multi-level approval).
     const admin = getAdminClient();
     const { data: booking } = await admin
       .from("holiday_bookings")
-      .select("id")
+      .select("id, member_id")
       .eq("id", bookingId)
       .eq("organisation_id", member.organisation_id)
       .single();
     if (!booking) return { success: false, error: "Booking not found", entries: [] };
+    if (member.role !== "admin" && member.role !== "owner") {
+      if (booking.member_id !== member.id) {
+        return { success: false, error: "Not authorised", entries: [] };
+      }
+    }
 
     // 1. Fetch all audit entries for this booking
     const { data: auditRows, error: auditErr } = await admin

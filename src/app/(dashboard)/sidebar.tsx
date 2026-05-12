@@ -54,6 +54,9 @@ interface SidebarProps {
   initialFavouriteIds?: string[];
   initialCustomReports?: { id: string; name: string }[];
   initialShiftDefs?: { id: string; name: string }[];
+  /** CLE-185 — number of pending holiday bookings the caller can decide.
+   *  Drives the badge next to the Approvals sidebar link. */
+  pendingApprovalsCount?: number;
 }
 
 export function Sidebar({
@@ -95,6 +98,7 @@ export function Sidebar({
   initialFavouriteIds = [],
   initialCustomReports = [],
   initialShiftDefs = [],
+  pendingApprovalsCount = 0,
 }: SidebarProps) {
   const pathname = usePathname();
   const [showOrgEdit, setShowOrgEdit] = useState(false);
@@ -257,7 +261,12 @@ export function Sidebar({
           {(role === "owner" || role === "admin") && (
             <Link href="/approvals" className={linkClass("/approvals")}>
               <ClipboardCheck className="h-4 w-4 shrink-0" />
-              Approvals
+              <span className="flex-1">Approvals</span>
+              {pendingApprovalsCount > 0 && (
+                <span className="ml-auto inline-flex items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-semibold min-w-[1.25rem] h-5 px-1.5">
+                  {pendingApprovalsCount}
+                </span>
+              )}
             </Link>
           )}
           {showShifts && (

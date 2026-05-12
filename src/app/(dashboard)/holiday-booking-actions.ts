@@ -11,7 +11,7 @@ import {
 } from "@/lib/work-pattern-data";
 import { calculateEntitlement } from "@/lib/entitlement";
 import { sendRequestPendingEmail, sendBookingConfirmedEmail } from "@/lib/email";
-import { logAudit, diffChanges } from "@/lib/audit";
+import { logAudit, diffChanges, bookingAuditLabel } from "@/lib/audit";
 import {
   resolveProfileForBooking,
   getUnavailableMemberIds,
@@ -858,7 +858,12 @@ export async function submitHolidayBooking(
       action: "booking.submitted",
       targetType: "booking",
       targetId: bookingId ?? undefined,
-      targetLabel: `${memberName} — ${leaveTypeName}`,
+      targetLabel: bookingAuditLabel({
+        memberName,
+        reasonName: leaveTypeName,
+        startDate: input.startDate,
+        endDate: input.endDate,
+      }),
       changes: {
         start_date: { old: null, new: input.startDate },
         end_date: { old: null, new: input.endDate },
@@ -1047,7 +1052,12 @@ export async function updateHolidayBooking(
         action: wasCancelled ? "booking.resubmitted" : "booking.updated",
         targetType: "booking",
         targetId: bookingId,
-        targetLabel: `${memberName} — ${newReasonName ?? ""}`.trim(),
+        targetLabel: bookingAuditLabel({
+          memberName,
+          reasonName: newReasonName ?? "",
+          startDate: input.startDate,
+          endDate: input.endDate,
+        }),
         changes,
         metadata: { member_id: member.id, member_name: memberName },
       });
@@ -1170,7 +1180,12 @@ export async function adminBookAbsence(
       action: "booking.created",
       targetType: "booking",
       targetId: inserted?.id as string | undefined,
-      targetLabel: `${memberName} — ${reason.name}`,
+      targetLabel: bookingAuditLabel({
+        memberName,
+        reasonName: reason.name,
+        startDate: input.startDate,
+        endDate: input.endDate,
+      }),
       changes: {
         start_date: { old: null, new: input.startDate },
         end_date: { old: null, new: input.endDate },
@@ -1413,7 +1428,12 @@ export async function adminUpdateBooking(
         action: "booking.updated",
         targetType: "booking",
         targetId: input.bookingId,
-        targetLabel: `${memberName} — ${newReasonName ?? ""}`.trim(),
+        targetLabel: bookingAuditLabel({
+          memberName,
+          reasonName: newReasonName ?? "",
+          startDate: input.startDate,
+          endDate: input.endDate,
+        }),
         changes,
         metadata: { member_id: existing.member_id, member_name: memberName },
       });
@@ -1471,7 +1491,12 @@ export async function adminDeleteBooking(
       action: "booking.deleted",
       targetType: "booking",
       targetId: bookingId,
-      targetLabel: `${memberName} — ${reasonName}`,
+      targetLabel: bookingAuditLabel({
+        memberName,
+        reasonName,
+        startDate: existing.start_date as string,
+        endDate: (existing.end_date as string | null) ?? null,
+      }),
       changes: {
         start_date: { old: existing.start_date, new: null },
         end_date: { old: existing.end_date, new: null },

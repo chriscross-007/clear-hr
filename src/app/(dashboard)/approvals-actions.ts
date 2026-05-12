@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { headers } from "next/headers";
 import { sendRequestApprovedEmail, sendRequestRejectedEmail, sendRequestPendingEmail } from "@/lib/email";
-import { logAudit } from "@/lib/audit";
+import { logAudit, bookingAuditLabel } from "@/lib/audit";
 import {
   resolveProfileForBooking,
   getUnavailableMemberIds,
@@ -523,7 +523,12 @@ export async function approveBooking(
         action: cascade ? "booking.level_approved" : "booking.approved",
         targetType: "booking",
         targetId: bookingId,
-        targetLabel: `${memberName} — ${reasonName}`,
+        targetLabel: bookingAuditLabel({
+          memberName,
+          reasonName,
+          startDate: booking.start_date,
+          endDate: booking.end_date,
+        }),
         changes: cascade
           ? {
               level: { old: justApprovedLevel, new: cascade.nextLevel.level },
@@ -646,7 +651,12 @@ export async function rejectBooking(
         action: "booking.rejected",
         targetType: "booking",
         targetId: bookingId,
-        targetLabel: `${memberName} — ${reasonName}`,
+        targetLabel: bookingAuditLabel({
+          memberName,
+          reasonName,
+          startDate: booking.start_date,
+          endDate: booking.end_date,
+        }),
         changes: {
           status: { old: "pending", new: "rejected" },
           approver_note: { old: null, new: note?.trim() || null },
@@ -828,7 +838,12 @@ async function bulkDecision(
               : "booking.rejected",
           targetType: "booking",
           targetId: b.id,
-          targetLabel: `${memberName} — ${reasonName}`,
+          targetLabel: bookingAuditLabel({
+            memberName,
+            reasonName,
+            startDate: b.start_date,
+            endDate: b.end_date,
+          }),
           changes: cascaded
             ? { approver_note: { old: null, new: trimmedNote } }
             : {
@@ -951,7 +966,12 @@ export async function cancelMyBooking(
       action: "booking.cancelled",
       targetType: "booking",
       targetId: bookingId,
-      targetLabel: `${memberName} — ${reasonName}`,
+      targetLabel: bookingAuditLabel({
+        memberName,
+        reasonName,
+        startDate: (existing?.start_date as string | null | undefined) ?? null,
+        endDate: (existing?.end_date as string | null | undefined) ?? null,
+      }),
       changes: { status: { old: "pending", new: "cancelled" } },
       metadata: { member_id: member.id, member_name: memberName },
     });

@@ -1,13 +1,13 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, X, Loader2, Info } from "lucide-react";
+import { Check, X, Loader2, Info, ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -17,12 +17,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Dialog,
   DialogContent,
@@ -44,6 +42,7 @@ import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { CompletionStatusBadge } from "@/components/completion-status-badge";
 import { StickyPageHeader } from "@/components/ui/sticky-page-header";
+import { BookingHistoryPopover } from "@/components/booking-history-popover";
 import type { CompletionStatus } from "../sick-booking-types";
 
 interface ApprovalsClientProps {
@@ -128,6 +127,133 @@ const STATUS_BADGE: Record<string, { label: string; variant: "default" | "second
   cancelled: { label: "Cancelled", variant: "secondary" },
 };
 
+/** CLE-185 — clickable column header that toggles asc/desc for one
+ *  ApprovalsTable column. Shows an arrow when active. */
+function SortableHeader({
+  label,
+  col,
+  sort,
+  onSort,
+}: {
+  label: string;
+  col: "created_at" | "member_name" | "reason_name" | "start_date" | "amount" | "status";
+  sort: { col: string; dir: "asc" | "desc" };
+  onSort: (col: "created_at" | "member_name" | "reason_name" | "start_date" | "amount" | "status") => void;
+}) {
+  const active = sort.col === col;
+  const Icon = active ? (sort.dir === "asc" ? ChevronUp : ChevronDown) : ChevronsUpDown;
+  return (
+    <TableHead>
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 text-left hover:text-foreground"
+        onClick={() => onSort(col)}
+        aria-label={`Sort by ${label}`}
+      >
+        <span>{label}</span>
+        <Icon className={`h-3.5 w-3.5 ${active ? "text-foreground" : "text-muted-foreground/60"}`} />
+      </button>
+    </TableHead>
+  );
+}
+
+/** CLE-185 — small multi-select filter popover for column headers. */
+function MultiSelectFilter({
+  label,
+  options,
+  selected,
+  onToggle,
+  capitalise,
+}: {
+  label: string;
+  options: string[];
+  selected: Set<string>;
+  onToggle: (value: string) => void;
+  capitalise?: boolean;
+}) {
+  const active = selected.size > 0;
+  const summary =
+    selected.size === 0
+      ? `Any ${label}`
+      : selected.size === 1
+        ? capitalise
+          ? capitalize([...selected][0])
+          : [...selected][0]
+        : `${selected.size} selected`;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={`inline-flex w-full items-center justify-between gap-1 rounded-md border h-7 px-2 text-xs ${active ? "border-primary text-foreground" : "border-input text-muted-foreground"}`}
+        >
+          <span className="truncate">{summary}</span>
+          <ChevronDown className="h-3 w-3 shrink-0 opacity-60" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-56 p-0">
+        <div className="max-h-64 overflow-y-auto py-1">
+          {options.length === 0 && (
+            <div className="px-3 py-2 text-sm text-muted-foreground">No options</div>
+          )}
+          {options.map((opt) => {
+            const checked = selected.has(opt);
+            return (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => onToggle(opt)}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-muted/40"
+              >
+                <span
+                  className={`flex h-4 w-4 items-center justify-center rounded border ${checked ? "bg-primary border-primary" : "border-input"}`}
+                >
+                  {checked && <Check className="h-3 w-3 text-primary-foreground" />}
+                </span>
+                <span className="flex-1 truncate">{capitalise ? capitalize(opt) : opt}</span>
+              </button>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+type SortCol = "created_at" | "member_name" | "reason_name" | "start_date" | "amount" | "status";
+type SortState = { col: SortCol; dir: "asc" | "desc" };
+const ALL_STATUSES = ["pending", "approved", "rejected", "cancelled"] as const;
+type RequestedPreset = "all" | "today" | "thisweek" | "thismonth";
+
+/** Resolve a RequestedPreset to a [fromISO, toISO] inclusive range covering
+ *  the user's local-time day boundaries. Pretty UTC-flexible: we treat
+ *  audit-style created_at strings as ISO timestamps and compare to local
+ *  midnight boundaries. */
+function getRequestedWindow(preset: RequestedPreset): { from: Date; to: Date } | null {
+  if (preset === "all") return null;
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  if (preset === "today") {
+    return { from: startOfDay, to: endOfDay };
+  }
+  if (preset === "thisweek") {
+    // ISO weeks start Monday
+    const day = startOfDay.getDay(); // Sun=0, Mon=1, ...
+    const daysBack = day === 0 ? 6 : day - 1;
+    const weekStart = new Date(startOfDay);
+    weekStart.setDate(weekStart.getDate() - daysBack);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    weekEnd.setHours(23, 59, 59, 999);
+    return { from: weekStart, to: weekEnd };
+  }
+  // thismonth
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  return { from: monthStart, to: monthEnd };
+}
+
 export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calendarBookings, calendarBankHolidays, bankHolidayColour }: ApprovalsClientProps) {
   const router = useRouter();
   const { memberLabel } = useMemberLabel();
@@ -139,10 +265,37 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
   const [rejectingRow, setRejectingRow] = useState<ApprovalRow | null>(null);
   const [rejectNote, setRejectNote] = useState("");
   const [rejectLoading, setRejectLoading] = useState(false);
-  const [statusFilter, setStatusFilter] = useState("all");
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
 
-  // Bulk selection (Pending tab only)
+  // CLE-185 — single-list view with multi-column sort and filter. Page
+  // opens with Status filtered to "pending" so the admin lands on what
+  // most needs attention.
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set(["pending"]));
+  const [memberFilter, setMemberFilter] = useState("");
+  const [reasonFilter, setReasonFilter] = useState<Set<string>>(new Set());
+  const [requestedPreset, setRequestedPreset] = useState<RequestedPreset>("all");
+  const [sort, setSort] = useState<SortState>({ col: "created_at", dir: "desc" });
+
+  // CLE-185 — the ApprovalsTable embeds many Radix Popovers (history button
+  // per row + filter dropdowns) whose internally-generated aria-controls
+  // IDs were intermittently mismatching between SSR and the first client
+  // render, producing a hydration warning. Defer the table to a
+  // post-mount render so the popovers never SSR; the page header still
+  // SSRs normally.
+  const [hasMounted, setHasMounted] = useState(false);
+  useEffect(() => {
+    setHasMounted(true);
+  }, []);
+
+  // The set of booking ids the caller is actually authorised to approve
+  // (server-side filtered). Used to enable/disable per-row controls when
+  // a non-routed admin views the list.
+  const approvableIds = useMemo(
+    () => new Set(pendingRows.map((r) => r.id)),
+    [pendingRows],
+  );
+
+  // Bulk selection — kept only for rows the caller can approve
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
@@ -159,17 +312,104 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
     });
   };
 
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const selectedRows = allRows.filter((r) => selectedIds.has(r.id));
+
+  // Unique reason names across the org's rows — drives the Reason filter
+  const allReasonNames = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of allRows) set.add(r.reason_name);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [allRows]);
+
+  // Apply filters + sort
+  const visibleRows = useMemo(() => {
+    const memberQ = memberFilter.trim().toLowerCase();
+    const window = getRequestedWindow(requestedPreset);
+    const filtered = allRows.filter((r) => {
+      if (statusFilter.size > 0 && !statusFilter.has(r.status)) return false;
+      if (memberQ && !r.member_name.toLowerCase().includes(memberQ)) return false;
+      if (reasonFilter.size > 0 && !reasonFilter.has(r.reason_name)) return false;
+      if (window) {
+        const t = new Date(r.created_at).getTime();
+        if (t < window.from.getTime() || t > window.to.getTime()) return false;
+      }
+      return true;
+    });
+    const dir = sort.dir === "asc" ? 1 : -1;
+    const cmp = (a: ApprovalRow, b: ApprovalRow): number => {
+      switch (sort.col) {
+        case "created_at":
+          return (a.created_at > b.created_at ? 1 : a.created_at < b.created_at ? -1 : 0) * dir;
+        case "member_name":
+          return a.member_name.localeCompare(b.member_name) * dir;
+        case "reason_name":
+          return a.reason_name.localeCompare(b.reason_name) * dir;
+        case "start_date":
+          return (a.start_date > b.start_date ? 1 : a.start_date < b.start_date ? -1 : 0) * dir;
+        case "amount": {
+          const av = a.measurement_mode === "hours" ? a.hours_deducted : a.days_deducted;
+          const bv = b.measurement_mode === "hours" ? b.hours_deducted : b.days_deducted;
+          return ((av ?? 0) - (bv ?? 0)) * dir;
+        }
+        case "status":
+          return a.status.localeCompare(b.status) * dir;
+      }
+    };
+    return [...filtered].sort(cmp);
+  }, [allRows, statusFilter, memberFilter, reasonFilter, requestedPreset, sort]);
+
+  // Select-all targets the visible AND approvable rows only.
+  const selectableVisibleIds = useMemo(
+    () => visibleRows.filter((r) => approvableIds.has(r.id)).map((r) => r.id),
+    [visibleRows, approvableIds],
+  );
+  const allSelectedVisible =
+    selectableVisibleIds.length > 0 &&
+    selectableVisibleIds.every((id) => selectedIds.has(id));
   const toggleSelectAll = () => {
-    if (selectedIds.size === pendingRows.length) {
-      setSelectedIds(new Set());
+    if (allSelectedVisible) {
+      // Deselect all visible selectable
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of selectableVisibleIds) next.delete(id);
+        return next;
+      });
     } else {
-      setSelectedIds(new Set(pendingRows.map((r) => r.id)));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of selectableVisibleIds) next.add(id);
+        return next;
+      });
     }
   };
 
-  const clearSelection = () => setSelectedIds(new Set());
+  const toggleStatus = (status: string) => {
+    setStatusFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+  };
 
-  const selectedRows = pendingRows.filter((r) => selectedIds.has(r.id));
+  const toggleReason = (reason: string) => {
+    setReasonFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(reason)) next.delete(reason);
+      else next.add(reason);
+      return next;
+    });
+  };
+
+  function handleSort(col: SortCol) {
+    setSort((prev) =>
+      prev.col === col
+        ? { col, dir: prev.dir === "asc" ? "desc" : "asc" }
+        : { col, dir: "asc" },
+    );
+  }
 
   async function handleBulkApprove() {
     setBulkLoading(true);
@@ -225,25 +465,22 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
     }
   }
 
-  const filteredAllRows = statusFilter === "all"
-    ? allRows
-    : allRows.filter((r) => r.status === statusFilter);
-
   const pendingCount = pendingRows.length;
+  const totalCount = allRows.length;
 
   return (
     <>
-      <Tabs defaultValue="pending" className="w-full">
       <StickyPageHeader>
-        <h1 className="text-2xl font-bold mb-3">Holiday Approvals</h1>
         <div className="flex items-center justify-between gap-4">
-          <TabsList>
-            <TabsTrigger value="pending">
-              Pending{pendingCount > 0 && ` (${pendingCount})`}
-            </TabsTrigger>
-            <TabsTrigger value="all">All Requests</TabsTrigger>
-          </TabsList>
-
+          <div>
+            <h1 className="text-2xl font-bold">Holiday Approvals</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {visibleRows.length} of {totalCount} request{totalCount === 1 ? "" : "s"}
+              {pendingCount > 0 && (
+                <> · <strong>{pendingCount}</strong> awaiting your decision</>
+              )}
+            </p>
+          </div>
           <div
             className={`flex items-center gap-2 transition-opacity duration-150 ${selectedIds.size > 0 ? "opacity-100" : "opacity-0 pointer-events-none"}`}
             aria-hidden={selectedIds.size === 0}
@@ -276,57 +513,55 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
         </div>
       </StickyPageHeader>
 
-        <TabsContent value="pending" className="mt-4 space-y-3">
-          {toastMessage && (
-            <div className="rounded-md bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-3 text-sm text-green-800 dark:text-green-200">
-              {toastMessage}
-            </div>
-          )}
+      <div className="mt-4 space-y-3">
+        {toastMessage && (
+          <div className="rounded-md bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-3 text-sm text-green-800 dark:text-green-200">
+            {toastMessage}
+          </div>
+        )}
+        {hasMounted ? (
           <ApprovalsTable
-            rows={pendingRows}
-            showActions
-            selectable
+            rows={visibleRows}
+            approvableIds={approvableIds}
             selectedIds={selectedIds}
             onToggleSelect={toggleSelect}
             onToggleSelectAll={toggleSelectAll}
-            allSelected={pendingRows.length > 0 && selectedIds.size === pendingRows.length}
+            allSelected={allSelectedVisible}
             onApprove={(row) => { setApproveNote(""); setApprovingRow(row); }}
             onReject={(row) => { setRejectNote(""); setRejectingRow(row); }}
-            emptyMessage="No pending requests."
+            emptyMessage={
+              statusFilter.size > 0 || memberFilter.trim() || reasonFilter.size > 0
+                ? "No requests match the current filters."
+                : "No requests found."
+            }
             expandedRowId={expandedRowId}
             onToggleCalendar={(rowId) => setExpandedRowId((prev) => prev === rowId ? null : rowId)}
             calendarMembers={calendarMembers}
             calendarBookings={calendarBookings}
             calendarBankHolidays={calendarBankHolidays}
             bankHolidayColour={bankHolidayColour}
+            sort={sort}
+            onSort={handleSort}
+            statusFilter={statusFilter}
+            onToggleStatus={toggleStatus}
+            memberFilter={memberFilter}
+            onChangeMemberFilter={setMemberFilter}
+            reasonFilter={reasonFilter}
+            onToggleReason={toggleReason}
+            allReasonNames={allReasonNames}
+            requestedPreset={requestedPreset}
+            onChangeRequestedPreset={setRequestedPreset}
           />
-        </TabsContent>
-
-        <TabsContent value="all" className="mt-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <Label className="text-sm text-muted-foreground">Status:</Label>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="rejected">Rejected</SelectItem>
-                <SelectItem value="cancelled">Cancelled</SelectItem>
-              </SelectContent>
-            </Select>
+        ) : (
+          <div className="flex justify-center w-full">
+            <div className="w-auto max-w-[90%] min-w-0">
+              <div className="rounded-md border h-32 flex items-center justify-center text-sm text-muted-foreground">
+                Loading requests…
+              </div>
+            </div>
           </div>
-          <ApprovalsTable
-            rows={filteredAllRows}
-            showActions={false}
-            onApprove={() => {}}
-            onReject={() => {}}
-            emptyMessage="No requests found."
-          />
-        </TabsContent>
-      </Tabs>
+        )}
+      </div>
 
       {/* Approve dialog */}
       <Dialog open={!!approvingRow} onOpenChange={(open) => { if (!open) setApprovingRow(null); }}>
@@ -598,8 +833,7 @@ function sortMembersForApproval(
 
 function ApprovalsTable({
   rows,
-  showActions,
-  selectable,
+  approvableIds,
   selectedIds,
   onToggleSelect,
   onToggleSelectAll,
@@ -613,14 +847,24 @@ function ApprovalsTable({
   calendarBookings,
   calendarBankHolidays,
   bankHolidayColour,
+  sort,
+  onSort,
+  statusFilter,
+  onToggleStatus,
+  memberFilter,
+  onChangeMemberFilter,
+  reasonFilter,
+  onToggleReason,
+  allReasonNames,
+  requestedPreset,
+  onChangeRequestedPreset,
 }: {
   rows: ApprovalRow[];
-  showActions: boolean;
-  selectable?: boolean;
-  selectedIds?: Set<string>;
-  onToggleSelect?: (id: string) => void;
-  onToggleSelectAll?: () => void;
-  allSelected?: boolean;
+  approvableIds: Set<string>;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+  onToggleSelectAll: () => void;
+  allSelected: boolean;
   onApprove: (row: ApprovalRow) => void;
   onReject: (row: ApprovalRow) => void;
   emptyMessage: string;
@@ -630,10 +874,21 @@ function ApprovalsTable({
   calendarBookings?: TeamBooking[];
   calendarBankHolidays?: TeamBankHoliday[];
   bankHolidayColour?: string;
+  sort: SortState;
+  onSort: (col: SortCol) => void;
+  statusFilter: Set<string>;
+  onToggleStatus: (status: string) => void;
+  memberFilter: string;
+  onChangeMemberFilter: (v: string) => void;
+  reasonFilter: Set<string>;
+  onToggleReason: (reason: string) => void;
+  allReasonNames: string[];
+  requestedPreset: RequestedPreset;
+  onChangeRequestedPreset: (p: RequestedPreset) => void;
 }) {
   const { memberLabel } = useMemberLabel();
-  const baseCols = selectable ? 8 : 7;
-  const colSpanTotal = showActions ? baseCols + 1 : baseCols;
+  // 1 select + 1 actions + 7 content columns = 9
+  const colSpanTotal = 9;
   return (
     <div className="flex justify-center w-full">
       <div className="w-auto max-w-[90%] min-w-0">
@@ -645,25 +900,68 @@ function ApprovalsTable({
               data peeks through as it scrolls past) rather than the
               non-scrolling table container. */}
           <Table containerClassName="overflow-visible">
-            <TableHeader className="[&_th]:sticky [&_th]:top-[184px] [&_th]:z-20 [&_th]:bg-background">
-              <TableRow>
-                {selectable && (
-                  <TableHead className="w-10">
-                    <Checkbox
-                      checked={allSelected}
-                      onCheckedChange={() => onToggleSelectAll?.()}
-                      aria-label="Select all"
-                    />
-                  </TableHead>
-                )}
-                <TableHead>Requested</TableHead>
-                <TableHead>{capitalize(memberLabel)}</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead>Dates</TableHead>
-                <TableHead>Days/Hours</TableHead>
+            <TableHeader className="[&_th]:sticky [&_th]:bg-background [&_th]:z-20">
+              <TableRow className="[&_th]:top-[160px]">
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={allSelected}
+                    onCheckedChange={onToggleSelectAll}
+                    aria-label="Select all approvable on this page"
+                  />
+                </TableHead>
+                <SortableHeader label="Requested" col="created_at" sort={sort} onSort={onSort} />
+                <SortableHeader label={capitalize(memberLabel)} col="member_name" sort={sort} onSort={onSort} />
+                <SortableHeader label="Reason" col="reason_name" sort={sort} onSort={onSort} />
+                <SortableHeader label="Dates" col="start_date" sort={sort} onSort={onSort} />
+                <SortableHeader label="Days/Hours" col="amount" sort={sort} onSort={onSort} />
                 <TableHead>Notes</TableHead>
-                <TableHead>Status</TableHead>
-                {showActions && <TableHead className="w-32">Actions</TableHead>}
+                <SortableHeader label="Status" col="status" sort={sort} onSort={onSort} />
+                <TableHead className="w-32">Actions</TableHead>
+              </TableRow>
+              {/* Filter row — same sticky band, offset to sit below the header */}
+              <TableRow className="[&_th]:top-[200px] [&_th]:border-b">
+                <TableHead />
+                <TableHead>
+                  <select
+                    value={requestedPreset}
+                    onChange={(e) => onChangeRequestedPreset(e.target.value as RequestedPreset)}
+                    className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs"
+                  >
+                    <option value="all">Any time</option>
+                    <option value="today">Today</option>
+                    <option value="thisweek">This week</option>
+                    <option value="thismonth">This month</option>
+                  </select>
+                </TableHead>
+                <TableHead>
+                  <Input
+                    value={memberFilter}
+                    onChange={(e) => onChangeMemberFilter(e.target.value)}
+                    placeholder="Filter…"
+                    className="h-7 text-xs"
+                  />
+                </TableHead>
+                <TableHead>
+                  <MultiSelectFilter
+                    label="reason"
+                    options={allReasonNames}
+                    selected={reasonFilter}
+                    onToggle={onToggleReason}
+                  />
+                </TableHead>
+                <TableHead />
+                <TableHead />
+                <TableHead />
+                <TableHead>
+                  <MultiSelectFilter
+                    label="status"
+                    options={[...ALL_STATUSES]}
+                    selected={statusFilter}
+                    onToggle={onToggleStatus}
+                    capitalise
+                  />
+                </TableHead>
+                <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -678,18 +976,19 @@ function ApprovalsTable({
                   const unit = row.measurement_mode === "hours" ? "hours" : "days";
                   const val = row.measurement_mode === "hours" ? row.hours_deducted : row.days_deducted;
                   const badge = STATUS_BADGE[row.status] ?? STATUS_BADGE.pending;
+                  const canActOnRow = row.status === "pending" && approvableIds.has(row.id);
                   return (
                     <React.Fragment key={row.id}>
                     <TableRow>
-                      {selectable && (
-                        <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
+                      <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
+                        {canActOnRow && (
                           <Checkbox
-                            checked={selectedIds?.has(row.id) ?? false}
-                            onCheckedChange={() => onToggleSelect?.(row.id)}
+                            checked={selectedIds.has(row.id)}
+                            onCheckedChange={() => onToggleSelect(row.id)}
                             aria-label={`Select request from ${row.member_name}`}
                           />
-                        </TableCell>
-                      )}
+                        )}
+                      </TableCell>
                       <TableCell className="whitespace-nowrap text-muted-foreground">{fmtDateTime(row.created_at)}</TableCell>
                       <TableCell className="font-medium">{row.member_name}</TableCell>
                       <TableCell>
@@ -705,11 +1004,42 @@ function ApprovalsTable({
                         {fmtDateRange(row.start_date, row.end_date, row.start_half, row.end_half)}
                       </TableCell>
                       <TableCell>{val ?? "—"} {val !== null ? unit : ""}</TableCell>
-                      <TableCell className="max-w-60 text-muted-foreground">
-                        <div className="space-y-0.5">
+                      <TableCell className="text-muted-foreground">
+                        {/* Wrap in a fixed-width container so children's
+                            truncate actually applies. A bare max-w on td
+                            is unreliable under table-layout: auto. */}
+                        <div className="w-[16rem] max-w-[16rem] space-y-0.5">
+                          {(() => {
+                            // CLE-185 — for terminal statuses, surface who
+                            // decided + when. Prefer the level_history entry
+                            // (has decided_at + decided_by_name); fall back
+                            // to approver_name on legacy bookings.
+                            if (row.status === "pending") return null;
+                            const verb =
+                              row.status === "approved"
+                                ? "Approved"
+                                : row.status === "rejected"
+                                  ? "Rejected"
+                                  : row.status === "cancelled"
+                                    ? "Cancelled"
+                                    : null;
+                            if (!verb) return null;
+                            const matched = [...row.level_history]
+                              .reverse()
+                              .find((h) => h.status === row.status);
+                            const who = matched?.decided_by_name ?? row.approver_name ?? null;
+                            const when = matched?.decided_at ?? null;
+                            if (!who && !when) return null;
+                            return (
+                              <p className="text-foreground truncate">
+                                {verb}
+                                {who && <> by <span className="font-medium">{who}</span></>}
+                                {when && <> · {fmtDateTime(when)}</>}
+                              </p>
+                            );
+                          })()}
                           {row.employee_note && <p className="truncate italic">{row.member_name}: {row.employee_note}</p>}
                           {row.approver_note && <p className="truncate">{row.approver_name ?? "Approver"}: {row.approver_note}</p>}
-                          {!row.employee_note && !row.approver_note && ""}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -729,18 +1059,21 @@ function ApprovalsTable({
                           )}
                         </div>
                       </TableCell>
-                      {showActions && (
-                        <TableCell>
-                          {row.status === "pending" && (
-                            <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                              <Button
-                                size="sm"
-                                variant={expandedRowId === row.id ? "secondary" : "ghost"}
-                                title="View team availability"
-                                onClick={() => onToggleCalendar?.(row.id)}
-                              >
-                                <Info className="h-3.5 w-3.5" />
-                              </Button>
+                      <TableCell>
+                        <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                          {/* CLE-185 — History popover on every row */}
+                          <BookingHistoryPopover bookingId={row.id} />
+                          {/* CLE-185 — Info / team-availability calendar on every row */}
+                          <Button
+                            size="sm"
+                            variant={expandedRowId === row.id ? "secondary" : "ghost"}
+                            title="View team availability"
+                            onClick={() => onToggleCalendar?.(row.id)}
+                          >
+                            <Info className="h-3.5 w-3.5" />
+                          </Button>
+                          {canActOnRow && (
+                            <>
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -759,10 +1092,10 @@ function ApprovalsTable({
                                 <X className="h-3.5 w-3.5 mr-1" />
                                 Reject
                               </Button>
-                            </div>
+                            </>
                           )}
-                        </TableCell>
-                      )}
+                        </div>
+                      </TableCell>
                     </TableRow>
                     {expandedRowId === row.id && calendarMembers && calendarBookings && calendarBankHolidays && (() => {
                       const sorted = sortMembersForApproval(row, calendarMembers, calendarBookings);
