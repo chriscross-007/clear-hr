@@ -442,11 +442,19 @@ async function validateBookingRules(
   endDate: string,
   daysDeducted: number | null,
   excludeBookingId?: string,
-): Promise<{ error?: string }> {
-  // Notice period validation — only blocks the submission when the org has
-  // notice_rules_block_requests=true. When the flag is FALSE the rule is
-  // informational only; the client surfaces a soft warning in the booking
-  // sheet, the server lets the request through.
+): Promise<{ error?: string; noticeWarning?: boolean; coverWarning?: boolean }> {
+  // CLE-189 — compute notice + cover violations UNIVERSALLY (regardless of
+  // the org's notice_rules_block_requests flag) so submit can snapshot the
+  // outcome onto the booking row. The `blockOnNotice` flag still decides
+  // whether a violation produces a hard `error` (server-side block) or
+  // just a `*Warning: true` advisory (request goes through, badge appears
+  // on the Approvals page).
+  let noticeWarning = false;
+  let coverWarning = false;
+
+  // Notice period validation — runs regardless of block flag now so we can
+  // capture the warning state. Only converts to a blocking error when the
+  // org has notice_rules_block_requests=true.
   //
   // CLE-179 — consecutive bookings are folded together for the rule check
   // so an employee can't dodge a notice rule by splitting one large
@@ -462,7 +470,7 @@ async function validateBookingRules(
     .single();
   const blockOnNotice = !!(orgRow as { notice_rules_block_requests?: boolean } | null)?.notice_rules_block_requests;
 
-  if (blockOnNotice) {
+  {
     const { data: noticePeriodRules } = await supabase
       .from("notice_period_rules")
       .select("min_booking_days, notice_days")
@@ -572,17 +580,26 @@ async function validateBookingRules(
         const diffMs = earliest.getTime() - today.getTime();
         const diffDays = Math.floor(diffMs / 86_400_000);
         if (diffDays < matchingRule.notice_days) {
-          const error = stitched
-            ? `This booking is consecutive with an existing booking, making ${combinedDays} days in total — that needs at least ${matchingRule.notice_days} days' notice (applies to bookings of ${matchingRule.min_booking_days}+ days).`
-            : `This booking requires at least ${matchingRule.notice_days} days' notice (applies to bookings of ${matchingRule.min_booking_days}+ days).`;
-          return { error };
+          // CLE-189 — always set the warning; only block when configured.
+          noticeWarning = true;
+          if (blockOnNotice) {
+            const error = stitched
+              ? `This booking is consecutive with an existing booking, making ${combinedDays} days in total — that needs at least ${matchingRule.notice_days} days' notice (applies to bookings of ${matchingRule.min_booking_days}+ days).`
+              : `This booking requires at least ${matchingRule.notice_days} days' notice (applies to bookings of ${matchingRule.min_booking_days}+ days).`;
+            return { error, noticeWarning, coverWarning };
+          }
         }
       }
     }
   }
 
   // Team cover validation (uses admin client to bypass RLS — employees may not
-  // have permission to read teammates, but the server must count them for validation)
+  // have permission to read teammates, but the server must count them for
+  // validation). CLE-187 — same block-or-warn flag as the notice rules:
+  // when notice_rules_block_requests=FALSE the cover violation is
+  // informational only (client surfaces a warning); when TRUE the server
+  // hard-blocks the submission. CLE-189 — always compute the violation so
+  // we can snapshot the warning state at submit.
   if (teamId) {
     const admin = getAdminClient();
 
@@ -634,9 +651,17 @@ async function validateBookingRules(
 
             const present = teamSize - (onLeaveCount ?? 0) - 1; // -1 for the requesting employee
             if (present < minCover) {
-              return {
-                error: `Minimum team cover of ${minCover} would not be met on ${dateStr}.`,
-              };
+              coverWarning = true;
+              if (blockOnNotice) {
+                return {
+                  error: `Minimum team cover of ${minCover} would not be met on ${dateStr}.`,
+                  noticeWarning,
+                  coverWarning,
+                };
+              }
+              // One breached date is enough to flag the booking — bail to
+              // save round-trips.
+              break;
             }
           }
           cur.setUTCDate(cur.getUTCDate() + 1);
@@ -645,7 +670,125 @@ async function validateBookingRules(
     }
   }
 
-  return {};
+  return { noticeWarning, coverWarning };
+}
+
+// ---------------------------------------------------------------------------
+// CLE-187 — Team cover preview data for the booking sheet
+// ---------------------------------------------------------------------------
+//
+// Returns just enough information for the client to compute, per-day, whether
+// a proposed date range would drop the caller's team below the configured
+// Min Cover. Mirrors the notice-rules-context pattern: load once on sheet
+// open, recompute the preview locally as the user adjusts dates.
+
+export type TeamCoverContext = {
+  /** Caller's team_id (NULL if they aren't in a team — no preview needed). */
+  teamId: string | null;
+  /** Total members in the team, including the caller. */
+  teamSize: number;
+  /** Configured Min Cover for the team (0 / NULL = unlimited). */
+  minCover: number;
+  /** Org-level block flag (shared with notice rules). When TRUE the server
+   *  enforces a hard block; when FALSE it's an informational warning. */
+  blockRequests: boolean;
+  /** Active pending/approved bookings of every other team member, with
+   *  date ranges so the client can do day-by-day overlap counts. */
+  teammateBookings: {
+    memberId: string;
+    startDate: string;
+    endDate: string | null;
+  }[];
+  /** Map of teammate id → display name. Used by the cover-violation
+   *  diagnostic to name who the system thinks is on leave. */
+  teammateNames: Record<string, string>;
+};
+
+export async function getMyTeamCoverContext(): Promise<{
+  success: boolean;
+  error?: string;
+  context: TeamCoverContext;
+}> {
+  const empty: TeamCoverContext = {
+    teamId: null,
+    teamSize: 0,
+    minCover: 0,
+    blockRequests: false,
+    teammateBookings: [],
+    teammateNames: {},
+  };
+  try {
+    const { supabase, member } = await getCallerMember();
+    if (!member.team_id) {
+      return { success: true, context: empty };
+    }
+
+    const admin = getAdminClient();
+    const [{ data: teamRow }, { data: orgRow }, { count: teamMemberCount }, { data: teammates }] = await Promise.all([
+      admin.from("teams").select("min_cover").eq("id", member.team_id).single(),
+      supabase.from("organisations").select("notice_rules_block_requests").eq("id", member.organisation_id).single(),
+      admin
+        .from("members")
+        .select("id", { count: "exact", head: true })
+        .eq("organisation_id", member.organisation_id)
+        .eq("team_id", member.team_id),
+      admin
+        .from("members")
+        .select("id, first_name, last_name")
+        .eq("organisation_id", member.organisation_id)
+        .eq("team_id", member.team_id)
+        .neq("id", member.id),
+    ]);
+
+    const minCover = Number((teamRow as { min_cover: number | null } | null)?.min_cover ?? 0);
+    const blockRequests = !!(orgRow as { notice_rules_block_requests?: boolean } | null)?.notice_rules_block_requests;
+    const teamSize = teamMemberCount ?? 0;
+    const teammateRows = (teammates ?? []) as { id: string; first_name: string; last_name: string }[];
+    const teammateIds = teammateRows.map((t) => t.id);
+    const teammateNames: Record<string, string> = {};
+    for (const t of teammateRows) {
+      teammateNames[t.id] = `${t.first_name} ${t.last_name}`;
+    }
+
+    if (teammateIds.length === 0 || minCover <= 0) {
+      return {
+        success: true,
+        context: { teamId: member.team_id, teamSize, minCover, blockRequests, teammateBookings: [], teammateNames },
+      };
+    }
+
+    // Pull each teammate's pending/approved bookings. We don't constrain by
+    // date range — the client filters per-day. Open-ended sick bookings
+    // (end_date NULL) are included and treated as "still on leave" by the
+    // client's day check.
+    const { data: bookings } = await admin
+      .from("holiday_bookings")
+      .select("member_id, start_date, end_date")
+      .in("member_id", teammateIds)
+      .in("status", ["approved", "pending"]);
+
+    return {
+      success: true,
+      context: {
+        teamId: member.team_id,
+        teamSize,
+        minCover,
+        blockRequests,
+        teammateBookings: (bookings ?? []).map((b) => ({
+          memberId: b.member_id as string,
+          startDate: b.start_date as string,
+          endDate: b.end_date as string | null,
+        })),
+        teammateNames,
+      },
+    };
+  } catch (e) {
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : "An error occurred",
+      context: empty,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -756,7 +899,8 @@ export async function submitHolidayBooking(
       teamApproverId = teamRow?.approver_id ?? null;
     }
 
-    // Create the booking
+    // Create the booking. CLE-189 — snapshot whether the request was made
+    // despite a notice / cover warning so the Approvals page can flag it.
     const { data: insertedBooking, error: insertError } = await supabase
       .from("holiday_bookings")
       .insert({
@@ -772,6 +916,8 @@ export async function submitHolidayBooking(
         status,
         employee_note: input.note || null,
         approver1_id: teamApproverId,
+        notice_violation_at_submit: ruleCheck.noticeWarning ?? false,
+        cover_violation_at_submit: ruleCheck.coverWarning ?? false,
       })
       .select("id")
       .single();
@@ -1513,5 +1659,82 @@ export async function adminDeleteBooking(
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CLE-188 — Member Bookings utility
+// ---------------------------------------------------------------------------
+//
+// Lists every holiday_bookings row for a given member regardless of whether
+// a covering Holiday Period exists. Used by the Bookings card on the
+// Employment page so admins can find and clean up orphaned bookings
+// (typically open-ended sick bookings left behind when a member's Holiday
+// Periods are deleted). Deletion goes through the existing
+// adminDeleteBooking action — no separate hard-delete needed; that one
+// already removes the row and writes a booking.deleted audit entry.
+
+export type MemberBookingRow = {
+  id: string;
+  startDate: string;
+  endDate: string | null;
+  status: string;
+  reasonName: string;
+  reasonColour: string;
+  createdAt: string;
+  daysDeducted: number | null;
+  hoursDeducted: number | null;
+};
+
+export async function getMemberBookings(
+  memberId: string,
+): Promise<{ success: boolean; error?: string; bookings: MemberBookingRow[] }> {
+  try {
+    const { member: caller } = await getCallerMember();
+    if (caller.role !== "owner" && caller.role !== "admin") {
+      return { success: false, error: "Only admins or owners can view member bookings.", bookings: [] };
+    }
+    const admin = getAdminClient();
+
+    // Confirm target belongs to the same org as the caller.
+    const { data: target } = await admin
+      .from("members")
+      .select("id")
+      .eq("id", memberId)
+      .eq("organisation_id", caller.organisation_id)
+      .single();
+    if (!target) return { success: false, error: "Member not found", bookings: [] };
+
+    const { data, error } = await admin
+      .from("holiday_bookings")
+      .select("id, start_date, end_date, status, created_at, days_deducted, hours_deducted, absence_reasons(name, colour)")
+      .eq("member_id", memberId)
+      .eq("organisation_id", caller.organisation_id)
+      .order("start_date", { ascending: false });
+    if (error) return { success: false, error: error.message, bookings: [] };
+
+    const rows: MemberBookingRow[] = (data ?? []).map((b) => {
+      // Cast through unknown — Supabase types the joined reason as an
+      // array even though the FK guarantees a single row.
+      const reason = b.absence_reasons as unknown as { name: string; colour: string } | null;
+      return {
+        id: b.id as string,
+        startDate: b.start_date as string,
+        endDate: (b.end_date as string | null) ?? null,
+        status: b.status as string,
+        reasonName: reason?.name ?? "—",
+        reasonColour: reason?.colour ?? "#6366f1",
+        createdAt: b.created_at as string,
+        daysDeducted: b.days_deducted != null ? Number(b.days_deducted) : null,
+        hoursDeducted: b.hours_deducted != null ? Number(b.hours_deducted) : null,
+      };
+    });
+    return { success: true, bookings: rows };
+  } catch (e) {
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : "An error occurred",
+      bookings: [],
+    };
   }
 }

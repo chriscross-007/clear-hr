@@ -4,6 +4,7 @@ import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { AvailabilityClient } from "./availability-client";
 import type { TeamMember, TeamBooking, TeamBankHoliday } from "@/components/team-calendar";
+import { parseGridPrefs } from "@/lib/grid-prefs";
 
 export default async function AvailabilityPage({
   searchParams,
@@ -17,7 +18,7 @@ export default async function AvailabilityPage({
 
   const { data: member } = await supabase
     .from("members")
-    .select("id, organisation_id, role")
+    .select("id, organisation_id, role, team_id, permissions")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -26,11 +27,39 @@ export default async function AvailabilityPage({
   if (member.role !== "owner" && member.role !== "admin") notFound();
 
   // Fetch teams
-  const { data: teams } = await supabase
+  const { data: allTeams } = await supabase
     .from("teams")
     .select("id, name, min_cover")
     .eq("organisation_id", member.organisation_id)
     .order("name");
+
+  // CLE-185 — restrict the Team dropdown to the viewer's Team Access.
+  //   - owners see all teams (implicit all-teams)
+  //   - admins follow their permissions.object_access.teams setting:
+  //       scope='all'      → every team
+  //       scope='own'      → the admin's own members.team_id
+  //       scope='selected' → the explicit ids list (with own team always
+  //                          included as a safety net)
+  // The "own" default ensures admins without object_access set fall back
+  // to seeing only their own team.
+  const callerOwnTeamId = (member as { team_id?: string | null } | null)?.team_id ?? null;
+  let visibleTeamIds: Set<string> | null = null; // null = unrestricted
+  if (member.role !== "owner") {
+    const perms = (member.permissions ?? {}) as Record<string, unknown>;
+    const oa = (perms.object_access ?? {}) as Record<string, unknown>;
+    const teamAccess = (oa.teams ?? { scope: "own", ids: [] }) as { scope: "own" | "all" | "selected"; ids: string[] };
+    if (teamAccess.scope === "all") {
+      visibleTeamIds = null;
+    } else if (teamAccess.scope === "selected") {
+      visibleTeamIds = new Set([
+        ...(teamAccess.ids ?? []),
+        ...(callerOwnTeamId ? [callerOwnTeamId] : []),
+      ]);
+    } else {
+      visibleTeamIds = new Set(callerOwnTeamId ? [callerOwnTeamId] : []);
+    }
+  }
+  const teams = (allTeams ?? []).filter((t) => !visibleTeamIds || visibleTeamIds.has(t.id));
 
   // Fetch all org members
   const { data: orgMembers } = await supabase
@@ -67,15 +96,22 @@ export default async function AvailabilityPage({
     workPattern: wpMap.get(m.id) ?? null,
   }));
 
-  // Fetch all bookings for the org (current month ± 2 months range)
-  const rangeStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 2, 1));
-  const rangeEnd = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() + 3, 0));
+  // CLE-188 — initial 12-month window of bookings (current month - 3 →
+  // + 8). The TeamCalendar lazy-loads further months on demand via the
+  // `getAvailabilityBookingsForMonth` action when the user scrolls
+  // outside this initial set.
+  const todayUtcYear = new Date().getUTCFullYear();
+  const todayUtcMonth = new Date().getUTCMonth();
+  const INITIAL_MONTHS_BACK = 3;
+  const INITIAL_MONTHS_AHEAD = 8;
+  const rangeStart = new Date(Date.UTC(todayUtcYear, todayUtcMonth - INITIAL_MONTHS_BACK, 1));
+  const rangeEnd = new Date(Date.UTC(todayUtcYear, todayUtcMonth + INITIAL_MONTHS_AHEAD + 1, 0));
   const rangeStartStr = rangeStart.toISOString().slice(0, 10);
   const rangeEndStr = rangeEnd.toISOString().slice(0, 10);
 
   const { data: bookingsData } = await supabase
     .from("holiday_bookings")
-    .select("member_id, start_date, end_date, status, days_deducted, absence_reasons(name, colour)")
+    .select("id, member_id, start_date, end_date, status, days_deducted, absence_reasons(name, colour)")
     .eq("organisation_id", member.organisation_id)
     .lte("start_date", rangeEndStr)
     .or(`end_date.gte.${rangeStartStr},end_date.is.null`)
@@ -84,6 +120,7 @@ export default async function AvailabilityPage({
   const teamBookings: TeamBooking[] = (bookingsData ?? []).map((b) => {
     const reason = b.absence_reasons as unknown as { name: string; colour: string } | null;
     return {
+      id: b.id as string,
       member_id: b.member_id,
       start_date: b.start_date,
       end_date: b.end_date,
@@ -93,6 +130,25 @@ export default async function AvailabilityPage({
       reason_colour: reason?.colour ?? "#6366f1",
     };
   });
+
+  // List of "YYYY-MM" keys covered by the initial fetch — the client uses
+  // this to skip re-fetching months it already has loaded.
+  const initialLoadedMonths: string[] = [];
+  for (let offset = -INITIAL_MONTHS_BACK; offset <= INITIAL_MONTHS_AHEAD; offset++) {
+    const d = new Date(Date.UTC(todayUtcYear, todayUtcMonth + offset, 1));
+    initialLoadedMonths.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+  }
+
+  // CLE-189 — load the admin's persisted Team dropdown selection so the
+  // filter survives page reloads + navigation. Stored as `selectedKey` on
+  // the generic user_grid_preferences row keyed by grid_id="availability".
+  const { data: gridPrefRow } = await supabase
+    .from("user_grid_preferences")
+    .select("prefs")
+    .eq("user_id", user.id)
+    .eq("grid_id", "availability")
+    .maybeSingle();
+  const initialSelectedTeamId = parseGridPrefs((gridPrefRow as { prefs?: unknown } | null)?.prefs).selectedKey ?? "__all__";
 
   // Fetch org country code for bank holiday filtering
   const { data: orgRow } = await supabase
@@ -122,12 +178,14 @@ export default async function AvailabilityPage({
   return (
     <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
       <AvailabilityClient
-        teams={(teams ?? []) as { id: string; name: string; min_cover: number | null }[]}
+        teams={teams as { id: string; name: string; min_cover: number | null }[]}
         members={teamMembers}
         bookings={teamBookings}
         bankHolidays={bhList}
         bankHolidayColour={bankHolidayColour}
         initialMonth={monthParam ? `${monthParam}-01` : undefined}
+        initialLoadedMonths={initialLoadedMonths}
+        initialSelectedTeamId={initialSelectedTeamId}
       />
     </div>
   );

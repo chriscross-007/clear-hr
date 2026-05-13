@@ -28,9 +28,11 @@ import {
   submitHolidayBooking,
   getMyWorkPattern,
   getMyBankHolidayContext,
+  getMyTeamCoverContext,
   type AbsenceReasonOption,
   type BalanceSummary,
   type HolidayBookingRow,
+  type TeamCoverContext,
 } from "../holiday-booking-actions";
 import { cancelMyBooking } from "../approvals-actions";
 import { getMyOrgNoticeContext } from "../notice-period-actions";
@@ -97,6 +99,9 @@ export function BookHolidaySheet({
   const [bankHolidayHandling, setBankHolidayHandling] = useState<string>("deducted");
   const [noticeRules, setNoticeRules] = useState<{ min_booking_days: number; notice_days: number }[]>([]);
   const [noticeBlocks, setNoticeBlocks] = useState<boolean>(false);
+  // CLE-187 — team-cover preview context. Loaded once on open; the client
+  // computes per-day cover impact locally as the user adjusts dates.
+  const [teamCover, setTeamCover] = useState<TeamCoverContext | null>(null);
 
   // Load work pattern + bank holidays + notice rules on sheet open
   useEffect(() => {
@@ -109,6 +114,9 @@ export function BookHolidaySheet({
       getMyOrgNoticeContext().then((ctx) => {
         setNoticeRules(ctx.rules);
         setNoticeBlocks(ctx.blockRequests);
+      });
+      getMyTeamCoverContext().then((res) => {
+        setTeamCover(res.success ? res.context : null);
       });
     }
   }, [open]);
@@ -301,13 +309,65 @@ export function BookHolidaySheet({
   }
 
   const noticeBlocksSubmit = noticeViolation !== null && noticeBlocks;
+
+  // CLE-187 — team-cover preview. Walk each working day in the selected
+  // range, count teammates already on leave (pending or approved), and
+  // record the first day where dropping the caller too would push present
+  // members below the team's Min Cover. Same block-or-warn semantics as
+  // notice rules (driven by the same `noticeBlocks` flag from the org).
+  const coverViolation: {
+    firstDate: string;
+    present: number;
+    minCover: number;
+    teamSize: number;
+    onLeaveCount: number;
+    onLeaveIds: string[];
+  } | null = (() => {
+    if (isExistingMode) return null;
+    if (!startDate || !endDate) return null;
+    if (!teamCover || !teamCover.teamId) return null;
+    if (teamCover.minCover <= 0) return null;
+    const start = new Date(startDate + "T00:00:00Z");
+    const end = new Date(endDate + "T00:00:00Z");
+    const cur = new Date(start);
+    while (cur <= end) {
+      const dow = cur.getUTCDay();
+      const iso = cur.toISOString().slice(0, 10);
+      const isWeekend = dow === 0 || dow === 6;
+      const isBankHoliday = bankHolidays.has(iso) && bankHolidayHandling === "additional";
+      if (!isWeekend && !isBankHoliday) {
+        const onLeave = new Set<string>();
+        for (const b of teamCover.teammateBookings) {
+          if (b.startDate > iso) continue;
+          if (b.endDate !== null && b.endDate < iso) continue;
+          onLeave.add(b.memberId);
+        }
+        const present = teamCover.teamSize - onLeave.size - 1;
+        if (present < teamCover.minCover) {
+          return {
+            firstDate: iso,
+            present,
+            minCover: teamCover.minCover,
+            teamSize: teamCover.teamSize,
+            onLeaveCount: onLeave.size,
+            onLeaveIds: [...onLeave],
+          };
+        }
+      }
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    return null;
+  })();
+  const coverBlocksSubmit = coverViolation !== null && (teamCover?.blockRequests ?? false);
+
   const canSubmit = !isExistingMode
     && reasonId
     && startDate
     && endDate
     && endDate >= startDate
     && estimatedDeduction > 0
-    && !noticeBlocksSubmit;
+    && !noticeBlocksSubmit
+    && !coverBlocksSubmit;
 
   async function handleDelete() {
     if (!existingBooking) return;
@@ -512,6 +572,45 @@ export function BookHolidaySheet({
                   {noticeViolation.combined
                     ? ` — counting an existing consecutive booking, this is ${noticeViolation.combinedDays} days in total`
                     : ""}).
+                </span>
+              </div>
+            );
+          })()}
+
+          {/* Team cover preview (CLE-187). Hard-block when the org has
+              notice_rules_block_requests=true; soft-warn otherwise.
+              CLE-188 — show the exact computed present count + minimum so
+              the user can see how close they are and so any mis-counting
+              shows up directly in the message. */}
+          {coverViolation !== null && (() => {
+            // CLE-187 — production-ready wording. Names of already-on-leave
+            // teammates go inside the sentence (not parens) so admins can
+            // see at a glance which existing bookings are pushing the team
+            // close to the minimum.
+            const onLeaveNames = coverViolation.onLeaveIds
+              .map((id) => teamCover?.teammateNames[id] ?? id)
+              .join(" and ");
+            const alreadyOff = coverViolation.onLeaveCount > 0
+              ? ` ${onLeaveNames} ${coverViolation.onLeaveCount === 1 ? "is" : "are"} already off that day.`
+              : "";
+            return coverBlocksSubmit ? (
+              <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>
+                  This booking would leave only <strong>{coverViolation.present}</strong>{" "}
+                  member{coverViolation.present === 1 ? "" : "s"} on duty on{" "}
+                  <strong>{coverViolation.firstDate}</strong> — the team requires at least{" "}
+                  <strong>{coverViolation.minCover}</strong>.{alreadyOff}
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>
+                  This request will likely be rejected — it would leave only{" "}
+                  <strong>{coverViolation.present}</strong> member{coverViolation.present === 1 ? "" : "s"} on duty on{" "}
+                  <strong>{coverViolation.firstDate}</strong>, below the team minimum of{" "}
+                  <strong>{coverViolation.minCover}</strong>.{alreadyOff}
                 </span>
               </div>
             );

@@ -616,10 +616,18 @@ export async function setMemberApprovalProfile(
   profileId: string | null,
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase, member } = await requireAdminOrOwner();
+    // Verify caller's permission first via the session client.
+    const { member } = await requireAdminOrOwner();
+
+    // Cross-user reads + write use the admin client to bypass RLS — the
+    // members UPDATE policy in the DB compares can_manage_members against
+    // a boolean, but our codebase stores it as a "read"/"write" string,
+    // which throws "invalid input syntax for type boolean: 'write'" when
+    // the policy runs. Caller permissions are already verified above.
+    const admin = getAdminClient();
 
     // Verify target member belongs to caller's org.
-    const { data: target } = await supabase
+    const { data: target } = await admin
       .from("members")
       .select("id, organisation_id, approval_profile_assignments")
       .eq("id", memberId)
@@ -631,7 +639,7 @@ export async function setMemberApprovalProfile(
     // Verify profile (if given) belongs to caller's org and matches the
     // absence type.
     if (profileId) {
-      const { data: prof } = await supabase
+      const { data: prof } = await admin
         .from("approval_profiles")
         .select("id, organisation_id, absence_type_id")
         .eq("id", profileId)
@@ -652,7 +660,7 @@ export async function setMemberApprovalProfile(
       next[absenceTypeId] = profileId;
     }
 
-    const { error } = await supabase
+    const { error } = await admin
       .from("members")
       .update({ approval_profile_assignments: next })
       .eq("id", memberId);

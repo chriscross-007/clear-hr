@@ -10,6 +10,11 @@ export type GridPrefs = {
   pdfPageBreak?: boolean;
   pdfRepeatHeaders?: boolean;
   aggregateMetrics?: string[];
+  /** CLE-189 — used by the Availability page to remember the admin's
+   *  last-selected team. Treated as a generic "selected key" so we can
+   *  reuse the same field on other simple single-select pages without
+   *  inventing per-page columns. */
+  selectedKey?: string;
 };
 
 /** Normalises the raw JSONB value from user_grid_preferences.prefs.
@@ -31,6 +36,7 @@ export function parseGridPrefs(raw: unknown): GridPrefs {
       aggregateMetrics: Array.isArray(obj.aggregateMetrics)
         ? (obj.aggregateMetrics as unknown[]).filter((m): m is string => typeof m === "string")
         : undefined,
+      selectedKey: typeof obj.selectedKey === "string" && obj.selectedKey ? obj.selectedKey : undefined,
     };
   }
   return { columns: [] };

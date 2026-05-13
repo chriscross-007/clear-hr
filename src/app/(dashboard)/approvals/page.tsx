@@ -74,9 +74,15 @@ export default async function ApprovalsPage() {
     workPattern: wpMap.get(m.id) ?? null,
   }));
 
-  // Calendar bookings (±2 months range)
-  const rangeStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 2, 1));
-  const rangeEnd = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() + 3, 0));
+  // CLE-188 — widened from ±2 months to ±12. The inline TeamCalendar uses
+  // a focusRange centred on the booking being approved, so the fetched
+  // bookings must cover whichever month that booking falls in (not just
+  // months near "today"). Approvals is admin-only and bounded in volume,
+  // so over-fetching here is cheap.
+  const todayUtcYear = new Date().getUTCFullYear();
+  const todayUtcMonth = new Date().getUTCMonth();
+  const rangeStart = new Date(Date.UTC(todayUtcYear, todayUtcMonth - 12, 1));
+  const rangeEnd = new Date(Date.UTC(todayUtcYear, todayUtcMonth + 13, 0));
   const rangeStartStr = rangeStart.toISOString().slice(0, 10);
   const rangeEndStr = rangeEnd.toISOString().slice(0, 10);
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Info, Plus, Trash2 } from "lucide-react";
@@ -13,7 +13,7 @@ import { ProfileManager } from "./organisation-edit-dialog-profiles";
 import { CustomFieldsManager } from "./organisation-edit-dialog-custom-fields";
 import { BackupsManager } from "./organisation-edit-dialog-backups";
 import { RatesManager } from "./organisation-edit-dialog-rates";
-import { ApprovalsManager } from "./organisation-edit-dialog-approvals";
+import { ApprovalsManager, type ApprovalsManagerHandle } from "./organisation-edit-dialog-approvals";
 import { getCustomFieldDefs } from "./employees/custom-field-actions";
 import type { FieldDef } from "./employees/custom-field-actions";
 import { getRates } from "./rates-actions";
@@ -182,6 +182,10 @@ export function OrganisationEditDialog({
   const [originalCountryCode, setOriginalCountryCode] = useState("england-and-wales");
   const [bankHolidaysList, setBankHolidaysList] = useState<BankHolidayEntry[]>([]);
   const [seedingBankHolidays, setSeedingBankHolidays] = useState(false);
+  // CLE-186 — ref into the Approvals tab so the dialog's main Save/Cancel
+  // can drive an in-progress profile edit (no inline buttons in the tab).
+  const approvalsRef = useRef<ApprovalsManagerHandle>(null);
+  const [approvalsEditorDirty, setApprovalsEditorDirty] = useState(false);
   const router = useRouter();
   const isOwner = role === "owner";
   // Admins with can_edit_organisation see the same tabs as the owner. The
@@ -322,6 +326,17 @@ export function OrganisationEditDialog({
     e.preventDefault();
     setLoading(true);
     setError(null);
+
+    // CLE-186 — commit any in-progress approval-profile edit before the
+    // org-level save. If validation in the profile editor fails, abort.
+    if (approvalsRef.current?.hasInProgress()) {
+      const res = await approvalsRef.current.commit();
+      if (!res.success) {
+        setError(res.error ?? "Failed to save approval profile");
+        setLoading(false);
+        return;
+      }
+    }
 
     // Save any pending team renames
     const pendingRenames = teams
@@ -524,11 +539,13 @@ export function OrganisationEditDialog({
 
   // Cancel — discards in-flight edits; dialog stays open.
   function handleCancel() {
+    approvalsRef.current?.revert();
     resetFormFields();
   }
 
   // Close — discards in-flight edits AND closes the dialog.
   function handleClose() {
+    approvalsRef.current?.revert();
     if (fieldDefsModified) router.refresh();
     resetFormFields();
     onOpenChange(false);
@@ -1388,7 +1405,10 @@ export function OrganisationEditDialog({
             {/* Approvals tab — CLE-181 */}
             {canManageOrg && (
               <TabsContent value="approvals" className="mt-4 max-h-[400px] overflow-y-auto">
-                <ApprovalsManager />
+                <ApprovalsManager
+                  ref={approvalsRef}
+                  onDirtyChange={setApprovalsEditorDirty}
+                />
               </TabsContent>
             )}
 
@@ -1420,7 +1440,7 @@ export function OrganisationEditDialog({
                 type="button"
                 variant="outline"
                 onClick={handleCancel}
-                disabled={loading || !hasChanges}
+                disabled={loading || (!hasChanges && !approvalsEditorDirty)}
               >
                 Cancel
               </Button>
@@ -1432,7 +1452,7 @@ export function OrganisationEditDialog({
               >
                 Close
               </Button>
-              <Button type="submit" disabled={loading || !hasChanges}>
+              <Button type="submit" disabled={loading || (!hasChanges && !approvalsEditorDirty)}>
                 {loading ? "Saving..." : "Save changes"}
               </Button>
             </DialogFooter>

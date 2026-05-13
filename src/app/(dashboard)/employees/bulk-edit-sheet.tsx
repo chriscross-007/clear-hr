@@ -32,12 +32,20 @@ interface BulkEditSheetProps {
   memberLabel: string;
   customFieldDefs: FieldDef[];
   currencySymbol: string;
+  /** CLE-186 — Annual Leave absence_type id; null if the org has none. */
+  holidayAbsenceTypeId: string | null;
+  /** CLE-186 — Holiday (Annual Leave) approval profiles to choose from. */
+  holidayApprovalProfiles: { id: string; name: string; isDefault: boolean }[];
   onBulkUpdate: (updatedIds: string[], updates: BulkUpdatePayload) => void;
 }
 
 const NO_CHANGE = "no-change";
 // Sentinel for checkbox fields — distinct from true/false
 const CHECKBOX_NO_CHANGE = "no-change";
+// CLE-186 — bulk Approval Profile picker uses string sentinels because
+// Select can't hold a JS `null`. NO_CHANGE = leave alone, LEGACY = clear
+// the pointer ("Any admin"), any other value = profile id.
+const APPROVAL_LEGACY = "approval-legacy";
 
 export function BulkEditSheet({
   open,
@@ -48,16 +56,25 @@ export function BulkEditSheet({
   memberLabel,
   customFieldDefs,
   currencySymbol,
+  holidayAbsenceTypeId,
+  holidayApprovalProfiles,
   onBulkUpdate,
 }: BulkEditSheetProps) {
   const [selectedTeamId, setSelectedTeamId] = useState(NO_CHANGE);
   const [selectedRole, setSelectedRole] = useState(NO_CHANGE);
+  const [selectedApprovalProfile, setSelectedApprovalProfile] = useState(NO_CHANGE);
   const [customFieldValues, setCustomFieldValues] = useState<Map<string, unknown>>(new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const hasCustomChanges = customFieldValues.size > 0;
-  const hasChanges = selectedTeamId !== NO_CHANGE || selectedRole !== NO_CHANGE || hasCustomChanges;
+  const hasChanges =
+    selectedTeamId !== NO_CHANGE ||
+    selectedRole !== NO_CHANGE ||
+    selectedApprovalProfile !== NO_CHANGE ||
+    hasCustomChanges;
+  const canShowApprovalProfile =
+    holidayAbsenceTypeId !== null && holidayApprovalProfiles.length > 0;
 
   // --- Summary ---
   const summaryParts: string[] = [];
@@ -67,6 +84,14 @@ export function BulkEditSheet({
   }
   if (selectedRole !== NO_CHANGE) {
     summaryParts.push(`Role → ${selectedRole === "admin" ? "Admin" : capitalize(memberLabel)}`);
+  }
+  if (selectedApprovalProfile !== NO_CHANGE) {
+    let label = "Any admin";
+    if (selectedApprovalProfile !== APPROVAL_LEGACY) {
+      const found = holidayApprovalProfiles.find((p) => p.id === selectedApprovalProfile);
+      label = found?.name ?? "Unknown";
+    }
+    summaryParts.push(`Approver Profile → ${label}`);
   }
   for (const [fieldKey, value] of customFieldValues) {
     const def = customFieldDefs.find((d) => d.field_key === fieldKey);
@@ -103,6 +128,7 @@ export function BulkEditSheet({
     if (!nextOpen) {
       setSelectedTeamId(NO_CHANGE);
       setSelectedRole(NO_CHANGE);
+      setSelectedApprovalProfile(NO_CHANGE);
       setCustomFieldValues(new Map());
       setError(null);
     }
@@ -116,6 +142,10 @@ export function BulkEditSheet({
       const updates: BulkUpdatePayload = {};
       if (selectedTeamId !== NO_CHANGE) updates.team_id = selectedTeamId;
       if (selectedRole !== NO_CHANGE) updates.role = selectedRole as "admin" | "employee";
+      if (selectedApprovalProfile !== NO_CHANGE) {
+        updates.approval_profile_id =
+          selectedApprovalProfile === APPROVAL_LEGACY ? null : selectedApprovalProfile;
+      }
 
       if (hasCustomChanges) {
         const cfUpdates: Record<string, unknown> = {};
@@ -190,6 +220,30 @@ export function BulkEditSheet({
               </SelectContent>
             </Select>
           </div>
+
+          {/* CLE-186 — Approver Profile (Holiday) */}
+          {canShowApprovalProfile && (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">Approver Profile</label>
+              <Select value={selectedApprovalProfile} onValueChange={setSelectedApprovalProfile}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_CHANGE}>No change</SelectItem>
+                  {holidayApprovalProfiles.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}{p.isDefault ? " (default)" : ""}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value={APPROVAL_LEGACY}>Any admin (no profile)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Sets the Holiday (Annual Leave) approval profile for each selected {memberLabel.toLowerCase()}.
+              </p>
+            </div>
+          )}
 
           {/* Custom fields */}
           {customFieldDefs.length > 0 && (

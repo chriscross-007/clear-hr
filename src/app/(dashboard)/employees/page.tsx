@@ -51,7 +51,7 @@ export default async function EmployeesPage({
   const canSeeCurrency = membership?.role === "owner" || (membership?.role === "admin" && (permissions.can_see_currency as boolean) === true);
 
   const today = new Date().toISOString().slice(0, 10);
-  const [{ data: members }, { data: teams }, { data: adminProfiles }, { data: employeeProfiles }, { data: columnPrefsRow }, { data: customFieldDefs }, { data: currentHolidayPeriods }, { data: empWorkProfiles }] =
+  const [{ data: members }, { data: teams }, { data: adminProfiles }, { data: employeeProfiles }, { data: columnPrefsRow }, { data: customFieldDefs }, { data: currentHolidayPeriods }, { data: empWorkProfiles }, { data: approvalProfilesRaw }, { data: memberAssignmentsRaw }, { data: holidayAbsenceTypeRow }] =
     await Promise.all([
       supabase.rpc("get_org_members"),
       supabase.from("teams").select("id, name").eq("organisation_id", membership!.organisation_id).order("name"),
@@ -65,6 +65,13 @@ export default async function EmployeesPage({
       // until Phase 4 redesigns the column properly.
       supabase.from("holiday_periods").select("member_id, name").eq("organisation_id", membership!.organisation_id).lte("start_date", today).gte("end_date", today),
       supabase.from("employee_work_profiles").select("member_id, effective_from, work_profiles(name)").lte("effective_from", today).order("effective_from", { ascending: false }),
+      // CLE-186 — Approver Profile column. We fetch the org's approval
+      // profiles, every member's per-absence-type pointer, and resolve the
+      // Holiday (Annual Leave) profile name for each member as the column's
+      // displayed value.
+      supabase.from("approval_profiles").select("id, name, absence_type_id, is_default").eq("organisation_id", membership!.organisation_id),
+      supabase.from("members").select("id, approval_profile_assignments").eq("organisation_id", membership!.organisation_id),
+      supabase.from("absence_types").select("id").eq("organisation_id", membership!.organisation_id).eq("is_default", true).eq("name", "Annual Leave").maybeSingle(),
     ]);
 
   // Build current Holiday Period name map: member_id → period name
@@ -88,12 +95,45 @@ export default async function EmployeesPage({
   const visibleDefs = canSeeCurrency ? allDefs : allDefs.filter((d) => d.field_type !== "currency");
   const gridPrefs = parseGridPrefs(columnPrefsRow?.prefs);
 
+  // CLE-186 — build profile id → name map and member id → assignments map,
+  // then resolve each member's Holiday (Annual Leave) approval profile name
+  // for the Approver Profile column.
+  const allApprovalProfiles = (approvalProfilesRaw ?? []) as { id: string; name: string; absence_type_id: string; is_default: boolean }[];
+  const profileNameById = new Map<string, string>();
+  for (const p of allApprovalProfiles) {
+    profileNameById.set(p.id, p.name);
+  }
+  const assignmentsByMemberId = new Map<string, Record<string, string>>();
+  for (const m of (memberAssignmentsRaw ?? []) as { id: string; approval_profile_assignments: Record<string, string> | null }[]) {
+    assignmentsByMemberId.set(m.id, m.approval_profile_assignments ?? {});
+  }
+  const holidayAbsenceTypeId = (holidayAbsenceTypeRow as { id: string } | null)?.id ?? null;
+  // Profiles for the Holiday (Annual Leave) absence type — used by the
+  // Bulk Edit sheet's Approval Profile picker.
+  const holidayApprovalProfiles = holidayAbsenceTypeId
+    ? allApprovalProfiles
+        .filter((p) => p.absence_type_id === holidayAbsenceTypeId)
+        .map((p) => ({ id: p.id, name: p.name, isDefault: p.is_default }))
+    : [];
+
   // Enrich members with holiday profile and work pattern names
-  const enrichedMembers = (members ?? []).map((m: Record<string, unknown>) => ({
-    ...m,
-    holiday_profile_name: holidayProfileMap.get(m.member_id as string) ?? null,
-    work_pattern_name: workPatternMap.get(m.member_id as string) ?? null,
-  }));
+  const enrichedMembers = (members ?? []).map((m: Record<string, unknown>) => {
+    const memberIdStr = m.member_id as string;
+    let approvalProfileName: string | null = null;
+    if (holidayAbsenceTypeId) {
+      const assignments = assignmentsByMemberId.get(memberIdStr) ?? {};
+      const profileId = assignments[holidayAbsenceTypeId];
+      if (profileId) {
+        approvalProfileName = profileNameById.get(profileId) ?? null;
+      }
+    }
+    return {
+      ...m,
+      holiday_profile_name: holidayProfileMap.get(memberIdStr) ?? null,
+      work_pattern_name: workPatternMap.get(memberIdStr) ?? null,
+      approval_profile_name: approvalProfileName,
+    };
+  });
 
   return (
     <EmployeesClient
@@ -117,6 +157,8 @@ export default async function EmployeesPage({
       currencySymbol={currencySymbol}
       canSeeCurrency={canSeeCurrency}
       userId={user.id}
+      holidayAbsenceTypeId={holidayAbsenceTypeId}
+      holidayApprovalProfiles={holidayApprovalProfiles}
     />
   );
 }

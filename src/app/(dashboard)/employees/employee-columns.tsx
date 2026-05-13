@@ -57,6 +57,10 @@ export type Member = {
   updated_at: string | null;
   holiday_profile_name: string | null;
   work_pattern_name: string | null;
+  /** CLE-186 — Holiday (Annual Leave) approval profile name for this member.
+   *  NULL = member has no per-employee pointer for Annual Leave, i.e.
+   *  falls back to the legacy "any admin can approve" feed. */
+  approval_profile_name: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -181,12 +185,12 @@ export const DATE_PRESET_LABELS: Record<string, string> = {
 
 export const ALL_EMPLOYEE_COLS = [
   "avatar", "payroll_number", "first_name", "last_name", "email", "role", "profile",
-  "team", "holiday_profile", "work_pattern", "status", "last_log_in",
+  "team", "holiday_profile", "approval_profile", "work_pattern", "status", "last_log_in",
 ];
 
 export const DEFAULT_EMPLOYEE_COLS = [
   "avatar", "payroll_number", "first_name", "last_name", "email", "role", "profile",
-  "team", "holiday_profile", "work_pattern", "status",
+  "team", "holiday_profile", "approval_profile", "work_pattern", "status",
 ];
 
 export const EMPLOYEE_COL_LABELS: Record<string, string> = {
@@ -199,6 +203,7 @@ export const EMPLOYEE_COL_LABELS: Record<string, string> = {
   profile: "Profile",
   team: "Team",
   holiday_profile: "Holiday Profile",
+  approval_profile: "Approver Profile",
   work_pattern: "Work Pattern",
   status: "Status",
   last_log_in: "Last Log-in",
@@ -335,8 +340,11 @@ export function buildEmployeeColumns(opts: {
   customFieldDefs: FieldDef[];
   holidayProfileNames?: string[];
   workPatternNames?: string[];
+  /** CLE-186 — Distinct Approver Profile names for the Approver Profile
+   *  column's filter dropdown. */
+  approvalProfileNames?: string[];
 }): ColumnDef<Member>[] {
-  const { teams, adminProfiles, employeeProfiles, memberLabel, currencySymbol, customFieldDefs, holidayProfileNames = [], workPatternNames = [] } = opts;
+  const { teams, adminProfiles, employeeProfiles, memberLabel, currencySymbol, customFieldDefs, holidayProfileNames = [], workPatternNames = [], approvalProfileNames = [] } = opts;
   const teamMap = Object.fromEntries(teams.map((t) => [t.id, t.name]));
 
   return [
@@ -481,6 +489,31 @@ export function buildEmployeeColumns(opts: {
           >
             <option value="">All</option>
             {holidayProfileNames.sort().map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        ),
+      },
+    },
+    {
+      id: "approval_profile",
+      accessorFn: (row) => row.approval_profile_name ?? "—",
+      sortingFn: (rowA, rowB) => {
+        const a = rowA.original.approval_profile_name ?? "";
+        const b = rowB.original.approval_profile_name ?? "";
+        return a.localeCompare(b, undefined, { sensitivity: "base" });
+      },
+      header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label="Approver Profile" />,
+      cell: ({ row }) => row.original.approval_profile_name ?? "—",
+      meta: {
+        filterElement: (column) => (
+          <select
+            className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+            value={(column.getFilterValue() as string) ?? ""}
+            onChange={(e) => column.setFilterValue(e.target.value || undefined)}
+          >
+            <option value="">All</option>
+            {approvalProfileNames.sort().map((name) => (
               <option key={name} value={name}>{name}</option>
             ))}
           </select>

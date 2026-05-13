@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,10 @@ export type TeamMember = {
 };
 
 export type TeamBooking = {
+  /** Optional booking id; used by consumers that merge bookings from
+   *  multiple fetches (e.g. AvailabilityClient's lazy month loader) to
+   *  dedupe rows that overlap month boundaries. */
+  id?: string;
   member_id: string;
   start_date: string;
   end_date: string | null;
@@ -59,6 +63,25 @@ interface TeamCalendarProps {
   highlightMemberId?: string;
   /** Show a rolling window centred on this booking range (hides month nav, adds month header row) */
   focusRange?: FocusRange;
+  /** CLE-188 — fires whenever the displayed month changes (initial mount,
+   *  prev/next nav). Lets the parent lazy-load bookings for that month.
+   *  Month is 0-indexed (Jan = 0). */
+  onMonthChange?: (year: number, month: number) => void;
+  /** CLE-189 — when set, renders a "Required cover: N" line above the
+   *  table. Used by the Approvals page's inline calendar so the admin can
+   *  see the team's Min Cover next to the data. */
+  requiredCover?: number;
+  /** CLE-189 — ISO dates within the focused booking's range where
+   *  approving it would drop the team below Min Cover. The day-of-month
+   *  header cell and the matching summary-row cell render in red. */
+  offendingDates?: string[];
+  /** CLE-189 — when TRUE, the bottom summary row is labelled "Cover" and
+   *  its numbers show **members present** (team size minus the off
+   *  count) instead of the count of members off. Used by the Approvals
+   *  page so admins can read the row as "how many remain on duty" against
+   *  the Required Cover line above the table. Default FALSE preserves
+   *  the original "Off" semantics for Availability and any other caller. */
+  coverMode?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,10 +176,33 @@ function buildRollingWindow(startDate: string, endDate: string): { days: DayEntr
 // Component
 // ---------------------------------------------------------------------------
 
-export function TeamCalendar({ members, bookings, bankHolidays, bankHolidayColour = "#EF4444", initialMonth, highlightMemberId, focusRange }: TeamCalendarProps) {
+export function TeamCalendar({
+  members,
+  bookings,
+  bankHolidays,
+  bankHolidayColour = "#EF4444",
+  initialMonth,
+  highlightMemberId,
+  focusRange,
+  onMonthChange,
+  requiredCover,
+  offendingDates,
+  coverMode = false,
+}: TeamCalendarProps) {
   const initDate = initialMonth ? new Date(initialMonth + "T00:00:00Z") : new Date();
   const [year, setYear] = useState(initDate.getUTCFullYear());
   const [month, setMonth] = useState(initDate.getUTCMonth());
+
+  // CLE-188 — notify the parent on each displayed-month change so it can
+  // lazy-load bookings for that month if it hasn't already been fetched.
+  // Fires once on initial mount + on every prev/next month click.
+  useEffect(() => {
+    if (focusRange) return; // rolling window doesn't have a single "month"
+    onMonthChange?.(year, month);
+    // We intentionally exclude onMonthChange from deps so we don't refire
+    // when the parent passes a new (non-memoised) callback reference.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, month, focusRange]);
 
   const isRolling = !!focusRange;
 
@@ -183,24 +229,41 @@ export function TeamCalendar({ members, bookings, bankHolidays, bankHolidayColou
     return { dayEntries: entries, monthSpans: [] as MonthSpan[] };
   }, [focusRange, year, month]);
 
-  // Build booking lookup: "memberId:date" → booking
+  // Build booking lookup: "memberId:date" → { booking, ongoing }.
+  // CLE-187 — open-ended bookings (end_date NULL) are rendered all the way
+  // through the visible window, not capped at today. Cells past today are
+  // flagged `ongoing=true` so the row renderer can give them a striped /
+  // muted treatment, distinguishing "we know they were off" from "still
+  // open — return date not set". Matches the cover-check semantics in
+  // book-holiday-sheet: an open booking keeps counting against cover until
+  // someone closes it.
   const bookingMap = useMemo(() => {
-    const map = new Map<string, TeamBooking>();
+    const map = new Map<string, { booking: TeamBooking; ongoing: boolean }>();
+    const todayStr = new Date().toISOString().slice(0, 10);
+    // Extend open-ended cells to the end of whatever window the calendar
+    // happens to be showing (either the fixed month or the rolling focus
+    // range). Capping at the visible window keeps the map small.
+    const windowEndStr = dayEntries.length > 0
+      ? dayEntries[dayEntries.length - 1].dateStr
+      : todayStr;
     for (const b of bookings) {
       if (b.status !== "approved" && b.status !== "pending") continue;
       const s = new Date(b.start_date + "T00:00:00Z");
-      // Open-ended bookings (end_date null) extend to today
-      const todayStr = new Date().toISOString().slice(0, 10);
-      const e = new Date((b.end_date ?? todayStr) + "T00:00:00Z");
+      const eStr = b.end_date ?? windowEndStr;
+      const e = new Date(eStr + "T00:00:00Z");
       const d = new Date(s);
       while (d <= e) {
-        const key = `${b.member_id}:${isoDate(d)}`;
-        if (!map.has(key)) map.set(key, b);
+        const iso = isoDate(d);
+        const key = `${b.member_id}:${iso}`;
+        if (!map.has(key)) {
+          const ongoing = b.end_date === null && iso > todayStr;
+          map.set(key, { booking: b, ongoing });
+        }
         d.setUTCDate(d.getUTCDate() + 1);
       }
     }
     return map;
-  }, [bookings]);
+  }, [bookings, dayEntries]);
 
   const bhMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -220,6 +283,29 @@ export function TeamCalendar({ members, bookings, bankHolidays, bankHolidayColou
       return count;
     });
   }, [dayEntries, members, bookingMap]);
+
+  // CLE-189 — Offending dates for the red-highlight treatment. If the
+  // caller provides an explicit list (Approvals does — the booking-
+  // specific dates pre-computed server-side) we use that. Otherwise,
+  // when `requiredCover` is set, we auto-compute from offCounts: any
+  // working day where present count (members − off) falls below
+  // `requiredCover` is offending. This lets simple consumers like the
+  // Availability page just pass `requiredCover` and have the highlights
+  // "just work".
+  const offendingSet = useMemo(() => {
+    if (offendingDates) return new Set(offendingDates);
+    if (typeof requiredCover !== "number" || requiredCover <= 0) return new Set<string>();
+    const computed = new Set<string>();
+    for (let i = 0; i < dayEntries.length; i++) {
+      const de = dayEntries[i];
+      // Weekends and bank holidays don't trigger cover rules.
+      if (de.dow >= 5) continue;
+      if (bhMap.has(de.dateStr)) continue;
+      const present = members.length - offCounts[i];
+      if (present < requiredCover) computed.add(de.dateStr);
+    }
+    return computed;
+  }, [offendingDates, requiredCover, dayEntries, members, offCounts, bhMap]);
 
   function prevMonth() {
     if (month === 0) { setYear(year - 1); setMonth(11); }
@@ -245,6 +331,15 @@ export function TeamCalendar({ members, bookings, bankHolidays, bankHolidayColou
         </div>
       )}
 
+      {/* CLE-189 — Required cover summary line, shown when a parent (e.g.
+          the Approvals inline calendar) wants admins to see the team's
+          Min Cover next to the data. */}
+      {typeof requiredCover === "number" && requiredCover > 0 && (
+        <div className="mb-2 text-xs font-medium text-muted-foreground">
+          Required cover: <span className="text-foreground">{requiredCover}</span>
+        </div>
+      )}
+
       {/* Grid */}
       <div className="overflow-x-auto border rounded-md">
         <table className="border-collapse text-xs tabular-nums">
@@ -267,17 +362,23 @@ export function TeamCalendar({ members, bookings, bankHolidays, bankHolidayColou
             {/* Row 1: Day of month */}
             <tr>
               <th className="sticky left-0 z-10 bg-background px-2 py-1 border-r border-b min-w-32" />
-              {dayEntries.map((de) => (
-                <th
-                  key={de.dateStr}
-                  className={cn(
-                    "px-0 py-1 text-center min-w-6 w-6 border-b text-[10px]",
-                    de.isWeekend ? "bg-muted/40 font-normal" : "font-bold"
-                  )}
-                >
-                  {de.day}
-                </th>
-              ))}
+              {dayEntries.map((de) => {
+                // CLE-189 — paint the day-of-month cell red on dates where
+                // approving this booking would breach Min Cover.
+                const offending = offendingSet.has(de.dateStr);
+                return (
+                  <th
+                    key={de.dateStr}
+                    className={cn(
+                      "px-0 py-1 text-center min-w-6 w-6 border-b text-[10px]",
+                      de.isWeekend ? "bg-muted/40 font-normal" : "font-bold",
+                      offending && "bg-red-500 text-white",
+                    )}
+                  >
+                    {de.day}
+                  </th>
+                );
+              })}
             </tr>
             {/* Row 2: Day of week */}
             <tr>
@@ -313,7 +414,9 @@ export function TeamCalendar({ members, bookings, bankHolidays, bankHolidayColou
                   </td>
                   {dayEntries.map((de) => {
                     const isToday = de.dateStr === today;
-                    const booking = bookingMap.get(`${m.id}:${de.dateStr}`);
+                    const entry = bookingMap.get(`${m.id}:${de.dateStr}`);
+                    const booking = entry?.booking;
+                    const ongoing = entry?.ongoing ?? false;
                     const bh = bhMap.get(de.dateStr);
                     const working = isWorkingDay(m, de.dow);
 
@@ -321,15 +424,30 @@ export function TeamCalendar({ members, bookings, bankHolidays, bankHolidayColou
                     if (bh) {
                       bgStyle = { backgroundColor: bankHolidayColour, color: textColorForBg(bankHolidayColour) };
                     } else if (booking) {
-                      bgStyle = {
-                        backgroundColor: booking.reason_colour,
-                        opacity: booking.status === "pending" ? 0.4 : 1,
-                      };
+                      // CLE-187 — ongoing (post-today portion of an
+                      // open-ended booking) shows the reason colour as a
+                      // diagonal stripe on a muted background, marking
+                      // "still open — we don't actually know they'll be
+                      // off here". Pending bookings keep their existing
+                      // 0.4 opacity treatment.
+                      if (ongoing) {
+                        bgStyle = {
+                          backgroundImage: `repeating-linear-gradient(135deg, ${booking.reason_colour} 0 4px, transparent 4px 8px)`,
+                          backgroundColor: "transparent",
+                          opacity: 0.7,
+                        };
+                      } else {
+                        bgStyle = {
+                          backgroundColor: booking.reason_colour,
+                          opacity: booking.status === "pending" ? 0.4 : 1,
+                        };
+                      }
                     }
 
                     const tooltipParts: string[] = [];
                     if (booking) tooltipParts.push(`${booking.reason_name} (${booking.status})${booking.days_deducted ? ` — ${booking.days_deducted}d` : ""}`);
                     if (booking?.status === "pending" && booking.created_at) tooltipParts.push(`Requested: ${fmtDateTime(booking.created_at)}`);
+                    if (ongoing) tooltipParts.push("Ongoing — return date not set");
                     if (bh) tooltipParts.push(`Bank Holiday: ${bh}`);
                     if (!working && !de.isWeekend) tooltipParts.push("Non-working day");
 
@@ -354,26 +472,45 @@ export function TeamCalendar({ members, bookings, bankHolidays, bankHolidayColou
               ))
             )}
 
-            {/* Summary: Count row */}
+            {/* Summary: Count row. In default mode the label is "Off"
+                and values are the count of members off per day. In cover
+                mode (Approvals) the label is "Cover" and values flip to
+                members present (team size minus off). */}
             {members.length > 0 && (
               <tr className="border-t-2 border-border">
                 <td className="sticky left-0 z-10 bg-muted/50 px-2 py-1 text-left font-bold whitespace-nowrap border-r text-[10px] text-muted-foreground">
-                  Off
+                  {coverMode ? "Cover" : "Off"}
                 </td>
                 {dayEntries.map((de, i) => {
-                  const count = offCounts[i];
-                  const pct = members.length > 0 ? Math.round((count / members.length) * 100) : 0;
+                  const off = offCounts[i];
+                  const present = members.length - off;
+                  const value = coverMode ? present : off;
+                  const pct = members.length > 0 ? Math.round((off / members.length) * 100) : 0;
+                  const offending = offendingSet.has(de.dateStr);
+                  // CLE-189 — in cover mode we always show the number
+                  // (including 0) because "0 present" is a real and
+                  // important read for the admin. In off mode we keep
+                  // the existing "blank when nobody's off" behaviour.
+                  const display = coverMode
+                    ? String(value)
+                    : value > 0 ? String(value) : "";
                   return (
                     <td
                       key={de.dateStr}
                       className={cn(
                         "px-0 py-1 text-center text-[9px] font-medium",
                         de.isWeekend && "bg-muted/40",
-                        count > 0 && "text-amber-600",
+                        !coverMode && off > 0 && !offending && "text-amber-600",
+                        // CLE-189 — offending dates take precedence over
+                        // the amber count tint so the red highlight reads
+                        // unambiguously.
+                        offending && "bg-red-500 text-white",
                       )}
-                      title={`${count}/${members.length} (${pct}%)`}
+                      title={coverMode
+                        ? `${present} on duty of ${members.length} (${off} off)`
+                        : `${off}/${members.length} (${pct}%)`}
                     >
-                      {count > 0 ? count : ""}
+                      {display}
                     </td>
                   );
                 })}

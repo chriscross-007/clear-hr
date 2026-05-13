@@ -67,6 +67,7 @@ export type MemberResult = {
   updated_at: string | null;
   holiday_profile_name: string | null;
   work_pattern_name: string | null;
+  approval_profile_name: string | null;
 };
 
 // Add employee — creates org_member record only, no auth user
@@ -224,6 +225,7 @@ export async function addEmployee(formData: {
         updated_at: null,
         holiday_profile_name: null,
         work_pattern_name: null,
+        approval_profile_name: null,
       },
     };
   } catch (e) {
@@ -344,8 +346,8 @@ export async function updateEmployee(formData: {
   lastName: string;
   role?: string;
   payrollNumber?: string | null;
-  teamIds?: string[];
-  isMultiTeam?: boolean;
+  // CLE-185 — single team per member. Pass null to clear.
+  teamId?: string | null;
   // undefined = no change, "__none__" = clear profile, UUID = assign profile
   profileId?: string;
   updatedAt?: string | null;
@@ -501,54 +503,26 @@ export async function updateEmployee(formData: {
         }
       );
 
-      // Include team changes in the same audit entry if teamIds were provided
+      // Include team change in the same audit entry if teamId was provided
       let teamChanges: Record<string, { old: unknown; new: unknown }> | undefined;
-      if (formData.teamIds !== undefined) {
-        if (formData.isMultiTeam) {
-          // Multi-team: compare old team list vs new
-          const { data: oldTeamRows } = await admin
-            .from("member_teams")
-            .select("team_id")
-            .eq("member_id", formData.memberId);
-          const oldTeamIds = (oldTeamRows ?? []).map((r) => r.team_id).sort();
-          const newTeamIds = [...formData.teamIds].sort();
-          if (JSON.stringify(oldTeamIds) !== JSON.stringify(newTeamIds)) {
-            const allIds = [...new Set([...oldTeamIds, ...newTeamIds])];
-            const teamNameMap: Record<string, string> = {};
-            if (allIds.length > 0) {
-              const { data: teams } = await admin
-                .from("teams")
-                .select("id, name")
-                .in("id", allIds);
-              for (const t of teams ?? []) teamNameMap[t.id] = t.name;
-            }
-            teamChanges = {
-              teams: {
-                old: oldTeamIds.map((id: string) => teamNameMap[id] ?? "Unknown"),
-                new: newTeamIds.map((id: string) => teamNameMap[id] ?? "Unknown"),
-              },
-            };
+      if (formData.teamId !== undefined) {
+        const newTeamId = formData.teamId;
+        if ((beforeState.team_id ?? null) !== (newTeamId ?? null)) {
+          const idsToResolve = [beforeState.team_id, newTeamId].filter(Boolean) as string[];
+          const teamNameMap: Record<string, string> = {};
+          if (idsToResolve.length > 0) {
+            const { data: teams } = await admin
+              .from("teams")
+              .select("id, name")
+              .in("id", idsToResolve);
+            for (const t of teams ?? []) teamNameMap[t.id] = t.name;
           }
-        } else {
-          // Single-team: compare old team_id vs new
-          const newTeamId = formData.teamIds.length > 0 ? formData.teamIds[0] : null;
-          if ((beforeState.team_id ?? null) !== (newTeamId ?? null)) {
-            const idsToResolve = [beforeState.team_id, newTeamId].filter(Boolean) as string[];
-            const teamNameMap: Record<string, string> = {};
-            if (idsToResolve.length > 0) {
-              const { data: teams } = await admin
-                .from("teams")
-                .select("id, name")
-                .in("id", idsToResolve);
-              for (const t of teams ?? []) teamNameMap[t.id] = t.name;
-            }
-            teamChanges = {
-              team: {
-                old: beforeState.team_id ? (teamNameMap[beforeState.team_id] ?? "Unknown") : null,
-                new: newTeamId ? (teamNameMap[newTeamId] ?? "Unknown") : null,
-              },
-            };
-          }
+          teamChanges = {
+            team: {
+              old: beforeState.team_id ? (teamNameMap[beforeState.team_id] ?? "Unknown") : null,
+              new: newTeamId ? (teamNameMap[newTeamId] ?? "Unknown") : null,
+            },
+          };
         }
       }
 
@@ -863,6 +837,10 @@ export type BulkUpdatePayload = {
   team_id?: string;
   role?: "admin" | "employee";
   custom_fields?: Record<string, unknown>;
+  /** CLE-186 — set the Holiday (Annual Leave) approval profile for each
+   *  selected member. `null` clears the assignment (falls back to legacy
+   *  "any admin"). `undefined` = no change. */
+  approval_profile_id?: string | null;
 };
 
 export async function bulkUpdateMembers(
@@ -902,16 +880,76 @@ export async function bulkUpdateMembers(
 
     // Call the RPC via service role client (bypasses RLS, runs in single transaction)
     const admin = createAdminClient();
-    const { error } = await admin.rpc("bulk_update_members", {
-      p_member_ids: memberIds,
-      p_org_id: membership.organisation_id,
-      p_team_id: updates.team_id ?? null,
-      p_role: updates.role ?? null,
-      p_custom_fields: updates.custom_fields ?? null,
-    });
+    const hasRpcChanges =
+      updates.team_id !== undefined || updates.role !== undefined || updates.custom_fields !== undefined;
+    if (hasRpcChanges) {
+      const { error } = await admin.rpc("bulk_update_members", {
+        p_member_ids: memberIds,
+        p_org_id: membership.organisation_id,
+        p_team_id: updates.team_id ?? null,
+        p_role: updates.role ?? null,
+        p_custom_fields: updates.custom_fields ?? null,
+      });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+    }
 
-    if (error) {
-      return { success: false, error: error.message };
+    // CLE-186 — bulk-set the Holiday (Annual Leave) approval profile per
+    // member. Done separately from the RPC because that doesn't know about
+    // approval_profile_assignments. We resolve Annual Leave's absence_type
+    // id once, then merge the pointer into each member's JSONB.
+    if (updates.approval_profile_id !== undefined) {
+      const { data: holidayAbsenceType } = await admin
+        .from("absence_types")
+        .select("id")
+        .eq("organisation_id", membership.organisation_id)
+        .eq("is_default", true)
+        .eq("name", "Annual Leave")
+        .maybeSingle();
+      const absenceTypeId = (holidayAbsenceType as { id: string } | null)?.id ?? null;
+      if (absenceTypeId) {
+        // If a profile is provided, defence-check it belongs to this org +
+        // matches the Annual Leave absence type.
+        if (updates.approval_profile_id !== null) {
+          const { data: prof } = await admin
+            .from("approval_profiles")
+            .select("id, organisation_id, absence_type_id")
+            .eq("id", updates.approval_profile_id)
+            .single();
+          if (!prof || prof.organisation_id !== membership.organisation_id) {
+            return { success: false, error: "Approval profile not found" };
+          }
+          if (prof.absence_type_id !== absenceTypeId) {
+            return { success: false, error: "Approval profile is for a different absence type" };
+          }
+        }
+        // Pull current assignments for the selected members so we can merge
+        // rather than replace.
+        const { data: current } = await admin
+          .from("members")
+          .select("id, approval_profile_assignments")
+          .in("id", memberIds)
+          .eq("organisation_id", membership.organisation_id);
+        const writes = ((current ?? []) as { id: string; approval_profile_assignments: Record<string, string> | null }[])
+          .map((row) => {
+            const next = { ...(row.approval_profile_assignments ?? {}) };
+            if (updates.approval_profile_id === null) {
+              delete next[absenceTypeId];
+            } else {
+              next[absenceTypeId] = updates.approval_profile_id as string;
+            }
+            return { id: row.id, next };
+          });
+        for (const w of writes) {
+          const { error: updErr } = await admin
+            .from("members")
+            .update({ approval_profile_assignments: w.next })
+            .eq("id", w.id)
+            .eq("organisation_id", membership.organisation_id);
+          if (updErr) return { success: false, error: updErr.message };
+        }
+      }
     }
 
     // Audit log
@@ -919,6 +957,7 @@ export async function bulkUpdateMembers(
     if (updates.team_id) changedParts.push("team");
     if (updates.role) changedParts.push("role");
     if (updates.custom_fields) changedParts.push("custom fields");
+    if (updates.approval_profile_id !== undefined) changedParts.push("approver profile");
 
     logAudit({
       organisationId: membership.organisation_id,

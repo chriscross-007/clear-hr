@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { EmploymentForm } from "./employment-form";
+import { BookingsCard } from "./bookings-card";
 import type { WorkProfileAssignmentRow } from "./work-profile-section";
 
 export default async function EmploymentPage({
@@ -50,7 +51,6 @@ export default async function EmploymentPage({
     { data: adminProfiles },
     { data: employeeProfiles },
     { data: customFieldDefs },
-    { data: teamsAssignments },
     { data: empWorkProfiles },
     { data: orgWorkProfiles },
     { data: orgRow },
@@ -59,7 +59,6 @@ export default async function EmploymentPage({
     supabase.from("admin_profiles").select("id, name").eq("organisation_id", caller.organisation_id).order("name"),
     supabase.from("employee_profiles").select("id, name").eq("organisation_id", caller.organisation_id).order("name"),
     supabase.from("custom_field_definitions").select("id, label, field_key, field_type, options, required, sort_order, max_decimal_places").eq("organisation_id", caller.organisation_id).eq("object_type", "member").order("sort_order"),
-    supabase.from("member_teams").select("team_id").eq("member_id", memberId),
     supabase.from("employee_work_profiles").select("id, work_profile_id, effective_from, work_profiles(name)").eq("member_id", memberId).order("effective_from", { ascending: false }),
     supabase.from("work_profiles").select("id, name").eq("organisation_id", caller.organisation_id).is("member_id", null).order("name"),
     supabase.from("organisations").select("default_work_profile_id").eq("id", caller.organisation_id).single(),
@@ -82,9 +81,6 @@ export default async function EmploymentPage({
   const currentProfileId = member.role === "admin" || member.role === "owner"
     ? (member.admin_profile_id as string | null)
     : (member.employee_profile_id as string | null);
-
-  const selectedTeamIds: string[] = (teamsAssignments ?? []).map((r) => r.team_id as string);
-  if (selectedTeamIds.length === 0 && member.team_id) selectedTeamIds.push(member.team_id);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
@@ -112,7 +108,6 @@ export default async function EmploymentPage({
           updated_at: member.updated_at,
           start_date: member.start_date,
           current_profile_id: currentProfileId,
-          selected_team_ids: selectedTeamIds,
         }}
         canEdit={canEdit}
         canDelete={canAddMembers && member.role !== "owner"}
@@ -125,6 +120,18 @@ export default async function EmploymentPage({
         orgWorkProfiles={(orgWorkProfiles ?? []) as { id: string; name: string }[]}
         orgDefaultWorkProfileId={orgDefaultWorkProfileId}
       />
+
+      {/* CLE-188 — Member Bookings utility. Admin/owner with manage-members
+          rights only. Lets admins find and delete orphaned bookings (e.g.
+          an open-ended sick booking left behind after Holiday Periods were
+          removed). */}
+      {canEdit && (
+        <BookingsCard
+          memberId={member.id}
+          memberName={`${member.first_name} ${member.last_name}`}
+          canManage={canEdit}
+        />
+      )}
     </div>
   );
 }

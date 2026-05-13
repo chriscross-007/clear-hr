@@ -71,6 +71,11 @@ interface EmployeesClientProps {
   currencySymbol: string;
   canSeeCurrency: boolean;
   userId: string;
+  /** CLE-186 — Annual Leave absence_type id for the org (or null if absent). */
+  holidayAbsenceTypeId: string | null;
+  /** CLE-186 — Holiday (Annual Leave) approval profiles for the Bulk Edit
+   *  sheet's Approval Profile picker. */
+  holidayApprovalProfiles: { id: string; name: string; isDefault: boolean }[];
 }
 
 export function EmployeesClient({
@@ -93,6 +98,8 @@ export function EmployeesClient({
   customFieldDefs,
   currencySymbol,
   userId,
+  holidayAbsenceTypeId,
+  holidayApprovalProfiles,
 }: EmployeesClientProps) {
   const { memberLabel } = useMemberLabel();
   const router = useRouter();
@@ -180,6 +187,7 @@ export function EmployeesClient({
 
   const holidayProfileNames = [...new Set(members.map((m) => m.holiday_profile_name).filter(Boolean))] as string[];
   const workPatternNames = [...new Set(members.map((m) => m.work_pattern_name).filter(Boolean))] as string[];
+  const approvalProfileNames = [...new Set(members.map((m) => m.approval_profile_name).filter(Boolean))] as string[];
 
   const baseColumns = buildEmployeeColumns({
     teams,
@@ -191,6 +199,7 @@ export function EmployeesClient({
     customFieldDefs,
     holidayProfileNames,
     workPatternNames,
+    approvalProfileNames,
   });
 
   const selectColumn: ColumnDef<Member> = useMemo(() => ({
@@ -612,6 +621,8 @@ export function EmployeesClient({
         memberLabel={memberLabel}
         customFieldDefs={customFieldDefs}
         currencySymbol={currencySymbol}
+        holidayAbsenceTypeId={holidayAbsenceTypeId}
+        holidayApprovalProfiles={holidayApprovalProfiles}
         onBulkUpdate={(updatedIds, updates) => {
           // Optimistic update — apply changes to local state immediately
           setMembers((prev) =>
@@ -625,6 +636,15 @@ export function EmployeesClient({
                   ...member.custom_fields,
                   ...updates.custom_fields,
                 };
+              }
+              // CLE-186 — update the Approver Profile column too
+              if (updates.approval_profile_id !== undefined) {
+                if (updates.approval_profile_id === null) {
+                  updated.approval_profile_name = null;
+                } else {
+                  const found = holidayApprovalProfiles.find((p) => p.id === updates.approval_profile_id);
+                  updated.approval_profile_name = found?.name ?? null;
+                }
               }
               return updated;
             })

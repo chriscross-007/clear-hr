@@ -79,11 +79,14 @@ function fmtDateRange(start: string, end: string | null, startHalf: string | nul
   return label;
 }
 
-/** CLE-183 — small "L1 ✓ → L2 ● → L3 ○" indicator under the status badge.
- *  Shows where in the ladder the booking currently sits and which earlier
- *  levels have already approved. Only renders for profile-routed bookings. */
+/** CLE-186 — "L1 → L2 → L3" indicator under the status badge.
+ *  Renders only when the booking's profile has more than one level. The
+ *  current level is bold; past (approved) and future (not yet activated)
+ *  levels are faded. Approved → strikethrough as well, so the eye can
+ *  separate "done" from "upcoming". */
 function LevelLadder(props: {
   currentLevel: number;
+  totalLevels: number;
   history: {
     level: number;
     status: "pending" | "approved" | "rejected" | "withdrawn";
@@ -92,27 +95,31 @@ function LevelLadder(props: {
     routed_to: "main" | "delegate" | null;
   }[];
 }) {
-  // Build a synthetic 3-rung ladder. Rungs without a history row haven't been
-  // activated yet (either they were skipped by threshold, or they're still
-  // ahead in the cascade). We can't tell the two apart at this stage, so we
-  // render them as "—".
+  if (props.totalLevels <= 1) return null;
   const byLevel = new Map(props.history.map((h) => [h.level, h]));
-  const rungs = [1, 2, 3].map((level) => {
+  const rungs = Array.from({ length: props.totalLevels }, (_, i) => {
+    const level = i + 1;
     const entry = byLevel.get(level);
     if (level === props.currentLevel) {
-      return { level, mark: "●", className: "text-foreground font-medium" };
+      return { level, className: "text-foreground font-medium" };
     }
-    if (!entry) return { level, mark: "—", className: "text-muted-foreground/50" };
-    if (entry.status === "approved") return { level, mark: "✓", className: "text-emerald-600" };
-    if (entry.status === "rejected") return { level, mark: "✗", className: "text-red-600" };
-    if (entry.status === "withdrawn") return { level, mark: "—", className: "text-muted-foreground/50" };
-    return { level, mark: "○", className: "text-muted-foreground" };
+    if (entry?.status === "approved") {
+      return { level, className: "text-muted-foreground/60 line-through" };
+    }
+    if (entry?.status === "rejected") {
+      return { level, className: "text-red-600/60 line-through" };
+    }
+    // Future level (not yet activated) or skipped — render faint.
+    return { level, className: "text-muted-foreground/50" };
   });
   return (
-    <div className="flex items-center gap-1 text-[11px] text-muted-foreground" title={`Approving at Level ${props.currentLevel}`}>
+    <div
+      className="flex items-center gap-1 text-[11px] text-muted-foreground"
+      title={`Level ${props.currentLevel} of ${props.totalLevels}`}
+    >
       {rungs.map((r, i) => (
         <span key={r.level} className="flex items-center gap-1">
-          <span className={r.className}>L{r.level} {r.mark}</span>
+          <span className={r.className}>L{r.level}</span>
           {i < rungs.length - 1 && <span className="text-muted-foreground/40">→</span>}
         </span>
       ))}
@@ -563,7 +570,11 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
         )}
       </div>
 
-      {/* Approve dialog */}
+      {/* Approve dialog. CLE-189 — when the request was raised over a
+          notice or cover warning, render a prominent warning above the
+          note input so the admin has to consciously confirm. The Approve
+          button label changes to "Approve anyway" in that case for the
+          same reason. */}
       <Dialog open={!!approvingRow} onOpenChange={(open) => { if (!open) setApprovingRow(null); }}>
         <DialogContent>
           <DialogHeader>
@@ -578,6 +589,19 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
               )}
             </DialogDescription>
           </DialogHeader>
+          {approvingRow && (approvingRow.notice_violation_at_submit || approvingRow.cover_violation_at_submit) && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 p-3 text-sm text-amber-900 dark:text-amber-200">
+              <p className="font-semibold mb-1">This request was submitted despite a warning.</p>
+              <ul className="list-disc list-inside space-y-0.5">
+                {approvingRow.notice_violation_at_submit && (
+                  <li>Notice period rules — the booking didn&apos;t meet the minimum notice required.</li>
+                )}
+                {approvingRow.cover_violation_at_submit && (
+                  <li>Team cover — approving would push the team below the Min Cover on one or more days.</li>
+                )}
+              </ul>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="approve-note">Add a note for the {singularLabel} (optional)</Label>
             <Textarea
@@ -598,7 +622,9 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
               disabled={approveLoading}
             >
               {approveLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Approve
+              {approvingRow && (approvingRow.notice_violation_at_submit || approvingRow.cover_violation_at_submit)
+                ? "Approve anyway"
+                : "Approve"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -665,6 +691,20 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
                 <li className="text-muted-foreground italic">...and {selectedRows.length - 5} more</li>
               )}
             </ul>
+            {/* CLE-189 — surface the count of selected requests that
+                were raised over a notice or cover warning so the admin
+                can't bulk-approve them blind. */}
+            {(() => {
+              const flagged = selectedRows.filter(
+                (r) => r.notice_violation_at_submit || r.cover_violation_at_submit,
+              );
+              if (flagged.length === 0) return null;
+              return (
+                <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 p-3 text-sm text-amber-900 dark:text-amber-200">
+                  <strong>{flagged.length}</strong> of these {flagged.length === 1 ? "request was" : "requests were"} submitted despite a notice or cover warning. Approving will go ahead anyway.
+                </div>
+              );
+            })()}
             <div className="space-y-2 pt-1">
               <Label htmlFor="bulk-approve-note">Add a note (shown to all {pluralLabel})</Label>
               <Textarea
@@ -1050,10 +1090,13 @@ function ApprovalsTable({
                               <CompletionStatusBadge status={row.completion_status as CompletionStatus} />
                             )}
                           </div>
-                          {/* CLE-183 — level context for multi-level approvals */}
+                          {/* CLE-183/186 — level context for multi-level
+                              approvals. LevelLadder hides itself when the
+                              profile only has one level. */}
                           {row.status === "pending" && row.current_approval_level !== null && (
                             <LevelLadder
                               currentLevel={row.current_approval_level}
+                              totalLevels={row.profile_total_levels ?? 0}
                               history={row.level_history}
                             />
                           )}
@@ -1092,6 +1135,27 @@ function ApprovalsTable({
                                 <X className="h-3.5 w-3.5 mr-1" />
                                 Reject
                               </Button>
+                              {/* CLE-189 — snapshot warning badges. Sit
+                                  after the Approve/Reject buttons so the
+                                  primary actions stay leftmost. */}
+                              {row.notice_violation_at_submit && (
+                                <Badge
+                                  variant="outline"
+                                  className="border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+                                  title="Submitted despite a notice-period warning"
+                                >
+                                  Notice
+                                </Badge>
+                              )}
+                              {row.cover_violation_at_submit && (
+                                <Badge
+                                  variant="outline"
+                                  className="border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+                                  title="Submitted despite a team-cover warning"
+                                >
+                                  Cover
+                                </Badge>
+                              )}
                             </>
                           )}
                         </div>
@@ -1111,6 +1175,9 @@ function ApprovalsTable({
                                   bankHolidayColour={bankHolidayColour}
                                   highlightMemberId={row.member_id}
                                   focusRange={{ startDate: row.start_date, endDate: row.end_date }}
+                                  requiredCover={row.cover_context?.minCover}
+                                  offendingDates={row.cover_context?.offendingDates}
+                                  coverMode
                                 />
                               </div>
                             </div>

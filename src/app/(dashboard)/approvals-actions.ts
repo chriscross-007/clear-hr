@@ -45,6 +45,11 @@ export type ApprovalRow = {
   /** CLE-183 — the active approval level for pending bookings. NULL for
    *  legacy bookings (any admin can approve) or non-pending bookings. */
   current_approval_level: number | null;
+  /** CLE-186 — total number of levels configured on the booking's approval
+   *  profile (or null when the booking is legacy / has no profile). Used
+   *  alongside `current_approval_level` and `level_history` to render the
+   *  full ladder on the approvals page. */
+  profile_total_levels: number | null;
   /** CLE-183 — decision history per level, for the small ladder display
    *  on the approvals page. Includes only levels that have been activated;
    *  un-cascaded higher levels are not listed. */
@@ -55,6 +60,22 @@ export type ApprovalRow = {
     decided_by_name: string | null;
     routed_to: "main" | "delegate" | null;
   }[];
+  /** CLE-189 — snapshotted at submit. TRUE if the request was raised
+   *  despite a notice-period warning. */
+  notice_violation_at_submit: boolean;
+  /** CLE-189 — snapshotted at submit. TRUE if the request was raised
+   *  despite a team-cover warning. */
+  cover_violation_at_submit: boolean;
+  /** CLE-189 — per-row cover context for the inline calendar. NULL for
+   *  bookings whose member is not in a team or whose team has no Min Cover. */
+  cover_context: {
+    minCover: number;
+    /** ISO dates within this booking's range where approving it would
+     *  drop the team below Min Cover. Computed against the latest team
+     *  state, NOT the snapshot — so a date that was a violation at
+     *  submit may have cleared if another booking was cancelled. */
+    offendingDates: string[];
+  } | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -296,6 +317,142 @@ export async function getAllRequests(
   return fetchAndMapBookings(supabase, member.organisation_id, statusFilter);
 }
 
+// CLE-189 — batched per-pending-booking cover analysis. For each pending
+// booking, work out which dates inside its range would push the team
+// below Min Cover if the booking were approved. The Approvals page
+// highlights these dates in red on the inline calendar so admins can see
+// at a glance which days are the problem.
+//
+// Implementation note — we deliberately do one batched fetch per resource
+// (members, teams, all teammate bookings in the relevant date window)
+// rather than per-row queries. That keeps the cost flat regardless of how
+// many pending requests are in flight.
+async function buildCoverContexts(
+  pendingRows: Array<{
+    id: string;
+    member_id: string;
+    start_date: string;
+    end_date: string | null;
+  }>,
+  orgId: string,
+  memberMap: Map<string, { name: string }>,
+): Promise<Map<string, { minCover: number; offendingDates: string[] }>> {
+  const result = new Map<string, { minCover: number; offendingDates: string[] }>();
+  if (pendingRows.length === 0) return result;
+  const adminClient = getAdminClient();
+
+  // Resolve each pending booking's member → team_id and team Min Cover.
+  const distinctMemberIds = [...new Set(pendingRows.map((r) => r.member_id))];
+  const { data: memberTeamRows } = await adminClient
+    .from("members")
+    .select("id, team_id")
+    .in("id", distinctMemberIds);
+  const teamByMember = new Map<string, string | null>();
+  for (const m of (memberTeamRows ?? []) as Array<{ id: string; team_id: string | null }>) {
+    teamByMember.set(m.id, m.team_id ?? null);
+  }
+  const distinctTeamIds = [...new Set([...teamByMember.values()].filter((x): x is string => x !== null))];
+  if (distinctTeamIds.length === 0) return result;
+
+  const { data: teamRows } = await adminClient
+    .from("teams")
+    .select("id, min_cover")
+    .in("id", distinctTeamIds);
+  const minCoverByTeam = new Map<string, number>();
+  for (const t of (teamRows ?? []) as Array<{ id: string; min_cover: number | null }>) {
+    if (t.min_cover && t.min_cover > 0) minCoverByTeam.set(t.id, Number(t.min_cover));
+  }
+
+  // Roster per team — all members on the team. teamSize = roster.length.
+  const teamsWithCover = [...minCoverByTeam.keys()];
+  if (teamsWithCover.length === 0) return result;
+  const { data: teamMembers } = await adminClient
+    .from("members")
+    .select("id, team_id")
+    .eq("organisation_id", orgId)
+    .in("team_id", teamsWithCover);
+  const rosterByTeam = new Map<string, Set<string>>();
+  for (const m of (teamMembers ?? []) as Array<{ id: string; team_id: string }>) {
+    const roster = rosterByTeam.get(m.team_id) ?? new Set<string>();
+    roster.add(m.id);
+    rosterByTeam.set(m.team_id, roster);
+  }
+
+  // Pull every pending/approved holiday booking for any relevant teammate
+  // in the union date range of the pending requests, plus a small buffer.
+  const relevantMemberIds = new Set<string>();
+  for (const roster of rosterByTeam.values()) for (const id of roster) relevantMemberIds.add(id);
+  let rangeMin = "9999-12-31";
+  let rangeMax = "0000-01-01";
+  for (const r of pendingRows) {
+    if (r.start_date < rangeMin) rangeMin = r.start_date;
+    const eff = r.end_date ?? r.start_date;
+    if (eff > rangeMax) rangeMax = eff;
+  }
+
+  const { data: allBookings } = await adminClient
+    .from("holiday_bookings")
+    .select("id, member_id, start_date, end_date")
+    .in("member_id", [...relevantMemberIds])
+    .in("status", ["approved", "pending"])
+    .lte("start_date", rangeMax)
+    .or(`end_date.gte.${rangeMin},end_date.is.null`);
+  type BookingRow = { id: string; member_id: string; start_date: string; end_date: string | null };
+  const bookingsByMember = new Map<string, BookingRow[]>();
+  for (const b of (allBookings ?? []) as BookingRow[]) {
+    const list = bookingsByMember.get(b.member_id) ?? [];
+    list.push(b);
+    bookingsByMember.set(b.member_id, list);
+  }
+
+  // For each pending row, walk its dates and flag offending ones.
+  for (const r of pendingRows) {
+    const teamId = teamByMember.get(r.member_id) ?? null;
+    if (!teamId) continue;
+    const minCover = minCoverByTeam.get(teamId);
+    if (!minCover) continue;
+    const roster = rosterByTeam.get(teamId);
+    if (!roster) continue;
+    const teamSize = roster.size;
+    const teammateIds = [...roster].filter((id) => id !== r.member_id);
+
+    const offendingDates: string[] = [];
+    const start = new Date(r.start_date + "T00:00:00Z");
+    const end = new Date((r.end_date ?? r.start_date) + "T00:00:00Z");
+    const cur = new Date(start);
+    while (cur <= end) {
+      const dow = cur.getUTCDay();
+      if (dow !== 0 && dow !== 6) {
+        const iso = cur.toISOString().slice(0, 10);
+        // Distinct teammates with a pending/approved booking covering this
+        // date — excluding this very booking so it doesn't count itself.
+        const onLeave = new Set<string>();
+        for (const tid of teammateIds) {
+          const bs = bookingsByMember.get(tid) ?? [];
+          for (const b of bs) {
+            if (b.id === r.id) continue;
+            if (b.start_date > iso) continue;
+            if (b.end_date !== null && b.end_date < iso) continue;
+            onLeave.add(tid);
+            break;
+          }
+        }
+        // -1 for the requester being off on that date once approved
+        const present = teamSize - onLeave.size - 1;
+        if (present < minCover) offendingDates.push(iso);
+      }
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+
+    result.set(r.id, { minCover, offendingDates });
+  }
+
+  // Silence the unused-param lint warning — memberMap is reserved for
+  // future "who's on leave" annotations on the inline calendar.
+  void memberMap;
+  return result;
+}
+
 async function fetchAndMapBookings(
   supabase: Awaited<ReturnType<typeof createClient>>,
   orgId: string,
@@ -319,7 +476,7 @@ async function fetchAndMapBookings(
 
   let query = supabase
     .from("holiday_bookings")
-    .select("id, member_id, start_date, end_date, start_half, end_half, days_deducted, hours_deducted, status, approver1_id, approver_note, employee_note, created_at, current_approval_level, absence_reasons(name, colour), sick_booking_details(completion_status)")
+    .select("id, member_id, leave_reason_id, start_date, end_date, start_half, end_half, days_deducted, hours_deducted, status, approver1_id, approver_note, employee_note, created_at, current_approval_level, notice_violation_at_submit, cover_violation_at_submit, absence_reasons(name, colour, absence_type_id), sick_booking_details(completion_status)")
     .eq("organisation_id", orgId)
     .order(statusFilter === "pending" ? "created_at" : "start_date", { ascending: true });
 
@@ -337,6 +494,7 @@ async function fetchAndMapBookings(
   const bookingRows = (data ?? []) as unknown as Array<{
     id: string;
     member_id: string;
+    leave_reason_id: string;
     start_date: string;
     end_date: string | null;
     start_half: string | null;
@@ -349,9 +507,53 @@ async function fetchAndMapBookings(
     employee_note: string | null;
     created_at: string;
     current_approval_level: number | null;
-    absence_reasons: { name: string; colour: string } | null;
+    notice_violation_at_submit: boolean | null;
+    cover_violation_at_submit: boolean | null;
+    absence_reasons: { name: string; colour: string; absence_type_id: string } | null;
     sick_booking_details: { completion_status: string } | null;
   }>;
+
+  // CLE-186 — count the levels configured on each booking's approval
+  // profile (NULL when the booking is legacy / not profile-routed).
+  // Drives the per-row ladder on the approvals page: 1 level → no ladder,
+  // ≥ 2 → render L1 → L2 [→ L3] with current level highlighted.
+  const adminClient = getAdminClient();
+  const memberIds = [...new Set(bookingRows.map((b) => b.member_id))];
+  const assignmentsByMemberId = new Map<string, Record<string, string>>();
+  if (memberIds.length > 0) {
+    const { data: memberAssignments } = await adminClient
+      .from("members")
+      .select("id, approval_profile_assignments")
+      .in("id", memberIds);
+    for (const m of (memberAssignments ?? []) as Array<{ id: string; approval_profile_assignments: Record<string, string> | null }>) {
+      assignmentsByMemberId.set(m.id, m.approval_profile_assignments ?? {});
+    }
+  }
+  const { data: orgLevels } = await adminClient
+    .from("approval_profile_levels")
+    .select("profile_id, approval_profiles!inner(organisation_id)")
+    .eq("approval_profiles.organisation_id", orgId);
+  const levelCountByProfile = new Map<string, number>();
+  for (const row of (orgLevels ?? []) as unknown as Array<{ profile_id: string }>) {
+    levelCountByProfile.set(row.profile_id, (levelCountByProfile.get(row.profile_id) ?? 0) + 1);
+  }
+  function totalLevelsFor(b: typeof bookingRows[number]): number | null {
+    const absenceTypeId = b.absence_reasons?.absence_type_id ?? null;
+    if (!absenceTypeId) return null;
+    const profileId = assignmentsByMemberId.get(b.member_id)?.[absenceTypeId];
+    if (!profileId) return null;
+    return levelCountByProfile.get(profileId) ?? null;
+  }
+
+  // CLE-189 — compute per-pending-booking cover context (min cover +
+  // dates within the booking's range where approving it would drop the
+  // team below Min Cover). Skipped for non-pending rows, where this isn't
+  // actionable.
+  const coverContextByBooking = await buildCoverContexts(
+    bookingRows.filter((b) => b.status === "pending"),
+    orgId,
+    memberMap,
+  );
 
   // CLE-183 — fetch the per-level decision history for these bookings so
   // the approvals page can show a small ladder ("L1 ✓ — L2 ● — L3 ○").
@@ -414,7 +616,11 @@ async function fetchAndMapBookings(
       measurement_mode: mode,
       completion_status: sickDetails?.completion_status ?? null,
       current_approval_level: b.current_approval_level,
+      profile_total_levels: totalLevelsFor(b),
       level_history: levelHistoryByBooking.get(b.id) ?? [],
+      notice_violation_at_submit: b.notice_violation_at_submit ?? false,
+      cover_violation_at_submit: b.cover_violation_at_submit ?? false,
+      cover_context: coverContextByBooking.get(b.id) ?? null,
     };
   });
 }

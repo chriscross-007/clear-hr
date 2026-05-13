@@ -7,7 +7,7 @@
 // additional approval for longer bookings. Empty mains list on L2/L3 =
 // level not used; the cascade simply skips it.
 
-import { useEffect, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
 import { Plus, Trash2, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,7 +66,27 @@ function levelFromProfile(
   };
 }
 
-export function ApprovalsManager() {
+/** Imperative handle so the parent Organisation Settings dialog's main
+ *  Cancel/Save buttons can drive the in-progress profile editor without
+ *  the editor needing its own buttons. */
+export interface ApprovalsManagerHandle {
+  /** True when an inline profile editor is open with unsaved fields. */
+  hasInProgress(): boolean;
+  /** Commit the in-progress edit. Returns the same envelope shape as the
+   *  underlying server action, plus `noop: true` if nothing was being
+   *  edited (caller can treat that as success). */
+  commit(): Promise<{ success: boolean; error?: string; noop?: boolean }>;
+  /** Discard the in-progress edit. */
+  revert(): void;
+}
+
+interface ApprovalsManagerProps {
+  /** Called whenever the in-progress editor opens / closes so the parent
+   *  dialog's main Save button can enable. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
+
+export const ApprovalsManager = forwardRef<ApprovalsManagerHandle, ApprovalsManagerProps>(function ApprovalsManager(props, ref) {
   const [profiles, setProfiles] = useState<ApprovalProfile[]>([]);
   const [approvers, setApprovers] = useState<ApproverOption[]>([]);
   const [absenceTypes, setAbsenceTypes] = useState<AbsenceTypeOption[]>([]);
@@ -140,19 +160,19 @@ export function ApprovalsManager() {
     setEditError(null);
   }
 
-  async function handleSave() {
+  async function handleSave(): Promise<{ success: boolean; error?: string }> {
     setEditError(null);
     if (!editName.trim()) {
       setEditError("Name is required");
-      return;
+      return { success: false, error: "Name is required" };
     }
     if (!editAbsenceTypeId) {
       setEditError("Absence Type is required");
-      return;
+      return { success: false, error: "Absence Type is required" };
     }
     if (editLevels[0].mains.length === 0) {
       setEditError("Level 1 needs at least one main approver");
-      return;
+      return { success: false, error: "Level 1 needs at least one main approver" };
     }
 
     // CLE-183 — coerce threshold inputs to number-or-null. Empty string =
@@ -174,12 +194,14 @@ export function ApprovalsManager() {
       const days = parseThreshold(lvl.thresholdDays, "days");
       const hours = parseThreshold(lvl.thresholdHours, "hours");
       if (days === "invalid") {
-        setEditError(`Level ${i + 1} days threshold must be a non-negative whole number`);
-        return;
+        const msg = `Level ${i + 1} days threshold must be a non-negative whole number`;
+        setEditError(msg);
+        return { success: false, error: msg };
       }
       if (hours === "invalid") {
-        setEditError(`Level ${i + 1} hours threshold must be a non-negative number`);
-        return;
+        const msg = `Level ${i + 1} hours threshold must be a non-negative number`;
+        setEditError(msg);
+        return { success: false, error: msg };
       }
       levels.push({
         level: i + 1,
@@ -199,13 +221,42 @@ export function ApprovalsManager() {
     setSaving(false);
     if (!res.success) {
       setEditError(res.error ?? "Failed to save");
-      return;
+      return { success: false, error: res.error ?? "Failed to save" };
     }
     // Reload to pick up fresh ids
     const refresh = await getApprovalProfilesForOrg();
     if (refresh.success) setProfiles(refresh.profiles);
     setEditingId(null);
+    return { success: true };
   }
+
+  // CLE-186 — notify the parent dialog whenever the editor opens / closes
+  // so the main Save button can be enabled while a profile edit is in
+  // progress (even if no org-level field has changed).
+  const onDirtyChange = props.onDirtyChange;
+  useEffect(() => {
+    onDirtyChange?.(editingId !== null);
+  }, [editingId, onDirtyChange]);
+
+  // CLE-186 — expose imperative API so the parent dialog's main
+  // Cancel/Save buttons drive the in-progress profile editor.
+  useImperativeHandle(
+    ref,
+    () => ({
+      hasInProgress: () => editingId !== null,
+      commit: async () => {
+        if (editingId === null) return { success: true, noop: true };
+        return handleSave();
+      },
+      revert: () => {
+        cancelEdit();
+      },
+    }),
+    // handleSave is recreated on each render but uses up-to-date closures;
+    // the deps below cover the values it reads. cancelEdit is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editingId, editName, editAbsenceTypeId, editLevels],
+  );
 
   async function handleDelete(profile: ApprovalProfile) {
     if (profile.isDefault) return;
@@ -261,8 +312,6 @@ export function ApprovalsManager() {
               approvers={approvers}
               error={editError}
               saving={saving}
-              onSave={handleSave}
-              onCancel={cancelEdit}
             />
           </div>
         )}
@@ -272,11 +321,26 @@ export function ApprovalsManager() {
           return (
             <div key={p.id}>
               {!isEditing && (
-                <button
-                  type="button"
-                  onClick={() => startEdit(p)}
-                  className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-muted/40"
-                  disabled={editingId !== null}
+                <div
+                  role="button"
+                  tabIndex={editingId === null ? 0 : -1}
+                  onClick={() => {
+                    if (editingId === null) startEdit(p);
+                  }}
+                  onKeyDown={(e) => {
+                    if (editingId !== null) return;
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      startEdit(p);
+                    }
+                  }}
+                  aria-disabled={editingId !== null}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left",
+                    editingId === null
+                      ? "cursor-pointer hover:bg-muted/40"
+                      : "opacity-60 cursor-not-allowed",
+                  )}
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -304,7 +368,7 @@ export function ApprovalsManager() {
                       <Trash2 className="h-4 w-4" />
                     </button>
                   )}
-                </button>
+                </div>
               )}
 
               {isEditing && (
@@ -320,8 +384,6 @@ export function ApprovalsManager() {
                     approvers={approvers}
                     error={editError}
                     saving={saving}
-                    onSave={handleSave}
-                    onCancel={cancelEdit}
                     isDefault={p.isDefault}
                   />
                 </div>
@@ -334,10 +396,11 @@ export function ApprovalsManager() {
       <p className="text-xs text-muted-foreground">
         Approver names are members of the org with role <strong>owner</strong> or <strong>admin</strong>.
         Profile changes only affect new bookings — already-pending bookings keep their original ladder.
+        Use the dialog&apos;s <strong>Save changes</strong> button to commit your edits.
       </p>
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // ProfileEditor — inline editor for one profile
@@ -354,8 +417,6 @@ function ProfileEditor(props: {
   approvers: ApproverOption[];
   error: string | null;
   saving: boolean;
-  onSave: () => void;
-  onCancel: () => void;
   isDefault?: boolean;
 }) {
   return (
@@ -409,20 +470,14 @@ function ProfileEditor(props: {
         hours bookings. Leave blank to mean &ldquo;always required&rdquo;.
       </p>
 
+      {props.saving && (
+        <div className="text-xs text-muted-foreground">Saving…</div>
+      )}
       {props.error && (
         <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">
           {props.error}
         </div>
       )}
-
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={props.onCancel} disabled={props.saving}>
-          Cancel
-        </Button>
-        <Button type="button" size="sm" onClick={props.onSave} disabled={props.saving}>
-          {props.saving ? "Saving…" : "Save Changes"}
-        </Button>
-      </div>
     </div>
   );
 }

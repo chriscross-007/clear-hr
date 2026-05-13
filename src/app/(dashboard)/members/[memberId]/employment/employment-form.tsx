@@ -10,16 +10,13 @@ import {
   uploadMemberAvatar,
   deleteEmployee,
 } from "@/app/(dashboard)/employees/actions";
-import {
-  updateMemberTeam,
-  setMemberTeams,
-} from "@/app/(dashboard)/employees/team-actions";
+import { updateMemberTeam } from "@/app/(dashboard)/employees/team-actions";
 import { saveCustomFieldValues } from "@/app/(dashboard)/employees/custom-field-actions";
 import { WorkProfileSection, type WorkProfileAssignmentRow } from "./work-profile-section";
+import { ApprovalProfileSection } from "./approval-profile-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -64,7 +61,6 @@ type Member = {
   updated_at: string;
   start_date: string | null;
   current_profile_id: string | null;
-  selected_team_ids: string[];
 };
 
 type FieldDef = {
@@ -114,7 +110,6 @@ export function EmploymentForm({
   const [payrollNumber, setPayrollNumber] = useState(member.payroll_number ?? "");
   const [role, setRole] = useState(member.role);
   const [teamId, setTeamId] = useState<string | null>(member.team_id);
-  const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>(member.selected_team_ids);
   const [profileId, setProfileId] = useState<string>(member.current_profile_id ?? "__none__");
   const [startDate, setStartDate] = useState(member.start_date ?? "");
   const [avatarUrl, setAvatarUrl] = useState(member.avatar_url);
@@ -130,7 +125,6 @@ export function EmploymentForm({
   const [avatarError, setAvatarError] = useState<string | null>(null);
 
   const isOwner = member.role === "owner";
-  const isMultiTeam = role === "admin" || role === "owner";
   const isAccepted = !!member.accepted_at;
   const isInvited = !!invitedAt;
 
@@ -149,16 +143,13 @@ export function EmploymentForm({
     setError(null);
     setSuccess(null);
 
-    const teamIds = isMultiTeam ? selectedTeamIds : (teamId ? [teamId] : []);
-
     const result = await updateEmployee({
       memberId: member.member_id,
       firstName,
       lastName,
       role,
       payrollNumber: payrollNumber.trim() || null,
-      teamIds,
-      isMultiTeam,
+      teamId,
       profileId,
       updatedAt: member.updated_at,
       startDate: startDate || null,
@@ -169,21 +160,13 @@ export function EmploymentForm({
       return;
     }
 
-    // Team assignment
-    if (isMultiTeam) {
-      const res = await setMemberTeams(member.member_id, selectedTeamIds, true);
-      if (!res.success) {
-        setError(res.error ?? "Failed to update teams");
-        setLoading(false);
-        return;
-      }
-    } else {
-      const res = await updateMemberTeam(member.member_id, teamId, true);
-      if (!res.success) {
-        setError(res.error ?? "Failed to update team");
-        setLoading(false);
-        return;
-      }
+    // CLE-185 — single team per member. Update separately so audit captures
+    // the team change cleanly even when other fields are unchanged.
+    const res = await updateMemberTeam(member.member_id, teamId, true);
+    if (!res.success) {
+      setError(res.error ?? "Failed to update team");
+      setLoading(false);
+      return;
     }
 
     // Required custom fields
@@ -394,46 +377,24 @@ export function EmploymentForm({
 
               {teams.length > 0 && (
                 <div className="space-y-2">
-                  <Label>{isMultiTeam ? "Teams" : "Team"}</Label>
-                  {isMultiTeam ? (
-                    <div className="space-y-2 rounded-md border p-3">
+                  <Label>Team</Label>
+                  <Select
+                    value={teamId ?? "__none__"}
+                    disabled={!canEdit}
+                    onValueChange={(v) => setTeamId(v === "__none__" ? null : v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">No team</SelectItem>
                       {teams.map((team) => (
-                        <div key={team.id} className="flex items-center gap-2">
-                          <Checkbox
-                            id={`team-${team.id}`}
-                            disabled={!canEdit}
-                            checked={selectedTeamIds.includes(team.id)}
-                            onCheckedChange={(checked) => {
-                              setSelectedTeamIds((prev) =>
-                                checked ? [...prev, team.id] : prev.filter((id) => id !== team.id),
-                              );
-                            }}
-                          />
-                          <label htmlFor={`team-${team.id}`} className="text-sm font-medium leading-none">
-                            {team.name}
-                          </label>
-                        </div>
+                        <SelectItem key={team.id} value={team.id}>
+                          {team.name}
+                        </SelectItem>
                       ))}
-                    </div>
-                  ) : (
-                    <Select
-                      value={teamId ?? "__none__"}
-                      disabled={!canEdit}
-                      onValueChange={(v) => setTeamId(v === "__none__" ? null : v)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">No team</SelectItem>
-                        {teams.map((team) => (
-                          <SelectItem key={team.id} value={team.id}>
-                            {team.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
+                    </SelectContent>
+                  </Select>
                 </div>
               )}
 
@@ -442,6 +403,12 @@ export function EmploymentForm({
                 assignments={workProfileAssignments}
                 orgWorkProfiles={orgWorkProfiles}
                 orgDefaultWorkProfileId={orgDefaultWorkProfileId}
+                canEdit={canEdit}
+              />
+
+              {/* CLE-186 — per-employee Approval Profile picker */}
+              <ApprovalProfileSection
+                memberId={member.member_id}
                 canEdit={canEdit}
               />
 
