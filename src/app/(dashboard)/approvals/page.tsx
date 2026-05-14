@@ -23,14 +23,17 @@ export default async function ApprovalsPage() {
   if (!member) redirect("/login");
   if (member.role !== "owner" && member.role !== "admin") notFound();
 
-  // Fetch org country code
+  // Fetch org country code + bank-holiday handling. CLE-192 — handling
+  // is used by the inline-calendar arrow row to decide whether a bank
+  // holiday inside a booking's range counts against allowance.
   const { data: orgRow } = await supabase
     .from("organisations")
-    .select("country_code, bank_holiday_colour")
+    .select("country_code, bank_holiday_colour, bank_holiday_handling")
     .eq("id", member.organisation_id)
     .single();
-  const orgCountryCode = (orgRow as { country_code?: string; bank_holiday_colour?: string } | null)?.country_code ?? "england-and-wales";
-  const bankHolidayColour = (orgRow as { country_code?: string; bank_holiday_colour?: string } | null)?.bank_holiday_colour ?? "#EF4444";
+  const orgCountryCode = (orgRow as { country_code?: string; bank_holiday_colour?: string; bank_holiday_handling?: string } | null)?.country_code ?? "england-and-wales";
+  const bankHolidayColour = (orgRow as { country_code?: string; bank_holiday_colour?: string; bank_holiday_handling?: string } | null)?.bank_holiday_colour ?? "#EF4444";
+  const bankHolidayHandling = ((orgRow as { bank_holiday_handling?: string } | null)?.bank_holiday_handling ?? "additional") as "additional" | "deducted";
 
   // Fetch org members for the calendar widget (calendarMembers below).
   const { data: orgMembers } = await supabase
@@ -133,6 +136,7 @@ export default async function ApprovalsPage() {
         calendarBookings={calendarBookings}
         calendarBankHolidays={calendarBankHolidays}
         bankHolidayColour={bankHolidayColour}
+        bankHolidayHandling={bankHolidayHandling}
       />
     </div>
   );

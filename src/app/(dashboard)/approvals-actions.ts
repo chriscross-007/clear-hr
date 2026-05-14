@@ -76,6 +76,10 @@ export type ApprovalRow = {
      *  submit may have cleared if another booking was cancelled. */
     offendingDates: string[];
   } | null;
+  /** CLE-192 — name of the requester's team, rendered above the inline
+   *  calendar on the Approvals page when the admin opens the info pane.
+   *  NULL when the member is not assigned to a team. */
+  team_name: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -221,8 +225,16 @@ async function checkApprovalAccess(
   if (!active) {
     return { allowed: false, error: "Active approval level row missing", activeApprovalRowId: null, currentApprovalLevel: booking.current_approval_level };
   }
-  const list = active.routed_to === "main" ? active.main_approver_ids : active.delegate_approver_ids;
-  if (!Array.isArray(list) || !list.includes(callerMemberId)) {
+  // CLE-192 — any named approver at this level can decide, regardless of
+  // routed_to. `routed_to` decides who got the notification email at
+  // submit time; it doesn't lock the others out of the decision if they
+  // show up on the page later. Mirror of the same union in
+  // getPendingApprovalBookingIds.
+  const namedApprovers = [
+    ...(active.main_approver_ids ?? []),
+    ...(active.delegate_approver_ids ?? []),
+  ];
+  if (!namedApprovers.includes(callerMemberId)) {
     return { allowed: false, error: "You are not an approver for this request", activeApprovalRowId: null, currentApprovalLevel: booking.current_approval_level };
   }
   return { allowed: true, activeApprovalRowId: active.id, currentApprovalLevel: booking.current_approval_level };
@@ -297,9 +309,18 @@ async function getPendingApprovalBookingIds(
       (ba) => ba.level === r.current_approval_level && ba.status === "pending",
     );
     if (!activeRow) continue;
-    const list =
-      activeRow.routed_to === "main" ? activeRow.main_approver_ids : activeRow.delegate_approver_ids;
-    if (Array.isArray(list) && list.includes(callerMemberId)) {
+    // CLE-192 — any named approver at the active level can decide,
+    // regardless of routed_to. `routed_to` decides who got the
+    // notification email (mains by default, delegates when all mains
+    // were "unavailable" at submit); it doesn't lock the others out of
+    // the decision if they show up on the page later. Without the
+    // union, a main approver who was off when the request was raised
+    // would have no way to act on it even after they were back.
+    const namedApprovers = [
+      ...(activeRow.main_approver_ids ?? []),
+      ...(activeRow.delegate_approver_ids ?? []),
+    ];
+    if (namedApprovers.includes(callerMemberId)) {
       visible.push(r.id);
     }
   }
@@ -463,15 +484,30 @@ async function fetchAndMapBookings(
 ): Promise<ApprovalRow[]> {
   if (restrictToBookingIds && restrictToBookingIds.length === 0) return [];
 
-  // Fetch members separately to avoid FK ambiguity issues
+  // Fetch members separately to avoid FK ambiguity issues. CLE-192 —
+  // include team_id so the row can carry team_name through to the
+  // Approvals inline calendar header.
   const { data: members } = await supabase
     .from("members")
-    .select("id, first_name, last_name")
+    .select("id, first_name, last_name, team_id")
     .eq("organisation_id", orgId);
 
-  const memberMap = new Map<string, { name: string }>();
+  const memberMap = new Map<string, { name: string; teamId: string | null }>();
   for (const m of members ?? []) {
-    memberMap.set(m.id, { name: `${m.first_name} ${m.last_name}` });
+    memberMap.set(m.id, {
+      name: `${m.first_name} ${m.last_name}`,
+      teamId: (m.team_id as string | null) ?? null,
+    });
+  }
+
+  // CLE-192 — team id → name lookup for the inline-calendar header.
+  const { data: teamRows } = await supabase
+    .from("teams")
+    .select("id, name")
+    .eq("organisation_id", orgId);
+  const teamNameById = new Map<string, string>();
+  for (const t of (teamRows ?? []) as { id: string; name: string }[]) {
+    teamNameById.set(t.id, t.name);
   }
 
   let query = supabase
@@ -621,6 +657,10 @@ async function fetchAndMapBookings(
       notice_violation_at_submit: b.notice_violation_at_submit ?? false,
       cover_violation_at_submit: b.cover_violation_at_submit ?? false,
       cover_context: coverContextByBooking.get(b.id) ?? null,
+      team_name: (() => {
+        const tid = mem?.teamId ?? null;
+        return tid ? teamNameById.get(tid) ?? null : null;
+      })(),
     };
   });
 }

@@ -52,6 +52,9 @@ interface ApprovalsClientProps {
   calendarBookings: TeamBooking[];
   calendarBankHolidays: TeamBankHoliday[];
   bankHolidayColour?: string;
+  /** CLE-192 — passed through to the inline TeamCalendar so the focus
+   *  arrows skip bank holidays only when the org doesn't deduct them. */
+  bankHolidayHandling?: "additional" | "deducted";
 }
 
 function fmtDate(dateStr: string): string {
@@ -261,7 +264,7 @@ function getRequestedWindow(preset: RequestedPreset): { from: Date; to: Date } |
   return { from: monthStart, to: monthEnd };
 }
 
-export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calendarBookings, calendarBankHolidays, bankHolidayColour }: ApprovalsClientProps) {
+export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calendarBookings, calendarBankHolidays, bankHolidayColour, bankHolidayHandling = "additional" }: ApprovalsClientProps) {
   const router = useRouter();
   const { memberLabel } = useMemberLabel();
   const singularLabel = memberLabel.toLowerCase();
@@ -269,9 +272,14 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
   const [approvingRow, setApprovingRow] = useState<ApprovalRow | null>(null);
   const [approveNote, setApproveNote] = useState("");
   const [approveLoading, setApproveLoading] = useState(false);
+  // CLE-192 — surface server errors so the dialog doesn't silently swallow
+  // failures (e.g. "Insufficient permissions" when the caller isn't the
+  // routed approver). Cleared every time the dialog opens.
+  const [approveError, setApproveError] = useState<string | null>(null);
   const [rejectingRow, setRejectingRow] = useState<ApprovalRow | null>(null);
   const [rejectNote, setRejectNote] = useState("");
   const [rejectLoading, setRejectLoading] = useState(false);
+  const [rejectError, setRejectError] = useState<string | null>(null);
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
 
   // CLE-185 — single-list view with multi-column sort and filter. Page
@@ -451,24 +459,35 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
   async function handleApprove() {
     if (!approvingRow) return;
     setApproveLoading(true);
+    setApproveError(null);
     const result = await approveBooking(approvingRow.id, approveNote);
     setApproveLoading(false);
     if (result.success) {
       setApprovingRow(null);
       setApproveNote("");
+      setApproveError(null);
       router.refresh();
+    } else {
+      // CLE-192 — surface the server error so the admin sees why the
+      // dialog isn't closing (typically "Insufficient permissions"
+      // when the caller isn't the routed approver).
+      setApproveError(result.error ?? "Failed to approve booking");
     }
   }
 
   async function handleReject() {
     if (!rejectingRow) return;
     setRejectLoading(true);
+    setRejectError(null);
     const result = await rejectBooking(rejectingRow.id, rejectNote);
     setRejectLoading(false);
     if (result.success) {
       setRejectingRow(null);
       setRejectNote("");
+      setRejectError(null);
       router.refresh();
+    } else {
+      setRejectError(result.error ?? "Failed to reject booking");
     }
   }
 
@@ -534,8 +553,8 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
             onToggleSelect={toggleSelect}
             onToggleSelectAll={toggleSelectAll}
             allSelected={allSelectedVisible}
-            onApprove={(row) => { setApproveNote(""); setApprovingRow(row); }}
-            onReject={(row) => { setRejectNote(""); setRejectingRow(row); }}
+            onApprove={(row) => { setApproveNote(""); setApproveError(null); setApprovingRow(row); }}
+            onReject={(row) => { setRejectNote(""); setRejectError(null); setRejectingRow(row); }}
             emptyMessage={
               statusFilter.size > 0 || memberFilter.trim() || reasonFilter.size > 0
                 ? "No requests match the current filters."
@@ -547,6 +566,7 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
             calendarBookings={calendarBookings}
             calendarBankHolidays={calendarBankHolidays}
             bankHolidayColour={bankHolidayColour}
+            bankHolidayHandling={bankHolidayHandling}
             sort={sort}
             onSort={handleSort}
             statusFilter={statusFilter}
@@ -612,6 +632,11 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
               placeholder="Optional"
             />
           </div>
+          {approveError && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              {approveError}
+            </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setApprovingRow(null)} disabled={approveLoading}>
               Cancel
@@ -655,6 +680,11 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
               placeholder="Optional"
             />
           </div>
+          {rejectError && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              {rejectError}
+            </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setRejectingRow(null)} disabled={rejectLoading}>
               Cancel
@@ -887,6 +917,7 @@ function ApprovalsTable({
   calendarBookings,
   calendarBankHolidays,
   bankHolidayColour,
+  bankHolidayHandling,
   sort,
   onSort,
   statusFilter,
@@ -914,6 +945,7 @@ function ApprovalsTable({
   calendarBookings?: TeamBooking[];
   calendarBankHolidays?: TeamBankHoliday[];
   bankHolidayColour?: string;
+  bankHolidayHandling?: "additional" | "deducted";
   sort: SortState;
   onSort: (col: SortCol) => void;
   statusFilter: Set<string>;
@@ -1135,28 +1167,33 @@ function ApprovalsTable({
                                 <X className="h-3.5 w-3.5 mr-1" />
                                 Reject
                               </Button>
-                              {/* CLE-189 — snapshot warning badges. Sit
-                                  after the Approve/Reject buttons so the
-                                  primary actions stay leftmost. */}
-                              {row.notice_violation_at_submit && (
-                                <Badge
-                                  variant="outline"
-                                  className="border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
-                                  title="Submitted despite a notice-period warning"
-                                >
-                                  Notice
-                                </Badge>
-                              )}
-                              {row.cover_violation_at_submit && (
-                                <Badge
-                                  variant="outline"
-                                  className="border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
-                                  title="Submitted despite a team-cover warning"
-                                >
-                                  Cover
-                                </Badge>
-                              )}
                             </>
+                          )}
+                          {/* CLE-189/191 — snapshot warning badges. Sit
+                              outside the canActOnRow branch so the
+                              warning context renders for every viewer,
+                              not just the routed approver. CLE-192 also
+                              opens up canActOnRow for these rows via
+                              the server-side approvableIds query, so
+                              the buttons + badges typically appear
+                              together. */}
+                          {row.notice_violation_at_submit && (
+                            <Badge
+                              variant="outline"
+                              className="border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+                              title="Submitted despite a notice-period warning"
+                            >
+                              Notice
+                            </Badge>
+                          )}
+                          {row.cover_violation_at_submit && (
+                            <Badge
+                              variant="outline"
+                              className="border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+                              title="Submitted despite a team-cover warning"
+                            >
+                              Cover
+                            </Badge>
                           )}
                         </div>
                       </TableCell>
@@ -1166,7 +1203,15 @@ function ApprovalsTable({
                       return (
                         <TableRow>
                           <TableCell colSpan={colSpanTotal} className="p-4 bg-muted/30">
-                            <div className="flex justify-center">
+                            <div className="flex flex-col items-center gap-2">
+                              {/* CLE-192 — surface the team name above the
+                                  inline calendar so admins immediately
+                                  know which team's availability they're
+                                  looking at. Falls back to "No team" for
+                                  members not assigned to a team. */}
+                              <div className="text-sm font-semibold text-foreground self-start">
+                                Team: <span className="font-normal">{row.team_name ?? "—"}</span>
+                              </div>
                               <div className="w-fit overflow-x-auto">
                                 <TeamCalendar
                                   members={sorted}
@@ -1178,6 +1223,7 @@ function ApprovalsTable({
                                   requiredCover={row.cover_context?.minCover}
                                   offendingDates={row.cover_context?.offendingDates}
                                   coverMode
+                                  bankHolidayHandling={bankHolidayHandling}
                                 />
                               </div>
                             </div>

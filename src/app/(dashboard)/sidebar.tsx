@@ -131,7 +131,12 @@ export function Sidebar({
     .filter((e) => e.memberId !== currentMemberId)
     .slice(0, 3);
 
-  const showEmployees = role !== "admin" || accessMembers === "read" || accessMembers === "write";
+  // CLE-192 — Employees link is for owner / admin-with-access only.
+  // The previous `role !== "admin"` check incorrectly let role='employee'
+  // through, which exposed the directory to employees.
+  const showEmployees =
+    role === "owner"
+    || (role === "admin" && (accessMembers === "read" || accessMembers === "write"));
   const showShifts = role === "owner" || role === "admin";
   const showOrg = role === "owner" || canDefineCustomFields || canEditOrganisation;
   const showBilling = role === "owner";

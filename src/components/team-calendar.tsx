@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 // ---------------------------------------------------------------------------
@@ -82,6 +82,12 @@ interface TeamCalendarProps {
    *  the Required Cover line above the table. Default FALSE preserves
    *  the original "Off" semantics for Availability and any other caller. */
   coverMode?: boolean;
+  /** CLE-192 — used by the focus-arrows row (Approvals inline calendar
+   *  only) to decide whether a bank holiday inside the booking's range
+   *  counts against the requester's allowance. `'additional'` = BHs are
+   *  free, no arrow; `'deducted'` = BHs are normal working days, arrow
+   *  shows. Default `'additional'`. */
+  bankHolidayHandling?: "additional" | "deducted";
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +194,7 @@ export function TeamCalendar({
   requiredCover,
   offendingDates,
   coverMode = false,
+  bankHolidayHandling = "additional",
 }: TeamCalendarProps) {
   const initDate = initialMonth ? new Date(initialMonth + "T00:00:00Z") : new Date();
   const [year, setYear] = useState(initDate.getUTCFullYear());
@@ -344,6 +351,53 @@ export function TeamCalendar({
       <div className="overflow-x-auto border rounded-md">
         <table className="border-collapse text-xs tabular-nums">
           <thead>
+            {/* CLE-192 — focus arrows. Renders only in rolling/focus
+                mode (Approvals inline calendar). Drops a red down-arrow
+                above every day inside the booking's range that actually
+                counts against the requester's allowance — i.e. a working
+                day in their Work Pattern, AND either a non-bank-holiday
+                or a bank holiday on an org that deducts BHs from
+                allowance (`bank_holiday_handling = 'deducted'`).
+                Skips the requester's own non-working days so an
+                employee who doesn't work Wednesdays won't see an arrow
+                on Wednesday. */}
+            {isRolling && focusRange && (() => {
+              // Resolve requester's work pattern; null = default Mon-Fri.
+              const requester = highlightMemberId
+                ? members.find((m) => m.id === highlightMemberId)
+                : undefined;
+              const pattern = requester?.workPattern ?? null;
+              return (
+                <tr>
+                  <th className="sticky left-0 z-10 bg-background border-r min-w-32" />
+                  {dayEntries.map((de) => {
+                    const inRange =
+                      de.dateStr >= focusRange.startDate
+                      && (focusRange.endDate === null || de.dateStr <= focusRange.endDate);
+                    const isWorkingDay = pattern
+                      ? (pattern[de.dow] ?? 0) > 0
+                      : de.dow < 5;
+                    const bhCounts =
+                      !bhMap.has(de.dateStr) || bankHolidayHandling === "deducted";
+                    const showArrow = inRange && isWorkingDay && bhCounts;
+                    return (
+                      <th
+                        key={de.dateStr}
+                        className="px-0 py-0 text-center min-w-6 w-6 align-bottom"
+                      >
+                        {showArrow && (
+                          <ArrowDown
+                            className="inline-block h-[18px] w-[18px] text-red-600"
+                            strokeWidth={3}
+                            aria-hidden
+                          />
+                        )}
+                      </th>
+                    );
+                  })}
+                </tr>
+              );
+            })()}
             {/* Row 0 (rolling only): Month/Year spans */}
             {isRolling && monthSpans.length > 0 && (
               <tr>
