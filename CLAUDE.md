@@ -257,6 +257,26 @@ Do NOT modify auth code to "fix" cache issues.
 | Turbopack panic | Your code | Cache corruption | Clear cache |
 | Auth callback loops | Token handling | Missing `next` param | Add `?next=` to redirectTo |
 
+## Settings page (CLE-191)
+
+A full-page Settings shell at `/settings` replaces the old `OrganisationEditDialog`. The shell follows the per-employee shell pattern: a secondary sidebar (`src/app/(dashboard)/settings/settings-sidebar.tsx`) with seven sub-routes, each individually permission-gated:
+
+- `/settings/organisation` — name, member label, currency, country, MFA, holiday year start, bank-holiday handling + colour. Partial-update via `updateOrganisation` (name + memberLabel made optional on that action so each sub-route only sends what it edits).
+- `/settings/rates` — wraps `RatesManager` (pay multipliers used by Timesheet).
+- `/settings/timesheet` — shift / break / variance / time-rounding rules.
+- `/settings/custom-fields` — wraps `CustomFieldsManager`. Triggers `router.refresh()` on defs change so downstream pages pick up schema shifts.
+- `/settings/profiles/{rights,working-pattern,notice-period,approver,holiday}` — five profile types under one umbrella. List + popup CRUD pattern. Each sub-route has a Live/Seed-only explainer banner at the top (`profile-explainer.tsx`). Owner only.
+- `/settings/groups` — `TeamsManager` with per-row auto-save (rename on Enter/blur, approver + min cover on change). Optimistic with revert-on-failure.
+- `/settings/backups` — wraps `BackupsManager` (owner only).
+
+**Parallel period.** The legacy `OrganisationEditDialog` is still wired up via the sidebar "Organisation" button alongside the new Settings link. The dialog stays the source of truth until each section has been verified, then dialog + trigger + the six `organisation-edit-dialog-*` files get deleted in a follow-up commit.
+
+**Profiles mental model.** The five profile types share a UI pattern + mental model — "profiles are sets of rules that determine how the software treats a member" — not a schema. Each type CRUDs its own underlying tables; the Phase 3 cascade (Org → Team → Member) is the separate piece that gives them a uniform resolution layer.
+
+**Holiday Profile is a stub.** Phase 2 introduces `holiday_profiles` as a real entity, migrates the current per-member `holiday_*` cog columns onto a `holiday_profile_id` FK, and removes the cog from `/members/[memberId]/holiday`. Until then, the Holiday sub-route is a "Coming in Phase 2" placeholder and the cog stays.
+
+**Notice Period is Phase-1-shaped.** Currently exactly one "Default" profile per org (the underlying table is still `notice_period_rules`). Clicking the row opens a popup that edits the rules + the `notice_rules_block_requests` flag. Multiple profiles arrive with the Phase 3 cascade.
+
 ## UI Conventions
 - **Row editing:** Never use a pencil/edit icon button on list rows. Make the entire row clickable to open edit mode (`cursor-pointer hover:bg-muted/50 onClick={() => startEdit(...)}`). Only action buttons that are destructive (delete) or independent (drag handle) should remain as separate icons with `e.stopPropagation()`. The choice of modal vs page for the edit target is decided per screen based on complexity — do not default to inline editing.
 - **Inline-cell editing in tables:** When a table is essentially a spreadsheet of editable scalars (e.g. the Holiday Periods table on the employee Holiday page), edit the cells inline rather than via a slide-out form — the slide-out duplicates the column layout and gets confused with adjacent settings forms (cog, defaults). Pattern (see `members/[memberId]/holiday/employee-holiday-client.tsx`): track a single `editing: { rowId, field } | null` plus a string `draft`; click a cell → `startEdit(row, field)`; render `<input>`/`<select>` only for the matching cell; **Enter** blurs and commits, **blur** commits, **Escape** cancels; commit calls the row's full update server action with the current row + the changed field. Critical implementation detail — define the cell components (`TextCell`, `DateCell`, `SelectCell`) at module top-level and pass the inline-edit state bundle as a prop. Defining them inside the parent function recreates their identity each render, which makes React unmount the input on every keystroke and drop focus. Native `<select>` cells should commit immediately on `onChange` (with the new value passed as a `valueOverride`) since picking an option closes the dropdown. Locked rows render the cells as static text (no edit affordance). **Cell-width stability:** wrap the input/select in a `relative` container alongside an `aria-hidden invisible` ghost span carrying the at-rest display text — the ghost dictates the cell's natural width and the editor sits on top via `absolute inset-0`, so clicking a cell does not widen the column. Use `size={1}` and `min-w-0` on the input to neutralise its default ~20-char intrinsic width; padding/font-size on the ghost must match the editor for the widths to line up exactly.

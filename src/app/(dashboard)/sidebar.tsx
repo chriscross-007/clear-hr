@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Users, Building2, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, CalendarDays, Clock, Palmtree, ClipboardCheck, ShieldCheck, LayoutDashboard } from "lucide-react";
+import { Users, Building2, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, CalendarDays, Clock, Palmtree, ClipboardCheck, ShieldCheck, LayoutDashboard, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { hasPlanFeature } from "@/lib/plan-config";
@@ -313,6 +313,16 @@ export function Sidebar({
               <Building2 className="h-4 w-4 shrink-0" />
               Organisation
             </button>
+          )}
+          {/* CLE-191 — Settings page (parallel to the Organisation dialog
+              during the refactor period). Same visibility rules as the
+              dialog trigger above; remove the dialog button + handler
+              once every section's full-page form is live. */}
+          {showOrg && (
+            <Link href="/settings" className={linkClass("/settings")}>
+              <Settings className="h-4 w-4 shrink-0" />
+              Settings
+            </Link>
           )}
           {showBilling && (
             <Link href="/billing" className={linkClass("/billing")}>

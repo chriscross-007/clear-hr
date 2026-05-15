@@ -8,8 +8,12 @@ import {
 } from "@/lib/recalculate-bookings";
 
 export async function updateOrganisation(data: {
-  name: string;
-  memberLabel: string;
+  // CLE-191 — name/memberLabel made optional so per-section Settings
+  // pages can do partial updates without re-sending the org identity
+  // every time. The legacy dialog still passes both; new pages pass
+  // only what they edit.
+  name?: string;
+  memberLabel?: string;
   requireMfa?: boolean;
   currencySymbol?: string;
   tsMaxShiftHours?: number;
@@ -76,10 +80,17 @@ export async function updateOrganisation(data: {
     .eq("id", membership.organisation_id)
     .single();
 
-  const updatePayload: Record<string, string | boolean | number | null> = {
-    name: data.name,
-    member_label: data.memberLabel || "member",
-  };
+  const updatePayload: Record<string, string | boolean | number | null> = {};
+
+  // CLE-191 — only write identity fields when the caller actually sends
+  // them. Lets partial-update callers (per-section Settings pages) skip
+  // re-sending name + member_label.
+  if (typeof data.name === "string" && data.name.trim()) {
+    updatePayload.name = data.name.trim();
+  }
+  if (typeof data.memberLabel === "string") {
+    updatePayload.member_label = data.memberLabel || "member";
+  }
 
   if (typeof data.requireMfa === "boolean") {
     updatePayload.require_mfa = data.requireMfa;
@@ -219,8 +230,12 @@ export async function updateOrganisation(data: {
         default_holiday_min_carry_forward:   beforeOrg.default_holiday_min_carry_forward,
       },
       {
-        name: data.name,
-        member_label: data.memberLabel || "member",
+        // CLE-191 — fall back to the unchanged before-state when a
+        // partial-update caller (per-section Settings page) omits the
+        // field, so the audit diff doesn't record spurious "name changed"
+        // events.
+        name: typeof data.name === "string" && data.name.trim() ? data.name.trim() : beforeOrg.name,
+        member_label: typeof data.memberLabel === "string" ? (data.memberLabel || "member") : beforeOrg.member_label,
         require_mfa: data.requireMfa ?? beforeOrg.require_mfa,
         currency_symbol: (typeof data.currencySymbol === "string" && data.currencySymbol.trim()) ? data.currencySymbol.trim() : beforeOrg.currency_symbol,
         ts_max_shift_hours: data.tsMaxShiftHours ?? beforeOrg.ts_max_shift_hours,
