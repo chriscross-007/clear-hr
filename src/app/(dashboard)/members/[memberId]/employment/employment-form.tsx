@@ -14,6 +14,7 @@ import { updateMemberTeam } from "@/app/(dashboard)/employees/team-actions";
 import { saveCustomFieldValues } from "@/app/(dashboard)/employees/custom-field-actions";
 import { WorkProfileSection, type WorkProfileAssignmentRow } from "./work-profile-section";
 import { ApprovalProfileSection } from "./approval-profile-section";
+import { NoticePeriodSection } from "./notice-period-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -408,6 +409,12 @@ export function EmploymentForm({
 
               {/* CLE-186 — per-employee Approval Profile picker */}
               <ApprovalProfileSection
+                memberId={member.member_id}
+                canEdit={canEdit}
+              />
+
+              {/* CLE-194 — per-employee Notice Period Profile picker */}
+              <NoticePeriodSection
                 memberId={member.member_id}
                 canEdit={canEdit}
               />

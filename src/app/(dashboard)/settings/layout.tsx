@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { coerceAccess } from "@/lib/rights-config";
 import { SettingsSidebar } from "./settings-sidebar";
 
 // CLE-191 — Settings shell. Layout-level permission gate ensures the
@@ -31,7 +32,9 @@ export default async function SettingsLayout({
 
   const perms = (caller.permissions as Record<string, unknown>) ?? {};
   const canEditOrganisation = perms.can_edit_organisation === true;
-  const canDefineCustomFields = perms.can_define_custom_fields === true;
+  // Tri-state: "none" | "read" | "write". Any non-none access gates page
+  // visibility; "write" is checked separately in the action layer.
+  const canDefineCustomFields = coerceAccess(perms.can_define_custom_fields) !== "none";
   const canAddMembers = perms.can_add_members === true;
 
   const allowed =

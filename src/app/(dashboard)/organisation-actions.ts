@@ -149,9 +149,19 @@ export async function updateOrganisation(data: {
     updatePayload.default_work_profile_id = data.defaultWorkProfileId;
   }
 
-  // Notice-rules block flag (CLE-178)
+  // Notice-rules block flag (CLE-178). CLE-194 made this per-profile, but
+  // the legacy OrganisationEditDialog still writes to the org-level column.
+  // Mirror the write across to the Default notice profile's block_requests
+  // so booking validation (which reads from the profile) stays in sync
+  // with what the legacy dialog shows. Drop both sides once the legacy
+  // dialog is removed.
   if (typeof data.noticeRulesBlockRequests === "boolean") {
     updatePayload.notice_rules_block_requests = data.noticeRulesBlockRequests;
+    await supabase
+      .from("notice_period_profiles")
+      .update({ block_requests: data.noticeRulesBlockRequests })
+      .eq("organisation_id", membership.organisation_id)
+      .eq("is_default", true);
   }
 
   // CLE-169 — Default Cascade fields (Profileless Holiday Management).

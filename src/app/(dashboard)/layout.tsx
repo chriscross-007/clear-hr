@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { MemberLabelProvider } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { hasPlanFeature } from "@/lib/plan-config";
+import { coerceAccess } from "@/lib/rights-config";
 import { HeaderUserMenu } from "./header-user-menu";
 import { Sidebar } from "./sidebar";
 
@@ -76,9 +77,12 @@ export default async function DashboardLayout({
   const accessMembers = membership.role === "admin"
     ? (memberPermissions.can_manage_members as string | undefined) ?? "none"
     : null;
-  const canDefineCustomFields = membership.role === "admin"
-    ? (memberPermissions.can_define_custom_fields as boolean) === true
-    : false;
+  // can_define_custom_fields is tri-state ("none" | "read" | "write"); the
+  // legacy boolean shape is normalised by coerceAccess in rights-config.
+  const customFieldDefAccess = membership.role === "admin"
+    ? coerceAccess(memberPermissions.can_define_custom_fields)
+    : "none";
+  const canDefineCustomFields = customFieldDefAccess !== "none";
   const canEditOrganisation = membership.role === "admin"
     ? (memberPermissions.can_edit_organisation as boolean) === true
     : false;

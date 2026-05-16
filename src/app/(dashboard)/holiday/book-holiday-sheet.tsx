@@ -358,7 +358,7 @@ export function BookHolidaySheet({
     }
     return null;
   })();
-  const coverBlocksSubmit = coverViolation !== null && (teamCover?.blockRequests ?? false);
+  const coverBlocksSubmit = coverViolation !== null && (teamCover?.blockCover ?? false);
 
   const canSubmit = !isExistingMode
     && reasonId

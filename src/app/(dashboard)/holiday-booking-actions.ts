@@ -454,7 +454,8 @@ async function validateBookingRules(
 
   // Notice period validation — runs regardless of block flag now so we can
   // capture the warning state. Only converts to a blocking error when the
-  // org has notice_rules_block_requests=true.
+  // booking author's notice profile has block_requests=true (CLE-194: was
+  // an org-level flag before multi-profile).
   //
   // CLE-179 — consecutive bookings are folded together for the rule check
   // so an employee can't dodge a notice rule by splitting one large
@@ -463,19 +464,42 @@ async function validateBookingRules(
   // whose start_date is the day after the new end. Their days_deducted are
   // added in, and the earliest start_date is used for the notice
   // calculation.
-  const { data: orgRow } = await supabase
-    .from("organisations")
-    .select("notice_rules_block_requests")
-    .eq("id", orgId)
+  const { data: memberRow } = await supabase
+    .from("members")
+    .select("notice_period_profile_id")
+    .eq("id", memberId)
     .single();
-  const blockOnNotice = !!(orgRow as { notice_rules_block_requests?: boolean } | null)?.notice_rules_block_requests;
+  let memberNoticeProfileId =
+    (memberRow as { notice_period_profile_id: string | null } | null)?.notice_period_profile_id ?? null;
+  if (!memberNoticeProfileId) {
+    const { data: def } = await supabase
+      .from("notice_period_profiles")
+      .select("id")
+      .eq("organisation_id", orgId)
+      .eq("is_default", true)
+      .limit(1)
+      .single();
+    memberNoticeProfileId = (def?.id as string) ?? null;
+  }
+
+  let blockOnNotice = false;
+  if (memberNoticeProfileId) {
+    const { data: profile } = await supabase
+      .from("notice_period_profiles")
+      .select("block_requests")
+      .eq("id", memberNoticeProfileId)
+      .single();
+    blockOnNotice = !!(profile as { block_requests?: boolean } | null)?.block_requests;
+  }
 
   {
-    const { data: noticePeriodRules } = await supabase
-      .from("notice_period_rules")
-      .select("min_booking_days, notice_days")
-      .eq("organisation_id", orgId)
-      .order("min_booking_days", { ascending: false });
+    const { data: noticePeriodRules } = memberNoticeProfileId
+      ? await supabase
+          .from("notice_period_rules")
+          .select("min_booking_days, notice_days")
+          .eq("profile_id", memberNoticeProfileId)
+          .order("min_booking_days", { ascending: false })
+      : { data: null };
 
     if (noticePeriodRules && noticePeriodRules.length > 0) {
       // Reasons that deduct from holiday entitlement — only those count
@@ -595,21 +619,23 @@ async function validateBookingRules(
 
   // Team cover validation (uses admin client to bypass RLS — employees may not
   // have permission to read teammates, but the server must count them for
-  // validation). CLE-187 — same block-or-warn flag as the notice rules:
-  // when notice_rules_block_requests=FALSE the cover violation is
-  // informational only (client surfaces a warning); when TRUE the server
-  // hard-blocks the submission. CLE-189 — always compute the violation so
-  // we can snapshot the warning state at submit.
+  // validation). CLE-194 — the cover block flag is now per-team
+  // (`teams.block_cover_violations`), independent of the notice profile's
+  // block_requests flag. When FALSE the cover violation is informational
+  // only (client surfaces a warning); when TRUE the server hard-blocks
+  // the submission. CLE-189 — always compute the violation so we can
+  // snapshot the warning state at submit.
   if (teamId) {
     const admin = getAdminClient();
 
     const { data: teamRow } = await admin
       .from("teams")
-      .select("min_cover")
+      .select("min_cover, block_cover_violations")
       .eq("id", teamId)
       .single();
 
     const minCover = teamRow?.min_cover as number | null;
+    const blockOnCover = !!(teamRow as { block_cover_violations?: boolean } | null)?.block_cover_violations;
     if (minCover && minCover > 0) {
       const { count: teamMemberCount } = await admin
         .from("members")
@@ -652,7 +678,7 @@ async function validateBookingRules(
             const present = teamSize - (onLeaveCount ?? 0) - 1; // -1 for the requesting employee
             if (present < minCover) {
               coverWarning = true;
-              if (blockOnNotice) {
+              if (blockOnCover) {
                 return {
                   error: `Minimum team cover of ${minCover} would not be met on ${dateStr}.`,
                   noticeWarning,
@@ -689,9 +715,11 @@ export type TeamCoverContext = {
   teamSize: number;
   /** Configured Min Cover for the team (0 / NULL = unlimited). */
   minCover: number;
-  /** Org-level block flag (shared with notice rules). When TRUE the server
-   *  enforces a hard block; when FALSE it's an informational warning. */
-  blockRequests: boolean;
+  /** Per-team block flag (CLE-194). When TRUE the server hard-blocks
+   *  bookings that would drop the team below Min cover; when FALSE the
+   *  breach surfaces as an advisory warning. Independent of the notice
+   *  profile's block_requests flag. */
+  blockCover: boolean;
   /** Active pending/approved bookings of every other team member, with
    *  date ranges so the client can do day-by-day overlap counts. */
   teammateBookings: {
@@ -713,20 +741,25 @@ export async function getMyTeamCoverContext(): Promise<{
     teamId: null,
     teamSize: 0,
     minCover: 0,
-    blockRequests: false,
+    blockCover: false,
     teammateBookings: [],
     teammateNames: {},
   };
   try {
-    const { supabase, member } = await getCallerMember();
+    const { member } = await getCallerMember();
     if (!member.team_id) {
       return { success: true, context: empty };
     }
 
     const admin = getAdminClient();
-    const [{ data: teamRow }, { data: orgRow }, { count: teamMemberCount }, { data: teammates }] = await Promise.all([
-      admin.from("teams").select("min_cover").eq("id", member.team_id).single(),
-      supabase.from("organisations").select("notice_rules_block_requests").eq("id", member.organisation_id).single(),
+    // CLE-194 — block-on-cover flag now lives on the team itself, separate
+    // from the notice profile's block_requests.
+    const [{ data: teamRow }, { count: teamMemberCount }, { data: teammates }] = await Promise.all([
+      admin
+        .from("teams")
+        .select("min_cover, block_cover_violations")
+        .eq("id", member.team_id)
+        .single(),
       admin
         .from("members")
         .select("id", { count: "exact", head: true })
@@ -741,7 +774,7 @@ export async function getMyTeamCoverContext(): Promise<{
     ]);
 
     const minCover = Number((teamRow as { min_cover: number | null } | null)?.min_cover ?? 0);
-    const blockRequests = !!(orgRow as { notice_rules_block_requests?: boolean } | null)?.notice_rules_block_requests;
+    const blockCover = !!(teamRow as { block_cover_violations?: boolean } | null)?.block_cover_violations;
     const teamSize = teamMemberCount ?? 0;
     const teammateRows = (teammates ?? []) as { id: string; first_name: string; last_name: string }[];
     const teammateIds = teammateRows.map((t) => t.id);
@@ -753,7 +786,7 @@ export async function getMyTeamCoverContext(): Promise<{
     if (teammateIds.length === 0 || minCover <= 0) {
       return {
         success: true,
-        context: { teamId: member.team_id, teamSize, minCover, blockRequests, teammateBookings: [], teammateNames },
+        context: { teamId: member.team_id, teamSize, minCover, blockCover, teammateBookings: [], teammateNames },
       };
     }
 
@@ -773,7 +806,7 @@ export async function getMyTeamCoverContext(): Promise<{
         teamId: member.team_id,
         teamSize,
         minCover,
-        blockRequests,
+        blockCover,
         teammateBookings: (bookings ?? []).map((b) => ({
           memberId: b.member_id as string,
           startDate: b.start_date as string,

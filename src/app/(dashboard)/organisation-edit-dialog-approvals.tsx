@@ -394,7 +394,7 @@ export const ApprovalsManager = forwardRef<ApprovalsManagerHandle, ApprovalsMana
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Approver names are members of the org with role <strong>owner</strong> or <strong>admin</strong>.
+        Approver names are admins whose rights profile grants <strong>Approve Holidays</strong>.
         Profile changes only affect new bookings — already-pending bookings keep their original ladder.
         Use the dialog&apos;s <strong>Save changes</strong> button to commit your edits.
       </p>
@@ -406,7 +406,11 @@ export const ApprovalsManager = forwardRef<ApprovalsManagerHandle, ApprovalsMana
 // ProfileEditor — inline editor for one profile
 // ---------------------------------------------------------------------------
 
-function ProfileEditor(props: {
+// CLE-191 — exported so the new Settings Holiday Approval client can
+// reuse the same form fields inside a popup without re-implementing.
+export type { LevelEdit, AbsenceTypeOption };
+export { emptyLevel, levelFromProfile };
+export function ProfileEditor(props: {
   name: string;
   setName: (n: string) => void;
   absenceTypeId: string;
@@ -429,6 +433,7 @@ function ProfileEditor(props: {
             value={props.name}
             onChange={(e) => props.setName(e.target.value)}
             placeholder="e.g. Holiday Approval Default"
+            className="font-semibold"
           />
         </div>
         <div className="space-y-1.5">
@@ -630,7 +635,7 @@ function ApproverPicker(props: {
           <div className="max-h-64 overflow-y-auto py-1">
             {props.approvers.length === 0 && (
               <div className="px-3 py-2 text-sm text-muted-foreground">
-                No admins or owners yet. Add an admin first.
+                No approvers available. Grant the Approve Holidays right to an admin in Settings → Profiles → Rights.
               </div>
             )}
             {props.approvers.map((a) => {

@@ -14,9 +14,11 @@ import {
   renameTeams,
   updateTeamMinCover,
   updateTeamApprover,
+  updateTeamBlockCover,
 } from "@/app/(dashboard)/employees/team-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 type Team = {
@@ -24,6 +26,7 @@ type Team = {
   name: string;
   min_cover: number | null;
   approver_id: string | null;
+  block_cover_violations: boolean;
 };
 
 type ApproverMember = { id: string; name: string };
@@ -54,9 +57,10 @@ export function TeamsManager({ initialTeams, approverMembers }: TeamsManagerProp
       return;
     }
     setTeams((prev) =>
-      [...prev, { ...result.team!, min_cover: null, approver_id: null }].sort(
-        (a, b) => a.name.localeCompare(b.name),
-      ),
+      [
+        ...prev,
+        { ...result.team!, min_cover: null, approver_id: null, block_cover_violations: false },
+      ].sort((a, b) => a.name.localeCompare(b.name)),
     );
     setNewTeamName("");
     router.refresh();
@@ -113,6 +117,17 @@ export function TeamsManager({ initialTeams, approverMembers }: TeamsManagerProp
     }
   }
 
+  async function commitBlockCover(teamId: string, blockCover: boolean) {
+    const current = teams.find((t) => t.id === teamId);
+    if (!current) return;
+    setTeams((prev) => prev.map((t) => (t.id === teamId ? { ...t, block_cover_violations: blockCover } : t)));
+    const result = await updateTeamBlockCover(teamId, blockCover);
+    if (!result.success) {
+      setError(result.error ?? "Failed to update cover block flag");
+      setTeams((prev) => prev.map((t) => (t.id === teamId ? current : t)));
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -135,6 +150,12 @@ export function TeamsManager({ initialTeams, approverMembers }: TeamsManagerProp
             <span className="text-xs text-muted-foreground font-medium flex-1">Team name</span>
             <span className="text-xs text-muted-foreground font-medium w-36">Holiday approver</span>
             <span className="text-xs text-muted-foreground font-medium w-20">Min cover</span>
+            <span
+              className="text-xs text-muted-foreground font-medium w-24 text-center"
+              title="When ON, requests that would drop the team below Min cover are blocked. When OFF the booking goes through with a cover warning."
+            >
+              Block on cover
+            </span>
             <span className="w-7" />
           </div>
         )}
@@ -203,6 +224,16 @@ export function TeamsManager({ initialTeams, approverMembers }: TeamsManagerProp
                 }}
                 onBlur={() => commitMinCover(team.id, team.min_cover)}
               />
+              <div
+                className="w-24 flex justify-center"
+                onClick={(e) => e.stopPropagation()}
+                title="When ON, requests breaching min cover are hard-blocked. When OFF a warning is shown but the booking can proceed."
+              >
+                <Switch
+                  checked={team.block_cover_violations}
+                  onCheckedChange={(checked) => commitBlockCover(team.id, checked)}
+                />
+              </div>
               <Button
                 type="button"
                 variant="ghost"

@@ -41,7 +41,13 @@ async function getCallerMembership() {
 export async function getTeams(): Promise<{
   success: boolean;
   error?: string;
-  teams?: { id: string; name: string; min_cover: number | null; approver_id: string | null }[];
+  teams?: {
+    id: string;
+    name: string;
+    min_cover: number | null;
+    approver_id: string | null;
+    block_cover_violations: boolean;
+  }[];
 }> {
   try {
     const membership = await getCallerMembership();
@@ -49,18 +55,53 @@ export async function getTeams(): Promise<{
 
     const { data: teams, error } = await admin
       .from("teams")
-      .select("id, name, min_cover, approver_id")
+      .select("id, name, min_cover, approver_id, block_cover_violations")
       .eq("organisation_id", membership.organisation_id)
       .order("name");
 
     if (error) return { success: false, error: error.message };
 
-    return { success: true, teams: teams ?? [] };
+    return {
+      success: true,
+      teams: (teams ?? []).map((t) => ({
+        id: t.id as string,
+        name: t.name as string,
+        min_cover: (t.min_cover as number | null) ?? null,
+        approver_id: (t.approver_id as string | null) ?? null,
+        block_cover_violations: !!t.block_cover_violations,
+      })),
+    };
   } catch (e) {
     return {
       success: false,
       error: e instanceof Error ? e.message : "An error occurred",
     };
+  }
+}
+
+export async function updateTeamBlockCover(
+  teamId: string,
+  blockCoverViolations: boolean,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const membership = await getCallerMembership();
+
+    if (membership.role !== "owner" && membership.role !== "admin") {
+      return { success: false, error: "Only owners and admins can update team settings" };
+    }
+
+    const admin = createAdminClient();
+
+    const { error } = await admin
+      .from("teams")
+      .update({ block_cover_violations: blockCoverViolations })
+      .eq("id", teamId)
+      .eq("organisation_id", membership.organisation_id);
+
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }
 }
 
@@ -99,18 +140,27 @@ export async function getApproverMembers(): Promise<{
     const membership = await getCallerMembership();
     const admin = createAdminClient();
 
+    // Holiday approvers for a team are admins whose rights profile grants
+    // the Approve Holidays right (`permissions.can_approve_holidays = true`).
+    // Owners and admins without the right are excluded — mirrors the
+    // approval-profile-actions.getApproverOptions filter.
     const { data, error } = await admin
       .from("members")
-      .select("id, first_name, last_name")
+      .select("id, first_name, last_name, permissions")
       .eq("organisation_id", membership.organisation_id)
-      .in("role", ["admin", "owner"])
+      .eq("role", "admin")
       .order("first_name");
 
     if (error) return { success: false, error: error.message };
 
     return {
       success: true,
-      members: (data ?? []).map((m) => ({ id: m.id, name: `${m.first_name} ${m.last_name}` })),
+      members: (data ?? [])
+        .filter((m) => {
+          const perms = (m.permissions as Record<string, unknown> | null) ?? {};
+          return perms.can_approve_holidays === true;
+        })
+        .map((m) => ({ id: m.id, name: `${m.first_name} ${m.last_name}` })),
     };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };

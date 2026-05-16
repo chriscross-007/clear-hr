@@ -15,7 +15,7 @@ export function getAdminClient(): SupabaseClient {
  */
 export async function verifyCaller(request: Request): Promise<
   | { error: string; status: number }
-  | { admin: SupabaseClient; user: { id: string; email?: string | null }; organisationId: string }
+  | { admin: SupabaseClient; user: { id: string; email?: string | null }; organisationId: string; memberId: string }
 > {
   const authHeader = request.headers.get("authorization") ?? "";
   const token = authHeader.replace(/^Bearer\s+/i, "");
@@ -27,11 +27,16 @@ export async function verifyCaller(request: Request): Promise<
 
   const { data: membership } = await admin
     .from("members")
-    .select("organisation_id")
+    .select("id, organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
   if (!membership) return { error: "No organisation", status: 403 };
 
-  return { admin, user, organisationId: membership.organisation_id as string };
+  return {
+    admin,
+    user,
+    organisationId: membership.organisation_id as string,
+    memberId: membership.id as string,
+  };
 }

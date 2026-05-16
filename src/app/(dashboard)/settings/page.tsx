@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { coerceAccess } from "@/lib/rights-config";
 
 // CLE-191 — /settings landing. Sends the caller to the first section
 // they can see. The layout has already enforced "has at least one
@@ -26,7 +27,7 @@ export default async function SettingsIndexPage() {
   if (isOwner || perms.can_edit_organisation === true) {
     redirect("/settings/organisation");
   }
-  if (perms.can_define_custom_fields === true) {
+  if (coerceAccess(perms.can_define_custom_fields) !== "none") {
     redirect("/settings/custom-fields");
   }
   if (perms.can_add_members === true) {

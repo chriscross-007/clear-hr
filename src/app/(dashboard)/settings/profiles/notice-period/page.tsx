@@ -2,21 +2,21 @@ export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getNoticePeriodRules } from "@/app/(dashboard)/notice-period-actions";
+import { getNoticePeriodProfiles } from "@/app/(dashboard)/notice-period-actions";
 import { ProfileExplainer } from "../profile-explainer";
 import { NoticePeriodClient } from "./notice-period-client";
 
-// CLE-191 — Notice Period profiles (Phase 1 — single "Default" profile).
+// CLE-194 — Notice Period: multi-profile list + popup CRUD.
 //
-// The current model stores notice rules as a flat list on
-// `notice_period_rules` keyed only by organisation_id. Phase 3 (the
-// Org → Team → Member cascade) will introduce a real `notice_profiles`
-// entity with profile-level overrides; for now there's exactly one
-// profile per org (the "Default") and editing it edits the underlying
-// rules directly.
+// Each org carries one is_default profile plus any number of named
+// alternatives. Members point at a single profile (auto-seeded to the
+// org's Default on member insert via DB trigger); admins re-assign via
+// the Employment page.
 //
-// The list + popup CRUD pattern is in place so the UI doesn't change
-// when Phase 3 lands — just more rows in the list.
+// The block-or-warn flag lives on the profile, not the org. The legacy
+// `organisations.notice_rules_block_requests` column is kept during the
+// parallel period as a mirror of the Default profile's flag so the
+// legacy OrganisationEditDialog Notice Periods tab continues to work.
 
 export default async function NoticePeriodProfilesPage() {
   const supabase = await createClient();
@@ -27,41 +27,23 @@ export default async function NoticePeriodProfilesPage() {
 
   const { data: caller } = await supabase
     .from("members")
-    .select("organisation_id, role")
+    .select("role")
     .eq("user_id", user.id)
     .limit(1)
     .single();
   if (!caller) redirect("/organisation-setup");
   if (caller.role !== "owner") redirect("/settings");
 
-  const [rulesRes, { data: org }] = await Promise.all([
-    getNoticePeriodRules(),
-    supabase
-      .from("organisations")
-      .select("notice_rules_block_requests")
-      .eq("id", caller.organisation_id)
-      .single(),
-  ]);
-
-  const initialRules = rulesRes.success
-    ? (rulesRes.rules ?? []).map((r) => ({
-        id: r.id,
-        min_booking_days: r.min_booking_days,
-        notice_days: r.notice_days,
-      }))
-    : [];
-  const initialBlockRequests = !!org?.notice_rules_block_requests;
+  const profilesRes = await getNoticePeriodProfiles();
+  const initialProfiles = profilesRes.success ? (profilesRes.profiles ?? []) : [];
 
   return (
     <div className="space-y-6">
       <ProfileExplainer
         kind="live"
-        note="The block-or-warn flag also affects the cover rule — the same flag governs both."
+        note="The block-or-warn flag on each profile applies only to notice rules. The Cover rule has its own flag per team in Settings → Groups."
       />
-      <NoticePeriodClient
-        initialRules={initialRules}
-        initialBlockRequests={initialBlockRequests}
-      />
+      <NoticePeriodClient initialProfiles={initialProfiles} />
     </div>
   );
 }

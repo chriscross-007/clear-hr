@@ -2,13 +2,14 @@ export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { WorkProfilesClient } from "@/app/(dashboard)/work-profiles/work-profiles-client";
+import { WorkingPatternProfilesClient } from "./working-pattern-client";
 import { ProfileExplainer } from "../profile-explainer";
 import type { WorkProfile } from "@/app/(dashboard)/work-profile-actions";
 
-// CLE-191 — Working Pattern profiles. Lifts the existing /work-profiles
-// page's data + client into the Settings shell. The legacy /work-profiles
-// route is left in place during the parallel period.
+// CLE-191 — Working Pattern profiles. Lifts the same data fetching as
+// the legacy /work-profiles page but renders with the new list + popup
+// CRUD pattern. The legacy /work-profiles route is left in place during
+// the parallel period.
 
 export default async function WorkingPatternProfilesPage() {
   const supabase = await createClient();
@@ -55,7 +56,7 @@ export default async function WorkingPatternProfilesPage() {
         kind="live"
         note="Compute helpers resolve a member's pattern per-date, so reassigning a working pattern affects all future calculations immediately."
       />
-      <WorkProfilesClient initialProfiles={enriched} />
+      <WorkingPatternProfilesClient initialProfiles={enriched} />
     </div>
   );
 }

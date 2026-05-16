@@ -47,6 +47,8 @@ export default async function RightsProfilesPage() {
       <RightsProfilesClient
         initialAdminProfiles={adminProfilesRes.success ? (adminProfilesRes.profiles ?? []) : []}
         initialEmployeeProfiles={employeeProfilesRes.success ? (employeeProfilesRes.profiles ?? []) : []}
+        initialAdminNoProfileCount={adminProfilesRes.success ? (adminProfilesRes.noProfileCount ?? 0) : 0}
+        initialEmployeeNoProfileCount={employeeProfilesRes.success ? (employeeProfilesRes.noProfileCount ?? 0) : 0}
         teams={(teams ?? []) as { id: string; name: string }[]}
         adminRights={ADMIN_RIGHTS}
         employeeRights={EMPLOYEE_RIGHTS}

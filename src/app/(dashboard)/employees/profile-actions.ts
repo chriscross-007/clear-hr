@@ -42,6 +42,12 @@ export type Profile = {
   id: string;
   name: string;
   rights: Record<string, unknown>;
+  /** Count of members in the caller's org currently pointing at this profile.
+   *  For admin profiles this is admins; for employee profiles, employees.
+   *  Optional: populated only by `getProfiles()` (used by the Rights settings
+   *  tab). Other callers that cast raw `admin_profiles` rows into Profile[]
+   *  don't compute this — readers should treat undefined as 0. */
+  memberCount?: number;
 };
 
 type ProfileType = "admin" | "employee";
@@ -56,20 +62,59 @@ function profileFk(type: ProfileType) {
 
 export async function getProfiles(
   type: ProfileType
-): Promise<{ success: boolean; error?: string; profiles?: Profile[] }> {
+): Promise<{
+  success: boolean;
+  error?: string;
+  profiles?: Profile[];
+  /** Count of members in the role that have no profile assigned. Useful
+   *  for the rights-tab summary so admins can see overall coverage. */
+  noProfileCount?: number;
+}> {
   try {
     const membership = await getCallerMembership();
     const admin = createAdminClient();
 
-    const { data, error } = await admin
-      .from(tableName(type))
-      .select("id, name, rights")
-      .eq("organisation_id", membership.organisation_id)
-      .order("name");
+    const fk = profileFk(type);
+    const memberRole = type === "admin" ? "admin" : "employee";
 
-    if (error) return { success: false, error: error.message };
+    const [{ data: profiles, error: pErr }, { data: members, error: mErr }] = await Promise.all([
+      admin
+        .from(tableName(type))
+        .select("id, name, rights, sort_order")
+        .eq("organisation_id", membership.organisation_id)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true }),
+      // Pull all members of the matching role so we can group counts in JS.
+      // Cheap — one row per member of the role for the caller's org.
+      admin
+        .from("members")
+        .select(`id, ${fk}`)
+        .eq("organisation_id", membership.organisation_id)
+        .eq("role", memberRole),
+    ]);
 
-    return { success: true, profiles: (data ?? []) as Profile[] };
+    if (pErr) return { success: false, error: pErr.message };
+    if (mErr) return { success: false, error: mErr.message };
+
+    const countById = new Map<string, number>();
+    let noProfileCount = 0;
+    for (const m of members ?? []) {
+      const pid = (m as Record<string, unknown>)[fk] as string | null | undefined;
+      if (!pid) {
+        noProfileCount += 1;
+      } else {
+        countById.set(pid, (countById.get(pid) ?? 0) + 1);
+      }
+    }
+
+    const enriched: Profile[] = (profiles ?? []).map((p) => ({
+      id: p.id as string,
+      name: p.name as string,
+      rights: (p.rights as Record<string, unknown>) ?? {},
+      memberCount: countById.get(p.id as string) ?? 0,
+    }));
+
+    return { success: true, profiles: enriched, noProfileCount };
   } catch (e) {
     return {
       success: false,
@@ -92,12 +137,24 @@ export async function createProfile(
 
     const admin = createAdminClient();
 
+    // Append-at-end ordering: new profile gets max(sort_order) + 1 so it
+    // lands at the bottom of the user-controlled list.
+    const { data: maxRow } = await admin
+      .from(tableName(type))
+      .select("sort_order")
+      .eq("organisation_id", membership.organisation_id)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const nextSortOrder = ((maxRow?.sort_order as number | null) ?? -1) + 1;
+
     const { data: profile, error } = await admin
       .from(tableName(type))
       .insert({
         organisation_id: membership.organisation_id,
         name: name.trim(),
         rights,
+        sort_order: nextSortOrder,
       })
       .select("id, name, rights")
       .single();
@@ -120,7 +177,16 @@ export async function createProfile(
       metadata: { rights },
     });
 
-    return { success: true, profile: profile as Profile };
+    // New profiles always start with zero members assigned.
+    return {
+      success: true,
+      profile: {
+        id: profile.id as string,
+        name: profile.name as string,
+        rights: (profile.rights as Record<string, unknown>) ?? {},
+        memberCount: 0,
+      },
+    };
   } catch (e) {
     return {
       success: false,
@@ -243,6 +309,46 @@ export async function deleteProfile(
       targetLabel: profile?.name ?? "Unknown",
     });
 
+    return { success: true };
+  } catch (e) {
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : "An error occurred",
+    };
+  }
+}
+
+export async function reorderProfiles(
+  type: ProfileType,
+  orderedIds: string[],
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const membership = await getCallerMembership();
+    if (membership.role !== "owner") {
+      return { success: false, error: "Only the owner can reorder profiles" };
+    }
+    const admin = createAdminClient();
+
+    // Verify every supplied id belongs to the caller's org, both as a
+    // sanity check and to scope the write.
+    const { data: existing } = await admin
+      .from(tableName(type))
+      .select("id")
+      .eq("organisation_id", membership.organisation_id);
+    const validIds = new Set((existing ?? []).map((r) => r.id as string));
+    if (orderedIds.some((id) => !validIds.has(id))) {
+      return { success: false, error: "Some profiles are not in your organisation" };
+    }
+
+    // Apply the new ordering. Each id's index becomes its sort_order.
+    for (let i = 0; i < orderedIds.length; i++) {
+      const { error } = await admin
+        .from(tableName(type))
+        .update({ sort_order: i })
+        .eq("id", orderedIds[i])
+        .eq("organisation_id", membership.organisation_id);
+      if (error) return { success: false, error: error.message };
+    }
     return { success: true };
   } catch (e) {
     return {

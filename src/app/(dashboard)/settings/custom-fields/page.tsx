@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCustomFieldDefs } from "@/app/(dashboard)/employees/custom-field-actions";
+import { getCustomFieldDefAccess } from "@/lib/rights-config";
 import { CustomFieldsPageClient } from "./custom-fields-client";
 
 // CLE-191 — /settings/custom-fields. Lifts the existing
@@ -26,10 +27,11 @@ export default async function CustomFieldsSettingsPage() {
   if (!caller) redirect("/organisation-setup");
 
   const perms = (caller.permissions as Record<string, unknown>) ?? {};
-  const allowed =
-    caller.role === "owner"
-    || (caller.role === "admin" && perms.can_define_custom_fields === true);
-  if (!allowed) redirect("/dashboard");
+  // Tri-state access: "none" blocks the page, "read" shows it read-only,
+  // "write" enables edit affordances + write actions.
+  const access = getCustomFieldDefAccess(caller.role, perms);
+  if (access === "none") redirect("/dashboard");
+  const canEdit = access === "write";
 
   const [defs, { data: org }] = await Promise.all([
     getCustomFieldDefs(),
@@ -49,7 +51,7 @@ export default async function CustomFieldsSettingsPage() {
           Define extra fields recorded against each member.
         </p>
       </div>
-      <CustomFieldsPageClient initialDefs={defs} currencySymbol={currencySymbol} />
+      <CustomFieldsPageClient initialDefs={defs} currencySymbol={currencySymbol} canEdit={canEdit} />
     </div>
   );
 }

@@ -200,7 +200,7 @@ export const EMPLOYEE_COL_LABELS: Record<string, string> = {
   payroll_number: "Payroll #",
   email: "Email",
   role: "Role",
-  profile: "Profile",
+  profile: "Rights",
   team: "Team",
   holiday_profile: "Holiday Profile",
   approval_profile: "Approver Profile",
@@ -423,7 +423,7 @@ export function buildEmployeeColumns(opts: {
         const b = rowB.original.profile_name ?? "";
         return a.localeCompare(b, undefined, { sensitivity: "base" });
       },
-      header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label="Profile" />,
+      header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label="Rights" />,
       cell: ({ row }) => row.original.profile_name ?? "—",
       meta: {
         filterElement: (column) => {

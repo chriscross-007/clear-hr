@@ -23,9 +23,10 @@ type TeamCoverContextPayload = {
   teamSize: number;
   /** Configured Min Cover for the team (0 = unlimited). */
   minCover: number;
-  /** Org-level block flag — when TRUE the cover violation hard-blocks
-   *  the submission; when FALSE it's an informational warning. */
-  blockRequests: boolean;
+  /** Per-team block flag (CLE-194). When TRUE cover violations hard-block
+   *  the submission; when FALSE they surface as an advisory warning.
+   *  Independent of the notice profile's block_requests. */
+  blockCover: boolean;
   /** Active pending/approved bookings of every other team member, with
    *  date ranges so the client can do day-by-day overlap counts. */
   teammateBookings: {
@@ -42,7 +43,7 @@ const EMPTY: TeamCoverContextPayload = {
   teamId: null,
   teamSize: 0,
   minCover: 0,
-  blockRequests: false,
+  blockCover: false,
   teammateBookings: [],
   teammateNames: {},
 };
@@ -69,14 +70,17 @@ export async function GET(request: Request) {
     const callerMemberId = caller.id as string;
     const teamId = caller.team_id as string;
 
+    // CLE-194 — block-on-cover flag now lives on the team itself.
     const [
       { data: teamRow },
-      { data: orgRow },
       { count: teamMemberCount },
       { data: teammates },
     ] = await Promise.all([
-      admin.from("teams").select("min_cover").eq("id", teamId).single(),
-      admin.from("organisations").select("notice_rules_block_requests").eq("id", organisationId).single(),
+      admin
+        .from("teams")
+        .select("min_cover, block_cover_violations")
+        .eq("id", teamId)
+        .single(),
       admin
         .from("members")
         .select("id", { count: "exact", head: true })
@@ -91,7 +95,7 @@ export async function GET(request: Request) {
     ]);
 
     const minCover = Number((teamRow as { min_cover: number | null } | null)?.min_cover ?? 0);
-    const blockRequests = !!(orgRow as { notice_rules_block_requests?: boolean } | null)?.notice_rules_block_requests;
+    const blockCover = !!(teamRow as { block_cover_violations?: boolean } | null)?.block_cover_violations;
     const teamSize = teamMemberCount ?? 0;
     const teammateRows = (teammates ?? []) as { id: string; first_name: string; last_name: string }[];
     const teammateIds = teammateRows.map((t) => t.id);
@@ -102,7 +106,7 @@ export async function GET(request: Request) {
 
     if (teammateIds.length === 0 || minCover <= 0) {
       return NextResponse.json({
-        context: { teamId, teamSize, minCover, blockRequests, teammateBookings: [], teammateNames },
+        context: { teamId, teamSize, minCover, blockCover, teammateBookings: [], teammateNames },
       });
     }
 
@@ -119,7 +123,7 @@ export async function GET(request: Request) {
     }));
 
     return NextResponse.json({
-      context: { teamId, teamSize, minCover, blockRequests, teammateBookings, teammateNames },
+      context: { teamId, teamSize, minCover, blockCover, teammateBookings, teammateNames },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";

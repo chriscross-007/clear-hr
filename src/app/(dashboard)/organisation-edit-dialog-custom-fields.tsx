@@ -240,9 +240,21 @@ interface CustomFieldsManagerProps {
   defs: FieldDef[];
   onDefsChange: (defs: FieldDef[]) => void;
   currencySymbol: string;
+  /**
+   * Hide write affordances (Add form, row editing, delete, drag-reorder)
+   * when false. Defaults to true so the legacy OrganisationEditDialog
+   * (owner-only) keeps full edit rights without explicitly passing this.
+   * Server actions still enforce the gate as a defence in depth.
+   */
+  canEdit?: boolean;
 }
 
-export function CustomFieldsManager({ defs, onDefsChange, currencySymbol }: CustomFieldsManagerProps) {
+export function CustomFieldsManager({
+  defs,
+  onDefsChange,
+  currencySymbol,
+  canEdit = true,
+}: CustomFieldsManagerProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState("");
   const [editRequired, setEditRequired] = useState(false);
@@ -361,7 +373,7 @@ export function CustomFieldsManager({ defs, onDefsChange, currencySymbol }: Cust
       {defs.map((def, i) => (
         <div
           key={def.id}
-          draggable={editingId !== def.id}
+          draggable={canEdit && editingId !== def.id}
           onDragStart={(e) => handleDragStart(e, i)}
           onDragEnter={() => handleDragEnter(i)}
           onDragOver={handleDragOver}
@@ -420,15 +432,20 @@ export function CustomFieldsManager({ defs, onDefsChange, currencySymbol }: Cust
               </div>
             </div>
           ) : (
-            // Display mode — click anywhere on the row to edit
+            // Display mode — click anywhere on the row to edit (write only).
             <div
-              className="flex items-center gap-2 px-2 py-2 cursor-pointer hover:bg-muted/50 select-none"
-              onClick={() => startEdit(def)}
+              className={cn(
+                "flex items-center gap-2 px-2 py-2 select-none",
+                canEdit ? "cursor-pointer hover:bg-muted/50" : "cursor-default",
+              )}
+              onClick={canEdit ? () => startEdit(def) : undefined}
             >
-              <GripVertical
-                className="h-4 w-4 shrink-0 text-muted-foreground cursor-grab active:cursor-grabbing"
-                onClick={(e) => e.stopPropagation()}
-              />
+              {canEdit && (
+                <GripVertical
+                  className="h-4 w-4 shrink-0 text-muted-foreground cursor-grab active:cursor-grabbing"
+                  onClick={(e) => e.stopPropagation()}
+                />
+              )}
               <span className="flex-1 text-sm font-medium">{def.label}</span>
               <div className="flex items-center gap-1 shrink-0">
                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
@@ -445,25 +462,29 @@ export function CustomFieldsManager({ defs, onDefsChange, currencySymbol }: Cust
                   </Badge>
                 )}
               </div>
-              <button
-                type="button"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => { e.stopPropagation(); handleDelete(def.id); }}
-                className="text-muted-foreground hover:text-destructive p-1"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
+              {canEdit && (
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); handleDelete(def.id); }}
+                  className="text-muted-foreground hover:text-destructive p-1"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
           )}
         </div>
       ))}
 
-      <AddFieldForm
-        onAdd={handleAdd}
-        nextOrder={defs.length}
-        existingKeys={existingKeys}
-        currencySymbol={currencySymbol}
-      />
+      {canEdit && (
+        <AddFieldForm
+          onAdd={handleAdd}
+          nextOrder={defs.length}
+          existingKeys={existingKeys}
+          currencySymbol={currencySymbol}
+        />
+      )}
     </div>
   );
 }

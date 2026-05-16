@@ -199,10 +199,15 @@ Granular feature flags per member. No schema change needed to add new permission
   "can_approve_holidays": false,
   "can_view_team_members": false,
   "can_view_all_teams": false,
-  "can_manage_members": false,
-  "can_edit_organisation": false
+  "can_manage_members": "none",            // tri-state: "none" | "read" | "write"
+  "can_define_custom_fields": "none",      // tri-state: "none" | "read" | "write"
+  "can_edit_organisation": false,
+  "can_add_members": false,
+  "can_see_currency": false
 }
 ```
+
+**Tri-state rights** (`can_manage_members`, `can_define_custom_fields`) use the strings `"none" | "read" | "write"`. Some legacy `can_define_custom_fields: true|false` blobs may still exist in the DB; `coerceAccess(value)` in `@/lib/rights-config` normalises both shapes (`true` → `"write"`, `false`/missing → `"none"`). Always read these rights through `coerceAccess()` or the specific helper (e.g. `getCustomFieldDefAccess(role, perms)`) — never compare raw values. **Read** semantics gate page visibility; **write** semantics gate the actual mutation actions. Both layers must enforce: the server action (e.g. `createCustomFieldDef`) calls `requireCustomFieldDefWriteAccess()` as defence in depth, and the UI hides write affordances via a `canEdit` prop.
 
 ### Visibility Rules
 - **Employees**: See only their own record by default. `can_view_team_members` grants read-only access to teammates. Can never update other members.
@@ -273,9 +278,15 @@ A full-page Settings shell at `/settings` replaces the old `OrganisationEditDial
 
 **Profiles mental model.** The five profile types share a UI pattern + mental model — "profiles are sets of rules that determine how the software treats a member" — not a schema. Each type CRUDs its own underlying tables; the Phase 3 cascade (Org → Team → Member) is the separate piece that gives them a uniform resolution layer.
 
+**Profile list ordering (CLE-194).** Each profile table (`admin_profiles`, `employee_profiles`, `work_profiles`, `notice_period_profiles`, `approval_profiles`) carries a `sort_order int NOT NULL DEFAULT 0` that admins control by drag-reordering the row. Read queries order by `(is_default desc,)? sort_order asc, name asc` — Default profiles where present are pinned at sort_order 0 by convention and non-default rows occupy 1+. Each `create…` action assigns `sort_order = max + 1` so new profiles append. Each profile list has a matching `reorder…(orderedIds)` action that the list client calls after a drag; the shared `useListReorder` hook (`settings/profiles/use-list-reorder.ts`) holds the optimistic state + revert-on-failure logic. Reorder skips Default profiles (`canDrag: (p) => !p.isDefault`).
+
+**Profile copy.** Every Profile list row has a Copy icon that opens the New-profile editor in template mode: existing values pre-populated, name suffixed with " (Copy)", save creates a fresh row. Implementation: each list client carries a `copyFrom` state alongside `editing`; the editor accepts an optional `template` prop and its seed `useEffect` prefers `editing → template → defaults`. The Copy never marks the new profile as Default (the source's `is_default` is ignored).
+
 **Holiday Profile is a stub.** Phase 2 introduces `holiday_profiles` as a real entity, migrates the current per-member `holiday_*` cog columns onto a `holiday_profile_id` FK, and removes the cog from `/members/[memberId]/holiday`. Until then, the Holiday sub-route is a "Coming in Phase 2" placeholder and the cog stays.
 
-**Notice Period is Phase-1-shaped.** Currently exactly one "Default" profile per org (the underlying table is still `notice_period_rules`). Clicking the row opens a popup that edits the rules + the `notice_rules_block_requests` flag. Multiple profiles arrive with the Phase 3 cascade.
+**Notice Period (CLE-194) is multi-profile.** Each org has a `notice_period_profiles` row per profile (one `is_default`, undeleteable; others freely created and removed). Each member points at exactly one profile via `members.notice_period_profile_id`, auto-seeded on insert by `trigger_assign_notice_profile`. `notice_period_rules` are scoped by `profile_id` not org. The notice block-or-warn flag lives on the profile (`notice_period_profiles.block_requests`); `organisations.notice_rules_block_requests` is kept as a deprecated mirror of the Default profile's flag during the parallel period with the legacy `OrganisationEditDialog` Notice Periods tab. The Notice booking-time reads (`validateBookingRules`, both mobile API routes, `getMyOrgNoticeContext`) resolve the booking author's profile and read rules + flag from there, falling back to the org's Default if the column is NULL.
+
+**Cover (CLE-194) has its own per-team block flag.** Cover and Notice were previously governed by the same org-level `notice_rules_block_requests` flag; the split puts Notice on the profile and Cover on the team. `teams.block_cover_violations` is the source of truth — `validateBookingRules` reads it for the per-day cover check, `getMyTeamCoverContext` returns it as `blockCover` (NOT `blockRequests`), and the mobile `team-cover-context` route mirrors that shape. The Teams manager in `/settings/groups` exposes a per-row Block-on-Cover Switch with optimistic update + revert-on-failure. The two flags are independent — admins can block on Notice + warn on Cover, warn on Notice + block on Cover, both, or neither.
 
 ## UI Conventions
 - **Row editing:** Never use a pencil/edit icon button on list rows. Make the entire row clickable to open edit mode (`cursor-pointer hover:bg-muted/50 onClick={() => startEdit(...)}`). Only action buttons that are destructive (delete) or independent (drag handle) should remain as separate icons with `e.stopPropagation()`. The choice of modal vs page for the edit target is decided per screen based on complexity — do not default to inline editing.

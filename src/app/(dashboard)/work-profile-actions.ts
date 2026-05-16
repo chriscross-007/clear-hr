@@ -82,7 +82,8 @@ export async function getWorkProfiles(): Promise<WorkProfile[]> {
     .select(PROFILE_SELECT)
     .eq("organisation_id", member.organisation_id)
     .is("member_id", null)
-    .order("name");
+    .order("sort_order", { ascending: true })
+    .order("name", { ascending: true });
 
   // Count employees per profile
   const { data: assignments } = await supabase
@@ -108,6 +109,18 @@ export async function createWorkProfile(
 
     if (!input.name.trim()) return { success: false, error: "Name is required" };
 
+    // Append-at-end ordering: new profile gets max(sort_order) + 1 among
+    // the org's profile list (member_id IS NULL).
+    const { data: maxRow } = await supabase
+      .from("work_profiles")
+      .select("sort_order")
+      .eq("organisation_id", member.organisation_id)
+      .is("member_id", null)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const nextSortOrder = ((maxRow?.sort_order as number | null) ?? -1) + 1;
+
     const { data, error } = await supabase
       .from("work_profiles")
       .insert({
@@ -121,6 +134,7 @@ export async function createWorkProfile(
         hours_friday: input.hours_friday,
         hours_saturday: input.hours_saturday,
         hours_sunday: input.hours_sunday,
+        sort_order: nextSortOrder,
       })
       .select(PROFILE_SELECT)
       .single();
@@ -187,6 +201,40 @@ export async function deleteWorkProfile(
       .eq("organisation_id", member.organisation_id);
 
     if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+export async function reorderWorkProfiles(
+  orderedIds: string[],
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { supabase, member } = await getCallerAdmin();
+    if (member.role !== "owner") {
+      return { success: false, error: "Only the owner can reorder profiles" };
+    }
+
+    // Verify every supplied id is an org-level work profile in caller's org.
+    const { data: existing } = await supabase
+      .from("work_profiles")
+      .select("id")
+      .eq("organisation_id", member.organisation_id)
+      .is("member_id", null);
+    const validIds = new Set((existing ?? []).map((r) => r.id as string));
+    if (orderedIds.some((id) => !validIds.has(id))) {
+      return { success: false, error: "Some profiles are not in your organisation" };
+    }
+
+    for (let i = 0; i < orderedIds.length; i++) {
+      const { error } = await supabase
+        .from("work_profiles")
+        .update({ sort_order: i })
+        .eq("id", orderedIds[i])
+        .eq("organisation_id", member.organisation_id);
+      if (error) return { success: false, error: error.message };
+    }
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };

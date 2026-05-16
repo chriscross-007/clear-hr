@@ -125,7 +125,7 @@ type LevelRow = {
 };
 
 const PROFILE_SELECT =
-  "id, organisation_id, name, absence_type_id, is_default, created_at, updated_at, absence_types(name)";
+  "id, organisation_id, name, absence_type_id, is_default, sort_order, created_at, updated_at, absence_types(name)";
 const LEVEL_SELECT =
   "id, profile_id, level, length_threshold_days, length_threshold_hours, main_approver_ids, delegate_approver_ids";
 
@@ -179,7 +179,10 @@ export async function getApprovalProfilesForOrg(): Promise<{
       .from("approval_profiles")
       .select(PROFILE_SELECT)
       .eq("organisation_id", member.organisation_id)
+      // Default pinned at the top; user-controlled order applies among the
+      // rest; name as tiebreaker.
       .order("is_default", { ascending: false })
+      .order("sort_order", { ascending: true })
       .order("name", { ascending: true });
     if (pErr) return { success: false, error: pErr.message, profiles: [] };
 
@@ -235,8 +238,18 @@ export async function getOrgAbsenceTypesForApprovals(): Promise<{
 }
 
 // ---------------------------------------------------------------------------
-// getApproverOptions — admins (and owner) of the caller's org for the picker
+// getApproverOptions — admins with the `can_approve_holidays` right
 // ---------------------------------------------------------------------------
+//
+// Selectable approvers are admins whose rights profile grants Approve
+// Holidays. Owners and admins without the right are deliberately excluded
+// so the dropdown only shows people the org has designated as approvers.
+//
+// Note: existing approval profiles may have approver_id snapshots that
+// point at owners or rights-less admins from before this filter was in
+// place. Those routings keep working (approve/reject decisions don't
+// re-validate against this list), but the IDs won't appear in the picker
+// for re-selection — re-pick approvers from the filtered list to refresh.
 
 export async function getApproverOptions(): Promise<{
   success: boolean;
@@ -248,18 +261,23 @@ export async function getApproverOptions(): Promise<{
 
     const { data, error } = await supabase
       .from("members")
-      .select("id, first_name, last_name, role, user_id")
+      .select("id, first_name, last_name, role, user_id, permissions")
       .eq("organisation_id", member.organisation_id)
-      .in("role", ["owner", "admin"])
+      .eq("role", "admin")
       .order("first_name", { ascending: true });
     if (error) return { success: false, error: error.message, approvers: [] };
 
-    const approvers: ApproverOption[] = (data ?? []).map((m) => ({
-      id: m.id as string,
-      name: `${m.first_name ?? ""} ${m.last_name ?? ""}`.trim() || "—",
-      role: m.role as "owner" | "admin" | "employee",
-      isActive: m.user_id !== null,
-    }));
+    const approvers: ApproverOption[] = (data ?? [])
+      .filter((m) => {
+        const perms = (m.permissions as Record<string, unknown> | null) ?? {};
+        return perms.can_approve_holidays === true;
+      })
+      .map((m) => ({
+        id: m.id as string,
+        name: `${m.first_name ?? ""} ${m.last_name ?? ""}`.trim() || "—",
+        role: m.role as "owner" | "admin" | "employee",
+        isActive: m.user_id !== null,
+      }));
     return { success: true, approvers };
   } catch (e) {
     return {
@@ -357,6 +375,16 @@ export async function saveApprovalProfile(
         ),
       });
     } else {
+      // Append-at-end ordering: new profile gets max(sort_order) + 1.
+      const { data: maxRow } = await supabase
+        .from("approval_profiles")
+        .select("sort_order")
+        .eq("organisation_id", member.organisation_id)
+        .order("sort_order", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const nextSortOrder = ((maxRow?.sort_order as number | null) ?? -1) + 1;
+
       const { data: created, error: insErr } = await supabase
         .from("approval_profiles")
         .insert({
@@ -364,6 +392,7 @@ export async function saveApprovalProfile(
           name: trimmedName,
           absence_type_id: input.absenceTypeId,
           is_default: false,
+          sort_order: nextSortOrder,
         })
         .select("id")
         .single();
@@ -403,6 +432,42 @@ export async function saveApprovalProfile(
       success: false,
       error: e instanceof Error ? e.message : "An error occurred",
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// reorderApprovalProfiles — user-controlled list order (non-default rows)
+// ---------------------------------------------------------------------------
+
+export async function reorderApprovalProfiles(
+  orderedIds: string[],
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { supabase, member } = await requireAdminOrOwner();
+
+    const { data: existing } = await supabase
+      .from("approval_profiles")
+      .select("id, is_default")
+      .eq("organisation_id", member.organisation_id);
+    const validNonDefault = new Set(
+      (existing ?? []).filter((r) => !r.is_default).map((r) => r.id as string),
+    );
+    if (orderedIds.some((id) => !validNonDefault.has(id))) {
+      return { success: false, error: "Some profiles cannot be reordered (Default is pinned)" };
+    }
+
+    // Defaults sit at sort_order 0 by convention; bump non-defaults to 1+.
+    for (let i = 0; i < orderedIds.length; i++) {
+      const { error } = await supabase
+        .from("approval_profiles")
+        .update({ sort_order: i + 1 })
+        .eq("id", orderedIds[i])
+        .eq("organisation_id", member.organisation_id);
+      if (error) return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }
 }
 

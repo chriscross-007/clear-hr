@@ -2,6 +2,38 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { getCustomFieldDefAccess } from "@/lib/rights-config";
+
+/**
+ * Resolve the caller's tri-state access to custom field definitions.
+ * Owners are always "write"; admins read it off their permissions blob
+ * (handling the legacy boolean shape). Throws if not authenticated or
+ * not a member.
+ */
+async function requireCustomFieldDefWriteAccess(): Promise<
+  | { ok: true; organisationId: string }
+  | { ok: false; error: string }
+> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated" };
+
+  const { data: membership } = await supabase
+    .from("members")
+    .select("organisation_id, role, permissions")
+    .eq("user_id", user.id)
+    .single();
+  if (!membership) return { ok: false, error: "No organisation" };
+
+  const perms = (membership.permissions as Record<string, unknown>) ?? {};
+  const access = getCustomFieldDefAccess(membership.role, perms);
+  if (access !== "write") {
+    return { ok: false, error: "You don't have write access to custom field definitions" };
+  }
+  return { ok: true, organisationId: membership.organisation_id as string };
+}
 
 export type FieldDef = {
   id: string;
@@ -27,21 +59,12 @@ export async function getCustomFieldDefs(): Promise<FieldDef[]> {
 export async function createCustomFieldDef(
   def: Omit<FieldDef, "id">
 ): Promise<{ success: boolean; error?: string }> {
+  const guard = await requireCustomFieldDefWriteAccess();
+  if (!guard.ok) return { success: false, error: guard.error };
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { success: false, error: "Not authenticated" };
-
-  const { data: membership } = await supabase
-    .from("members")
-    .select("organisation_id")
-    .eq("user_id", user.id)
-    .single();
-  if (!membership) return { success: false, error: "No organisation" };
 
   const { error } = await supabase.from("custom_field_definitions").insert({
-    organisation_id: membership.organisation_id,
+    organisation_id: guard.organisationId,
     object_type: "member",
     label: def.label,
     field_key: def.field_key,
@@ -64,6 +87,8 @@ export async function updateCustomFieldDef(
   id: string,
   updates: Partial<Omit<FieldDef, "id">>
 ): Promise<{ success: boolean; error?: string }> {
+  const guard = await requireCustomFieldDefWriteAccess();
+  if (!guard.ok) return { success: false, error: guard.error };
   const supabase = await createClient();
   const payload: Record<string, unknown> = {};
   if (updates.label !== undefined) payload.label = updates.label;
@@ -85,6 +110,8 @@ export async function updateCustomFieldDef(
 export async function deleteCustomFieldDef(
   id: string
 ): Promise<{ success: boolean; error?: string }> {
+  const guard = await requireCustomFieldDefWriteAccess();
+  if (!guard.ok) return { success: false, error: guard.error };
   const supabase = await createClient();
   const { error } = await supabase
     .from("custom_field_definitions")
@@ -95,6 +122,8 @@ export async function deleteCustomFieldDef(
 }
 
 export async function reorderCustomFieldDefs(ids: string[]): Promise<void> {
+  const guard = await requireCustomFieldDefWriteAccess();
+  if (!guard.ok) return;
   const supabase = await createClient();
   await Promise.all(
     ids.map((id, i) =>
