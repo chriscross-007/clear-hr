@@ -5,10 +5,9 @@ import { createClient } from "@/lib/supabase/server";
 import { ProfileExplainer } from "../profile-explainer";
 import { ApproverProfilesClient } from "./approver-profiles-client";
 
-// CLE-191 — Approver profiles. Wraps the existing `ApprovalsManager` —
-// the dialog needs its forwardRef commit/revert API to bridge to the
-// global Save button, but on a full page we drop that plumbing and let
-// the manager save inline.
+// CLE-191 — Approver profiles. Owner-only list + popup CRUD over
+// approval_profiles. Reuses the shared `ProfileEditor` form fields
+// from `./approver-form.tsx`.
 
 export default async function ApproverProfilesPage() {
   const supabase = await createClient();

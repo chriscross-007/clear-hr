@@ -94,23 +94,10 @@ export type HolidayPeriodInput = {
   minCarryForward: number;
 };
 
-/** Per-employee cog values that seed new period defaults. */
-export type MemberHolidayCog = {
-  type: HolidayPeriodType;
-  units: HolidayUnits;
-  earnedFactor: number;
-  allowance: number;
-  toilHoursPerDay: number;
-  maxCarryForward: number;
-  minCarryForward: number;
-};
-
-/** Org-level Default Cascade values. */
-export type OrgHolidayDefaults = MemberHolidayCog & {
-  yearStartType: "fixed" | "employee_start_date";
-  yearStartDay: number | null;
-  yearStartMonth: number | null;
-};
+// CLE-194 Phase 2 — `MemberHolidayCog` and `OrgHolidayDefaults` types
+// removed alongside the cog/Default Cascade actions; the 7-value bundle
+// now lives on `holiday_profiles`. See `HolidayProfile` in
+// `holiday-profile-actions.ts`.
 
 // ---------------------------------------------------------------------------
 // Standard helpers (matching the pattern in conversation-actions.ts)
@@ -337,11 +324,12 @@ export async function getNewPeriodDefaults(
     await requireAdminOrOwner();
     const admin = getAdminClient();
 
-    // Employee + cog
+    // Employee + assigned holiday profile (CLE-194 Phase 2: the 7 cog values
+    // now live on holiday_profiles, joined via members.holiday_profile_id).
     const { data: m } = await admin
       .from("members")
       .select(
-        "id, organisation_id, start_date, holiday_type, holiday_units, holiday_earned_factor, holiday_allowance, holiday_max_carry_forward, holiday_min_carry_forward",
+        "id, organisation_id, start_date, holiday_profile_id, holiday_profiles!holiday_profile_id(holiday_type, holiday_units, holiday_earned_factor, holiday_allowance, holiday_max_carry_forward, holiday_min_carry_forward)",
       )
       .eq("id", memberId)
       .single();
@@ -351,6 +339,20 @@ export async function getNewPeriodDefaults(
       return {
         success: false,
         error: "Employee has no Start Date set — set this first before creating a Holiday Period.",
+      };
+    }
+    const profile = m.holiday_profiles as unknown as {
+      holiday_type: string;
+      holiday_units: string;
+      holiday_earned_factor: number;
+      holiday_allowance: number;
+      holiday_max_carry_forward: number;
+      holiday_min_carry_forward: number;
+    } | null;
+    if (!profile) {
+      return {
+        success: false,
+        error: "Employee has no Holiday Profile assigned — assign one on the Employment page first.",
       };
     }
 
@@ -438,11 +440,11 @@ export async function getNewPeriodDefaults(
     const totalDays = daysBetween(startDate, endDate) + 1;
     const fullYearDays = isLeapYearSpan(startDate, endDate) ? 366 : 365;
     const proRateFactor = Math.min(1, totalDays / fullYearDays);
-    const cogAllowance = Number(m.holiday_allowance ?? 0);
+    const profileAllowance = Number(profile.holiday_allowance ?? 0);
     const allowance =
-      m.holiday_type === "earned"
+      profile.holiday_type === "earned"
         ? null
-        : roundHalfDay(cogAllowance * proRateFactor);
+        : roundHalfDay(profileAllowance * proRateFactor);
 
     return {
       success: true,
@@ -450,13 +452,13 @@ export async function getNewPeriodDefaults(
         name: new Date(startDate + "T00:00:00Z").getUTCFullYear().toString(),
         startDate,
         endDate,
-        type: m.holiday_type as HolidayPeriodType,
-        units: m.holiday_units as HolidayUnits,
+        type: profile.holiday_type as HolidayPeriodType,
+        units: profile.holiday_units as HolidayUnits,
         allowance,
-        earnedFactor: Number(m.holiday_earned_factor ?? 0),
+        earnedFactor: Number(profile.holiday_earned_factor ?? 0),
         adjust: 0,
-        maxCarryForward: Number(m.holiday_max_carry_forward ?? 0),
-        minCarryForward: Number(m.holiday_min_carry_forward ?? -999),
+        maxCarryForward: Number(profile.holiday_max_carry_forward ?? 0),
+        minCarryForward: Number(profile.holiday_min_carry_forward ?? 0),
       },
     };
   } catch (e) {
@@ -982,126 +984,15 @@ export async function updateMemberStartDate(
       });
     }
 
-    return { success: true };
-  } catch (e) {
-    return {
-      success: false,
-      error: e instanceof Error ? e.message : "An error occurred",
-    };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Cog (per-employee Holiday defaults)
-// ---------------------------------------------------------------------------
-
-export async function getMemberHolidayCog(
-  memberId: string,
-): Promise<{ success: boolean; error?: string; cog?: MemberHolidayCog }> {
-  try {
-    await requireAdminOrOwner();
-    const admin = getAdminClient();
-
-    const { data, error } = await admin
-      .from("members")
-      .select(
-        "holiday_type, holiday_units, holiday_earned_factor, holiday_allowance, holiday_toil_hours_per_day, holiday_max_carry_forward, holiday_min_carry_forward",
-      )
-      .eq("id", memberId)
-      .single();
-
-    if (error || !data) return { success: false, error: error?.message ?? "Member not found" };
-
-    return {
-      success: true,
-      cog: {
-        type: data.holiday_type as HolidayPeriodType,
-        units: data.holiday_units as HolidayUnits,
-        earnedFactor: Number(data.holiday_earned_factor),
-        allowance: Number(data.holiday_allowance),
-        toilHoursPerDay: Number(data.holiday_toil_hours_per_day),
-        maxCarryForward: Number(data.holiday_max_carry_forward),
-        minCarryForward: Number(data.holiday_min_carry_forward),
-      },
-    };
-  } catch (e) {
-    return {
-      success: false,
-      error: e instanceof Error ? e.message : "An error occurred",
-    };
-  }
-}
-
-export async function updateMemberHolidayCog(
-  memberId: string,
-  cog: MemberHolidayCog,
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    const { member } = await requireAdminOrOwner();
-    const admin = getAdminClient();
-
-    if (cog.minCarryForward > 0) {
-      return { success: false, error: "Min Carry Forward must be a non-positive value" };
-    }
-    if (cog.maxCarryForward < 0) {
-      return { success: false, error: "Max Carry Forward must be a non-negative value" };
-    }
-
-    const { data: target } = await admin
-      .from("members")
-      .select("id, organisation_id, first_name, last_name, holiday_type, holiday_units, holiday_earned_factor, holiday_allowance, holiday_toil_hours_per_day, holiday_max_carry_forward, holiday_min_carry_forward")
-      .eq("id", memberId)
-      .eq("organisation_id", member.organisation_id)
-      .single();
-    if (!target) return { success: false, error: "Member not found in your organisation" };
-
-    const { error } = await admin
-      .from("members")
-      .update({
-        holiday_type: cog.type,
-        holiday_units: cog.units,
-        holiday_earned_factor: cog.earnedFactor,
-        holiday_allowance: cog.allowance,
-        holiday_toil_hours_per_day: cog.toilHoursPerDay,
-        holiday_max_carry_forward: cog.maxCarryForward,
-        holiday_min_carry_forward: cog.minCarryForward,
-      })
-      .eq("id", memberId);
-
-    if (error) return { success: false, error: error.message };
-
-    const changes = diffChanges(
-      {
-        type: target.holiday_type,
-        units: target.holiday_units,
-        earnedFactor: Number(target.holiday_earned_factor),
-        allowance: Number(target.holiday_allowance),
-        toilHoursPerDay: Number(target.holiday_toil_hours_per_day),
-        maxCarryForward: Number(target.holiday_max_carry_forward),
-        minCarryForward: Number(target.holiday_min_carry_forward),
-      },
-      {
-        type: cog.type,
-        units: cog.units,
-        earnedFactor: cog.earnedFactor,
-        allowance: cog.allowance,
-        toilHoursPerDay: cog.toilHoursPerDay,
-        maxCarryForward: cog.maxCarryForward,
-        minCarryForward: cog.minCarryForward,
-      },
-    );
-
-    if (changes) {
-      logAudit({
-        organisationId: member.organisation_id,
-        actorId: member.id,
-        actorName: `${member.first_name} ${member.last_name}`,
-        action: "member.holiday_cog_updated",
-        targetType: "member",
-        targetId: memberId,
-        targetLabel: `${target.first_name} ${target.last_name}`,
-        changes,
-      });
+    // CLE-194 Phase 2 — setting start_date may now satisfy the precondition
+    // for auto-creating the first Holiday Period (members on an org with
+    // holiday_year_start_type='employee_start_date' need both profile +
+    // start_date set). Non-fatal: any error is swallowed.
+    try {
+      const { tryAutoCreateFirstPeriod } = await import("./holiday-profile-actions");
+      await tryAutoCreateFirstPeriod(memberId);
+    } catch {
+      /* swallow */
     }
 
     return { success: true };
@@ -1114,102 +1005,8 @@ export async function updateMemberHolidayCog(
 }
 
 // ---------------------------------------------------------------------------
-// Org-level defaults
+// CLE-194 Phase 2 — Per-employee cog + org-level Default Cascade actions
+// were removed when the 7-value bundle moved onto `holiday_profiles`.
+// Look in `holiday-profile-actions.ts` for the replacement CRUD, and
+// `holiday_profiles.holiday_*` columns for the live values.
 // ---------------------------------------------------------------------------
-
-export async function getOrgHolidayDefaults(): Promise<{ success: boolean; error?: string; defaults?: OrgHolidayDefaults }> {
-  try {
-    const { member } = await requireAdminOrOwner();
-    const admin = getAdminClient();
-
-    const { data, error } = await admin
-      .from("organisations")
-      .select(
-        "holiday_year_start_type, holiday_year_start_day, holiday_year_start_month, default_holiday_type, default_holiday_units, default_holiday_earned_factor, default_holiday_allowance, default_holiday_toil_hours_per_day, default_holiday_max_carry_forward, default_holiday_min_carry_forward",
-      )
-      .eq("id", member.organisation_id)
-      .single();
-
-    if (error || !data) return { success: false, error: error?.message ?? "Organisation not found" };
-
-    return {
-      success: true,
-      defaults: {
-        yearStartType: data.holiday_year_start_type as "fixed" | "employee_start_date",
-        yearStartDay: data.holiday_year_start_day,
-        yearStartMonth: data.holiday_year_start_month,
-        type: data.default_holiday_type as HolidayPeriodType,
-        units: data.default_holiday_units as HolidayUnits,
-        earnedFactor: Number(data.default_holiday_earned_factor),
-        allowance: Number(data.default_holiday_allowance),
-        toilHoursPerDay: Number(data.default_holiday_toil_hours_per_day),
-        maxCarryForward: Number(data.default_holiday_max_carry_forward),
-        minCarryForward: Number(data.default_holiday_min_carry_forward),
-      },
-    };
-  } catch (e) {
-    return {
-      success: false,
-      error: e instanceof Error ? e.message : "An error occurred",
-    };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Org-level defaults
-// ---------------------------------------------------------------------------
-
-export async function updateOrgHolidayDefaults(
-  defaults: OrgHolidayDefaults,
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    const { supabase, member } = await getCallerMember();
-
-    if (member.role !== "owner") {
-      return { success: false, error: "Only the Owner can edit org-level Holiday defaults." };
-    }
-
-    if (defaults.minCarryForward > 0) {
-      return { success: false, error: "Min Carry Forward must be a non-positive value" };
-    }
-    if (defaults.maxCarryForward < 0) {
-      return { success: false, error: "Max Carry Forward must be a non-negative value" };
-    }
-
-    const { error } = await supabase
-      .from("organisations")
-      .update({
-        holiday_year_start_type: defaults.yearStartType,
-        holiday_year_start_day: defaults.yearStartDay,
-        holiday_year_start_month: defaults.yearStartMonth,
-        default_holiday_type: defaults.type,
-        default_holiday_units: defaults.units,
-        default_holiday_earned_factor: defaults.earnedFactor,
-        default_holiday_allowance: defaults.allowance,
-        default_holiday_toil_hours_per_day: defaults.toilHoursPerDay,
-        default_holiday_max_carry_forward: defaults.maxCarryForward,
-        default_holiday_min_carry_forward: defaults.minCarryForward,
-      })
-      .eq("id", member.organisation_id);
-
-    if (error) return { success: false, error: error.message };
-
-    logAudit({
-      organisationId: member.organisation_id,
-      actorId: member.id,
-      actorName: `${member.first_name ?? ""} ${member.last_name ?? ""}`.trim(),
-      action: "organisation.holiday_defaults_updated",
-      targetType: "organisation",
-      targetId: member.organisation_id,
-      targetLabel: "Holiday defaults",
-      metadata: { defaults },
-    });
-
-    return { success: true };
-  } catch (e) {
-    return {
-      success: false,
-      error: e instanceof Error ? e.message : "An error occurred",
-    };
-  }
-}

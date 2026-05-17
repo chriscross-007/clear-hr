@@ -1,5 +1,9 @@
 "use client";
 
+// CLE-194 — Relocated from `organisation-edit-dialog-backups.tsx` after
+// the legacy dialog was deleted. Same component, new home next to its
+// only consumer (`settings/backups/page.tsx`).
+
 import { useState, useEffect } from "react";
 import { Trash2, History } from "lucide-react";
 import {
@@ -11,7 +15,7 @@ import {
   type BackupSummary,
   type RestoreMode,
   type RestorePreview,
-} from "./backup-actions";
+} from "@/app/(dashboard)/backup-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

@@ -34,16 +34,10 @@ export async function updateOrganisation(data: {
   bankHolidayColour?: string;
   countryCode?: string;
   defaultWorkProfileId?: string | null;
-  // CLE-169 — Default Cascade values for Profileless Holiday Management.
-  // Snapshotted into each new employee's cog at creation; changes here only
-  // affect new employees, not existing ones.
-  defaultHolidayType?: "fixed" | "earned";
-  defaultHolidayUnits?: "days" | "hours";
-  defaultHolidayEarnedFactor?: number;
-  defaultHolidayAllowance?: number;
-  defaultHolidayToilHoursPerDay?: number;
-  defaultHolidayMaxCarryForward?: number;
-  defaultHolidayMinCarryForward?: number;
+  // CLE-194 Phase 2 — the org-level Default Cascade props
+  // (`defaultHoliday*`) were removed. The Default Holiday Profile in
+  // `holiday_profiles` is now the single source of starting values for
+  // new members; edit it via Settings → Profiles → Holiday Profiles.
   // CLE-178 — when true, server hard-rejects holiday requests that breach
   // notice_period_rules. Default false: requests get through with a soft
   // warning shown to the employee in the booking sheet.
@@ -76,7 +70,7 @@ export async function updateOrganisation(data: {
   // Fetch before-state for audit diff
   const { data: beforeOrg } = await supabase
     .from("organisations")
-    .select("name, member_label, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins, holiday_year_start_type, holiday_year_start_day, holiday_year_start_month, bank_holiday_handling, default_work_profile_id, default_holiday_type, default_holiday_units, default_holiday_earned_factor, default_holiday_allowance, default_holiday_toil_hours_per_day, default_holiday_max_carry_forward, default_holiday_min_carry_forward")
+    .select("name, member_label, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins, holiday_year_start_type, holiday_year_start_day, holiday_year_start_month, bank_holiday_handling, default_work_profile_id")
     .eq("id", membership.organisation_id)
     .single();
 
@@ -164,21 +158,8 @@ export async function updateOrganisation(data: {
       .eq("is_default", true);
   }
 
-  // CLE-169 — Default Cascade fields (Profileless Holiday Management).
-  // Validate the carry-forward signs to match the DB checks.
-  if (data.defaultHolidayMaxCarryForward !== undefined && data.defaultHolidayMaxCarryForward < 0) {
-    return { success: false, error: "Default Max Carry Forward must be non-negative" };
-  }
-  if (data.defaultHolidayMinCarryForward !== undefined && data.defaultHolidayMinCarryForward > 0) {
-    return { success: false, error: "Default Min Carry Forward must be non-positive" };
-  }
-  if (data.defaultHolidayType !== undefined)              updatePayload.default_holiday_type                = data.defaultHolidayType;
-  if (data.defaultHolidayUnits !== undefined)             updatePayload.default_holiday_units               = data.defaultHolidayUnits;
-  if (data.defaultHolidayEarnedFactor !== undefined)      updatePayload.default_holiday_earned_factor       = data.defaultHolidayEarnedFactor;
-  if (data.defaultHolidayAllowance !== undefined)         updatePayload.default_holiday_allowance           = data.defaultHolidayAllowance;
-  if (data.defaultHolidayToilHoursPerDay !== undefined)   updatePayload.default_holiday_toil_hours_per_day  = data.defaultHolidayToilHoursPerDay;
-  if (data.defaultHolidayMaxCarryForward !== undefined)   updatePayload.default_holiday_max_carry_forward   = data.defaultHolidayMaxCarryForward;
-  if (data.defaultHolidayMinCarryForward !== undefined)   updatePayload.default_holiday_min_carry_forward   = data.defaultHolidayMinCarryForward;
+  // CLE-194 Phase 2 — `default_holiday_*` columns removed. The Default
+  // Holiday Profile in `holiday_profiles` is the source of truth.
 
   const { error } = await supabase
     .from("organisations")
@@ -231,13 +212,6 @@ export async function updateOrganisation(data: {
         holiday_year_start_day:   beforeOrg.holiday_year_start_day,
         holiday_year_start_month: beforeOrg.holiday_year_start_month,
         bank_holiday_handling:    beforeOrg.bank_holiday_handling,
-        default_holiday_type:                beforeOrg.default_holiday_type,
-        default_holiday_units:               beforeOrg.default_holiday_units,
-        default_holiday_earned_factor:       beforeOrg.default_holiday_earned_factor,
-        default_holiday_allowance:           beforeOrg.default_holiday_allowance,
-        default_holiday_toil_hours_per_day:  beforeOrg.default_holiday_toil_hours_per_day,
-        default_holiday_max_carry_forward:   beforeOrg.default_holiday_max_carry_forward,
-        default_holiday_min_carry_forward:   beforeOrg.default_holiday_min_carry_forward,
       },
       {
         // CLE-191 — fall back to the unchanged before-state when a
@@ -263,13 +237,6 @@ export async function updateOrganisation(data: {
         holiday_year_start_day:   data.holidayYearStartType === "fixed" ? (data.holidayYearStartDay ?? beforeOrg.holiday_year_start_day) : null,
         holiday_year_start_month: data.holidayYearStartType === "fixed" ? (data.holidayYearStartMonth ?? beforeOrg.holiday_year_start_month) : null,
         bank_holiday_handling:    data.bankHolidayHandling ?? beforeOrg.bank_holiday_handling,
-        default_holiday_type:                data.defaultHolidayType                ?? beforeOrg.default_holiday_type,
-        default_holiday_units:               data.defaultHolidayUnits               ?? beforeOrg.default_holiday_units,
-        default_holiday_earned_factor:       data.defaultHolidayEarnedFactor        ?? beforeOrg.default_holiday_earned_factor,
-        default_holiday_allowance:           data.defaultHolidayAllowance           ?? beforeOrg.default_holiday_allowance,
-        default_holiday_toil_hours_per_day:  data.defaultHolidayToilHoursPerDay     ?? beforeOrg.default_holiday_toil_hours_per_day,
-        default_holiday_max_carry_forward:   data.defaultHolidayMaxCarryForward     ?? beforeOrg.default_holiday_max_carry_forward,
-        default_holiday_min_carry_forward:   data.defaultHolidayMinCarryForward     ?? beforeOrg.default_holiday_min_carry_forward,
       }
     );
 

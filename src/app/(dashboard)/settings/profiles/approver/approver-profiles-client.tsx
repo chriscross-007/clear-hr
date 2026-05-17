@@ -28,7 +28,7 @@ import {
   levelFromProfile,
   type LevelEdit,
   type AbsenceTypeOption,
-} from "@/app/(dashboard)/organisation-edit-dialog-approvals";
+} from "./approver-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -289,7 +289,7 @@ export function ApproverProfilesClient() {
           })}
 
           <p className="text-xs text-muted-foreground">
-            Approver names are admins whose rights profile grants{" "}
+            Approvers are the org owner plus admins whose rights profile grants{" "}
             <strong>Approve Holidays</strong>. Profile changes only affect new bookings — already-pending
             bookings keep their original ladder.
           </p>

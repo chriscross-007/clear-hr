@@ -47,7 +47,7 @@ export const PROFILE_TYPES: Record<ProfileTypeKey, ProfileTypeMeta> = {
   holiday: {
     key: "holiday",
     href: "/settings/profiles/holiday",
-    label: "Holiday Periods",
+    label: "Holiday Profiles",
   },
 };
 

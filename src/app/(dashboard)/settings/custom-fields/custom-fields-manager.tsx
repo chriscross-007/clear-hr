@@ -1,5 +1,9 @@
 "use client";
 
+// CLE-194 — Relocated from `organisation-edit-dialog-custom-fields.tsx`
+// after the legacy dialog was deleted. Same component, new home next to
+// its only consumer (`settings/custom-fields/custom-fields-client.tsx`).
+
 import { useState, useRef } from "react";
 import { GripVertical, Trash2, Plus, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,13 +19,13 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { FieldDef } from "./employees/custom-field-actions";
+import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
 import {
   createCustomFieldDef,
   updateCustomFieldDef,
   deleteCustomFieldDef,
   reorderCustomFieldDefs,
-} from "./employees/custom-field-actions";
+} from "@/app/(dashboard)/employees/custom-field-actions";
 
 // ---------------------------------------------------------------------------
 // Field type options
@@ -242,9 +246,8 @@ interface CustomFieldsManagerProps {
   currencySymbol: string;
   /**
    * Hide write affordances (Add form, row editing, delete, drag-reorder)
-   * when false. Defaults to true so the legacy OrganisationEditDialog
-   * (owner-only) keeps full edit rights without explicitly passing this.
-   * Server actions still enforce the gate as a defence in depth.
+   * when false. Default true. Server actions still enforce the gate as
+   * defence in depth via `requireCustomFieldDefWriteAccess()`.
    */
   canEdit?: boolean;
 }
@@ -323,7 +326,7 @@ export function CustomFieldsManager({
     const result = await createCustomFieldDef(newDef);
     if (!result.success) return result; // signal error to form
     // Re-fetch to get the server-generated id
-    const { getCustomFieldDefs } = await import("./employees/custom-field-actions");
+    const { getCustomFieldDefs } = await import("@/app/(dashboard)/employees/custom-field-actions");
     const fresh = await getCustomFieldDefs();
     onDefsChange(fresh);
     return undefined; // signal success

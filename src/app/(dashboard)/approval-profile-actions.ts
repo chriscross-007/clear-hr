@@ -238,18 +238,21 @@ export async function getOrgAbsenceTypesForApprovals(): Promise<{
 }
 
 // ---------------------------------------------------------------------------
-// getApproverOptions — admins with the `can_approve_holidays` right
+// getApproverOptions — owner + admins with the `can_approve_holidays` right
 // ---------------------------------------------------------------------------
 //
-// Selectable approvers are admins whose rights profile grants Approve
-// Holidays. Owners and admins without the right are deliberately excluded
-// so the dropdown only shows people the org has designated as approvers.
+// Selectable approvers are:
+//   - the owner (always, regardless of the permissions blob — owners have
+//     all rights by virtue of role, and small orgs may want the owner as
+//     a real approver), and
+//   - admins whose rights profile grants Approve Holidays.
+// Admins without the right are excluded.
 //
 // Note: existing approval profiles may have approver_id snapshots that
-// point at owners or rights-less admins from before this filter was in
-// place. Those routings keep working (approve/reject decisions don't
-// re-validate against this list), but the IDs won't appear in the picker
-// for re-selection — re-pick approvers from the filtered list to refresh.
+// point at rights-less admins from before this filter was in place. Those
+// routings keep working (approve/reject decisions don't re-validate
+// against this list), but the IDs won't appear in the picker for
+// re-selection — re-pick approvers from the filtered list to refresh.
 
 export async function getApproverOptions(): Promise<{
   success: boolean;
@@ -263,12 +266,13 @@ export async function getApproverOptions(): Promise<{
       .from("members")
       .select("id, first_name, last_name, role, user_id, permissions")
       .eq("organisation_id", member.organisation_id)
-      .eq("role", "admin")
+      .in("role", ["owner", "admin"])
       .order("first_name", { ascending: true });
     if (error) return { success: false, error: error.message, approvers: [] };
 
     const approvers: ApproverOption[] = (data ?? [])
       .filter((m) => {
+        if (m.role === "owner") return true;
         const perms = (m.permissions as Record<string, unknown> | null) ?? {};
         return perms.can_approve_holidays === true;
       })

@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { BackupsManager } from "@/app/(dashboard)/organisation-edit-dialog-backups";
+import { BackupsManager } from "./backups-manager";
 
 // CLE-191 — /settings/backups. Lifts the existing `BackupsManager`
 // into a full-page sub-route. The manager owns its own actions; we

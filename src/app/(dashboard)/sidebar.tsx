@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Users, Building2, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, CalendarDays, Clock, Palmtree, ClipboardCheck, ShieldCheck, LayoutDashboard, Settings } from "lucide-react";
+import { Users, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, CalendarDays, Clock, Palmtree, ClipboardCheck, ShieldCheck, LayoutDashboard, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { hasPlanFeature } from "@/lib/plan-config";
-import { OrganisationEditDialog } from "./organisation-edit-dialog";
+// CLE-194 — Legacy OrganisationEditDialog removed from the sidebar.
+// The /settings page is the canonical surface for all org-level config.
 import { REPORT_GROUPS, ALL_STANDARD_REPORTS } from "./reports/definitions";
 import {
   loadRecentEmployees,
@@ -20,37 +21,15 @@ interface SidebarProps {
   role: string;
   accessMembers: string | null;
   memberLabel: string;
-  orgName: string;
   plan: string;
-  requireMfa: boolean;
   canDefineCustomFields: boolean;
   canEditOrganisation: boolean;
-  currencySymbol: string;
-  tsMaxShiftHours: number;
-  tsMaxBreakMinutes: number;
-  tsShiftStartVarianceMinutes: number;
-  tsRoundFirstInMins: number | null;
-  tsRoundFirstInGraceMins: number | null;
-  tsRoundBreakOutMins: number | null;
-  tsRoundBreakOutGraceMins: number | null;
-  tsRoundBreakInMins: number | null;
-  tsRoundBreakInGraceMins: number | null;
-  tsRoundLastOutMins: number | null;
-  tsRoundLastOutGraceMins: number | null;
-  holidayYearStartType: string;
-  holidayYearStartDay: number;
-  holidayYearStartMonth: number;
-  bankHolidayHandling: string;
-  bankHolidayColour: string;
-  defaultWorkProfileId: string | null;
-  defaultHolidayType: "fixed" | "earned";
-  defaultHolidayUnits: "days" | "hours";
-  defaultHolidayEarnedFactor: number;
-  defaultHolidayAllowance: number;
-  defaultHolidayToilHoursPerDay: number;
-  defaultHolidayMaxCarryForward: number;
-  defaultHolidayMinCarryForward: number;
-  noticeRulesBlockRequests: boolean;
+  // CLE-194 — the legacy `OrganisationEditDialog` used to receive a long
+  // list of org settings (orgName, requireMfa, currencySymbol, ts*,
+  // holidayYearStart*, bankHoliday*, defaultWorkProfileId, etc.). The
+  // dialog has been deleted; those props are no longer threaded through
+  // the sidebar. Settings sub-routes own the editing surfaces and fetch
+  // their own data.
   initialFavouriteIds?: string[];
   initialCustomReports?: { id: string; name: string }[];
   initialShiftDefs?: { id: string; name: string }[];
@@ -64,44 +43,17 @@ export function Sidebar({
   role,
   accessMembers,
   memberLabel,
-  orgName,
   plan,
-  requireMfa,
   canDefineCustomFields,
   canEditOrganisation,
-  currencySymbol,
-  tsMaxShiftHours,
-  tsMaxBreakMinutes,
-  tsShiftStartVarianceMinutes,
-  tsRoundFirstInMins,
-  tsRoundFirstInGraceMins,
-  tsRoundBreakOutMins,
-  tsRoundBreakOutGraceMins,
-  tsRoundBreakInMins,
-  tsRoundBreakInGraceMins,
-  tsRoundLastOutMins,
-  tsRoundLastOutGraceMins,
-  holidayYearStartType,
-  holidayYearStartDay,
-  holidayYearStartMonth,
-  bankHolidayHandling,
-  bankHolidayColour,
-  defaultWorkProfileId,
-  defaultHolidayType,
-  defaultHolidayUnits,
-  defaultHolidayEarnedFactor,
-  defaultHolidayAllowance,
-  defaultHolidayToilHoursPerDay,
-  defaultHolidayMaxCarryForward,
-  defaultHolidayMinCarryForward,
-  noticeRulesBlockRequests,
   initialFavouriteIds = [],
   initialCustomReports = [],
   initialShiftDefs = [],
   pendingApprovalsCount = 0,
 }: SidebarProps) {
   const pathname = usePathname();
-  const [showOrgEdit, setShowOrgEdit] = useState(false);
+  // CLE-194 — `showOrgEdit` state removed; the legacy OrganisationEditDialog
+  // is no longer rendered from the sidebar. Use /settings instead.
   const [recentEmployees, setRecentEmployees] = useState<RecentEmployee[]>([]);
   const [shiftsOpen, setShiftsOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
@@ -251,12 +203,8 @@ export function Sidebar({
               Absence Types
             </Link>
           )}
-          {(role === "owner" || role === "admin") && (
-            <Link href="/work-profiles" className={linkClass("/work-profiles")}>
-              <Clock className="h-4 w-4 shrink-0" />
-              Work Profiles
-            </Link>
-          )}
+          {/* CLE-194 — Work Profiles link removed; its CRUD now lives at
+              Settings → Profiles → Working Patterns. */}
           {(role === "owner" || role === "admin") && (
             <Link href="/availability" className={linkClass("/availability")}>
               <Calendar className="h-4 w-4 shrink-0" />
@@ -305,19 +253,9 @@ export function Sidebar({
             <ShieldCheck className="h-4 w-4 shrink-0" />
             Health &amp; Safety
           </Link>
-          {showOrg && (
-            <button
-              onClick={() => setShowOrgEdit(true)}
-              className="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent text-left w-full"
-            >
-              <Building2 className="h-4 w-4 shrink-0" />
-              Organisation
-            </button>
-          )}
-          {/* CLE-191 — Settings page (parallel to the Organisation dialog
-              during the refactor period). Same visibility rules as the
-              dialog trigger above; remove the dialog button + handler
-              once every section's full-page form is live. */}
+          {/* CLE-194 — Settings is the canonical surface for all org-level
+              config. The legacy "Organisation" dialog trigger that used to
+              sit above this link has been removed. */}
           {showOrg && (
             <Link href="/settings" className={linkClass("/settings")}>
               <Settings className="h-4 w-4 shrink-0" />
@@ -433,45 +371,8 @@ export function Sidebar({
         </div>
       </nav>
 
-      {showOrg && (
-        <OrganisationEditDialog
-          open={showOrgEdit}
-          onOpenChange={setShowOrgEdit}
-          orgName={orgName}
-          memberLabel={memberLabel}
-          plan={plan}
-          requireMfa={requireMfa}
-          role={role}
-          canDefineCustomFields={canDefineCustomFields}
-          canEditOrganisation={canEditOrganisation}
-          currencySymbol={currencySymbol}
-          tsMaxShiftHours={tsMaxShiftHours}
-          tsMaxBreakMinutes={tsMaxBreakMinutes}
-          tsShiftStartVarianceMinutes={tsShiftStartVarianceMinutes}
-          tsRoundFirstInMins={tsRoundFirstInMins}
-          tsRoundFirstInGraceMins={tsRoundFirstInGraceMins}
-          tsRoundBreakOutMins={tsRoundBreakOutMins}
-          tsRoundBreakOutGraceMins={tsRoundBreakOutGraceMins}
-          tsRoundBreakInMins={tsRoundBreakInMins}
-          tsRoundBreakInGraceMins={tsRoundBreakInGraceMins}
-          tsRoundLastOutMins={tsRoundLastOutMins}
-          tsRoundLastOutGraceMins={tsRoundLastOutGraceMins}
-          holidayYearStartType={holidayYearStartType}
-          holidayYearStartDay={holidayYearStartDay}
-          holidayYearStartMonth={holidayYearStartMonth}
-          bankHolidayHandling={bankHolidayHandling}
-          bankHolidayColour={bankHolidayColour}
-          defaultWorkProfileId={defaultWorkProfileId}
-          defaultHolidayType={defaultHolidayType}
-          defaultHolidayUnits={defaultHolidayUnits}
-          defaultHolidayEarnedFactor={defaultHolidayEarnedFactor}
-          defaultHolidayAllowance={defaultHolidayAllowance}
-          defaultHolidayToilHoursPerDay={defaultHolidayToilHoursPerDay}
-          defaultHolidayMaxCarryForward={defaultHolidayMaxCarryForward}
-          defaultHolidayMinCarryForward={defaultHolidayMinCarryForward}
-          noticeRulesBlockRequests={noticeRulesBlockRequests}
-        />
-      )}
+      {/* CLE-194 — OrganisationEditDialog removed from the sidebar. The
+          /settings sub-routes are the canonical surfaces. */}
     </>
   );
 }

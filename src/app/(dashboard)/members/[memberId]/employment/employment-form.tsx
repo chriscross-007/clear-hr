@@ -15,6 +15,7 @@ import { saveCustomFieldValues } from "@/app/(dashboard)/employees/custom-field-
 import { WorkProfileSection, type WorkProfileAssignmentRow } from "./work-profile-section";
 import { ApprovalProfileSection } from "./approval-profile-section";
 import { NoticePeriodSection } from "./notice-period-section";
+import { HolidayProfileSection } from "./holiday-profile-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -415,6 +416,12 @@ export function EmploymentForm({
 
               {/* CLE-194 — per-employee Notice Period Profile picker */}
               <NoticePeriodSection
+                memberId={member.member_id}
+                canEdit={canEdit}
+              />
+
+              {/* CLE-194 Phase 2 — per-employee Holiday Profile picker */}
+              <HolidayProfileSection
                 memberId={member.member_id}
                 canEdit={canEdit}
               />

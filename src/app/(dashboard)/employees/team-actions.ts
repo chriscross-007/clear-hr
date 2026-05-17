@@ -140,15 +140,15 @@ export async function getApproverMembers(): Promise<{
     const membership = await getCallerMembership();
     const admin = createAdminClient();
 
-    // Holiday approvers for a team are admins whose rights profile grants
-    // the Approve Holidays right (`permissions.can_approve_holidays = true`).
-    // Owners and admins without the right are excluded — mirrors the
+    // Holiday approvers for a team are the owner (always — owners have all
+    // rights by role) plus admins whose rights profile grants Approve
+    // Holidays. Admins without the right are excluded. Mirrors the
     // approval-profile-actions.getApproverOptions filter.
     const { data, error } = await admin
       .from("members")
-      .select("id, first_name, last_name, permissions")
+      .select("id, first_name, last_name, role, permissions")
       .eq("organisation_id", membership.organisation_id)
-      .eq("role", "admin")
+      .in("role", ["owner", "admin"])
       .order("first_name");
 
     if (error) return { success: false, error: error.message };
@@ -157,6 +157,7 @@ export async function getApproverMembers(): Promise<{
       success: true,
       members: (data ?? [])
         .filter((m) => {
+          if (m.role === "owner") return true;
           const perms = (m.permissions as Record<string, unknown> | null) ?? {};
           return perms.can_approve_holidays === true;
         })

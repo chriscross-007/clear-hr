@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { RatesManager } from "@/app/(dashboard)/organisation-edit-dialog-rates";
+import { RatesManager } from "./rates-manager";
 import type { Rate } from "@/app/(dashboard)/rates-actions";
 
 // CLE-191 — Thin client wrapper around the existing RatesManager so it

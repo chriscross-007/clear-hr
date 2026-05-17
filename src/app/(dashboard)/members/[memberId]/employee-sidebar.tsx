@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { recordRecentEmployee } from "@/lib/recent-employees";
-import { HolidayCogButton } from "./holiday-cog-button";
 
 export type EmployeeSidebarMember = {
   id: string;
@@ -101,34 +100,9 @@ export function EmployeeSidebar({ member, userId }: { member: EmployeeSidebarMem
         {items.map((item) => {
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
           const Icon = item.icon;
-          const isHoliday = item.label === "Holiday";
-
-          // Holiday gets a cog button (CLE-170) so admins can edit the
-          // per-employee Default Cascade values used when seeding new
-          // Holiday Periods. The cog sits to the right of the link.
-          if (isHoliday) {
-            return (
-              <div
-                key={item.href}
-                className={cn(
-                  "flex items-center gap-1 rounded-md pr-1 transition-colors hover:bg-accent",
-                  active && "bg-accent",
-                )}
-              >
-                <Link
-                  href={item.href}
-                  className={cn(
-                    "flex flex-1 items-center gap-2.5 px-3 py-2 text-sm",
-                    active && "font-medium",
-                  )}
-                >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  {item.label}
-                </Link>
-                <HolidayCogButton memberId={member.id} />
-              </div>
-            );
-          }
+          // CLE-194 Phase 2 — the per-employee Holiday cog and its
+          // sidebar button are gone. The 7-value bundle now lives on the
+          // member's Holiday Profile, assigned from the Employment page.
 
           return (
             <Link

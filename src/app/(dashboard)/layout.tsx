@@ -22,7 +22,7 @@ export default async function DashboardLayout({
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role, permissions, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees, require_mfa, currency_symbol, ts_max_shift_hours, ts_max_break_minutes, ts_shift_start_variance_minutes, ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins, holiday_year_start_type, holiday_year_start_day, holiday_year_start_month, bank_holiday_handling, bank_holiday_colour, default_work_profile_id, default_holiday_type, default_holiday_units, default_holiday_earned_factor, default_holiday_allowance, default_holiday_toil_hours_per_day, default_holiday_max_carry_forward, default_holiday_min_carry_forward, notice_rules_block_requests), admin_profiles(name), employee_profiles(name)")
+    .select("organisation_id, role, permissions, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees), admin_profiles(name), employee_profiles(name)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -36,33 +36,6 @@ export default async function DashboardLayout({
     subscription_status: string | null;
     trial_ends_at: string | null;
     max_employees: number;
-    require_mfa: boolean;
-    currency_symbol: string;
-    ts_max_shift_hours: number;
-    ts_max_break_minutes: number;
-    ts_shift_start_variance_minutes: number;
-    ts_round_first_in_mins:        number | null;
-    ts_round_first_in_grace_mins:  number | null;
-    ts_round_break_out_mins:       number | null;
-    ts_round_break_out_grace_mins: number | null;
-    ts_round_break_in_mins:        number | null;
-    ts_round_break_in_grace_mins:  number | null;
-    ts_round_last_out_mins:        number | null;
-    ts_round_last_out_grace_mins:  number | null;
-    holiday_year_start_type: string;
-    holiday_year_start_day: number | null;
-    holiday_year_start_month: number | null;
-    bank_holiday_handling: string;
-    bank_holiday_colour: string;
-    default_work_profile_id: string | null;
-    default_holiday_type: string;
-    default_holiday_units: string;
-    default_holiday_earned_factor: number;
-    default_holiday_allowance: number;
-    default_holiday_toil_hours_per_day: number;
-    default_holiday_max_carry_forward: number;
-    default_holiday_min_carry_forward: number;
-    notice_rules_block_requests: boolean;
   };
   const memberLabel = org?.member_label || "member";
 
@@ -195,42 +168,17 @@ export default async function DashboardLayout({
           </div>
         </header>
         <div className="flex flex-1">
+          {/* CLE-194 — Sidebar's org-settings props were all consumed by
+              the now-deleted OrganisationEditDialog. The Settings
+              sub-routes fetch what they need themselves. */}
           <Sidebar
             userId={user.id}
             role={membership.role}
             accessMembers={accessMembers}
             memberLabel={memberLabel}
-            orgName={org?.name}
             plan={org?.plan}
-            requireMfa={org?.require_mfa ?? false}
             canDefineCustomFields={canDefineCustomFields}
             canEditOrganisation={canEditOrganisation}
-            currencySymbol={org?.currency_symbol ?? "£"}
-            tsMaxShiftHours={org?.ts_max_shift_hours ?? 14}
-            tsMaxBreakMinutes={org?.ts_max_break_minutes ?? 60}
-            tsShiftStartVarianceMinutes={org?.ts_shift_start_variance_minutes ?? 30}
-            tsRoundFirstInMins={org?.ts_round_first_in_mins ?? null}
-            tsRoundFirstInGraceMins={org?.ts_round_first_in_grace_mins ?? null}
-            tsRoundBreakOutMins={org?.ts_round_break_out_mins ?? null}
-            tsRoundBreakOutGraceMins={org?.ts_round_break_out_grace_mins ?? null}
-            tsRoundBreakInMins={org?.ts_round_break_in_mins ?? null}
-            tsRoundBreakInGraceMins={org?.ts_round_break_in_grace_mins ?? null}
-            tsRoundLastOutMins={org?.ts_round_last_out_mins ?? null}
-            tsRoundLastOutGraceMins={org?.ts_round_last_out_grace_mins ?? null}
-            holidayYearStartType={org?.holiday_year_start_type ?? "fixed"}
-            holidayYearStartDay={org?.holiday_year_start_day ?? 1}
-            holidayYearStartMonth={org?.holiday_year_start_month ?? 1}
-            bankHolidayHandling={org?.bank_holiday_handling ?? "additional"}
-            bankHolidayColour={org?.bank_holiday_colour ?? "#EF4444"}
-            defaultWorkProfileId={org?.default_work_profile_id ?? null}
-            defaultHolidayType={(org?.default_holiday_type as "fixed" | "earned") ?? "fixed"}
-            defaultHolidayUnits={(org?.default_holiday_units as "days" | "hours") ?? "days"}
-            defaultHolidayEarnedFactor={Number(org?.default_holiday_earned_factor ?? 0)}
-            defaultHolidayAllowance={Number(org?.default_holiday_allowance ?? 0)}
-            defaultHolidayToilHoursPerDay={Number(org?.default_holiday_toil_hours_per_day ?? 0)}
-            defaultHolidayMaxCarryForward={Number(org?.default_holiday_max_carry_forward ?? 0)}
-            defaultHolidayMinCarryForward={Number(org?.default_holiday_min_carry_forward ?? -999)}
-            noticeRulesBlockRequests={!!org?.notice_rules_block_requests}
             initialFavouriteIds={sidebarFavouriteIds}
             initialCustomReports={sidebarCustomReports}
             initialShiftDefs={sidebarShiftDefs}

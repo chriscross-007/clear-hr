@@ -1,13 +1,22 @@
 "use client";
 
+// CLE-194 — Relocated from `organisation-edit-dialog-rates.tsx` after
+// the legacy dialog was deleted. Same component, new home next to its
+// only consumer (`settings/rates/rates-client.tsx`).
+
 import { useState, useRef } from "react";
 import { GripVertical, Trash2, Plus, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import type { Rate } from "./rates-actions";
-import { createRate, updateRate, deleteRate, reorderRates } from "./rates-actions";
+import type { Rate } from "@/app/(dashboard)/rates-actions";
+import {
+  createRate,
+  updateRate,
+  deleteRate,
+  reorderRates,
+} from "@/app/(dashboard)/rates-actions";
 
 interface RatesManagerProps {
   rates: Rate[];

@@ -83,14 +83,14 @@ export async function addEmployee(formData: {
     const membership = await getCallerMembership();
     const admin = createAdminClient();
 
-    // Check max_employees limit + fetch the org's Default Cascade values so
-    // we can snapshot them onto the new member's Holiday cog at creation.
-    // CLE-170 fix: previously the cog defaulted to the column hardcoded
-    // fallbacks (Fixed/Days/0/0/0/0/-999) regardless of what the org had
-    // configured.
+    // CLE-194 Phase 2 — the per-member Holiday cog and the org-level
+    // Default Cascade are gone. The DB trigger
+    // `trigger_assign_holiday_profile` auto-points each new member at
+    // the org's Default Holiday Profile, which is the single source of
+    // truth for the 7 values. We just need the seat-limit check here.
     const { data: org } = await admin
       .from("organisations")
-      .select("max_employees, default_holiday_type, default_holiday_units, default_holiday_earned_factor, default_holiday_allowance, default_holiday_toil_hours_per_day, default_holiday_max_carry_forward, default_holiday_min_carry_forward")
+      .select("max_employees")
       .eq("id", membership.organisation_id)
       .single();
 
@@ -144,20 +144,10 @@ export async function addEmployee(formData: {
           can_add_members: false,
           can_edit_organisation: false,
         },
-        // CLE-170 — snapshot the org's Default Cascade values into the new
-        // member's Holiday cog. Subsequent changes to org defaults won't
-        // propagate (per the spec's two-stage snapshot model).
-        ...(org
-          ? {
-              holiday_type: org.default_holiday_type,
-              holiday_units: org.default_holiday_units,
-              holiday_earned_factor: org.default_holiday_earned_factor,
-              holiday_allowance: org.default_holiday_allowance,
-              holiday_toil_hours_per_day: org.default_holiday_toil_hours_per_day,
-              holiday_max_carry_forward: org.default_holiday_max_carry_forward,
-              holiday_min_carry_forward: org.default_holiday_min_carry_forward,
-            }
-          : {}),
+        // CLE-194 Phase 2 — `holiday_profile_id` is set automatically by
+        // `trigger_assign_holiday_profile` (BEFORE INSERT) so we don't
+        // need to populate it here. The 7 values are then resolved via
+        // the profile when a Holiday Period is created.
       })
       .select("id, invite_token")
       .single();
@@ -204,6 +194,18 @@ export async function addEmployee(formData: {
         max_employees: org?.max_employees,
       },
     });
+
+    // CLE-194 Phase 2 — auto-create the first Holiday Period when the
+    // preconditions are met (member has a Holiday Profile via trigger
+    // assignment + start_date is present for employee-start-date orgs).
+    // Non-fatal: if creation fails or the precondition isn't yet met,
+    // the period can be added later when start_date arrives.
+    try {
+      const { tryAutoCreateFirstPeriod } = await import("@/app/(dashboard)/holiday-profile-actions");
+      await tryAutoCreateFirstPeriod(newMember.id);
+    } catch {
+      /* swallow — auto-create is best-effort */
+    }
 
     return {
       success: true,

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CustomFieldsManager } from "@/app/(dashboard)/organisation-edit-dialog-custom-fields";
+import { CustomFieldsManager } from "./custom-fields-manager";
 import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
 
 // CLE-191 — Thin client wrapper around CustomFieldsManager. The manager
