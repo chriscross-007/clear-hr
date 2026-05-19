@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { Plus, X, ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -188,21 +188,22 @@ export function MyHolidayClient({
     [router, pathname],
   );
 
-  // Only Annual-Leave reasons count as "Holiday" bookings for the overlap
-  // detection — sick / compassionate / other absences shouldn't surface
-  // here because the employee can't cancel them via this flow.
+  // Annual-Leave reasons are tracked separately because the notice-period
+  // stitching for consecutive bookings (passed to `existingHolidayBookings`
+  // below) is an AL-only concern. The overlap detection itself surfaces
+  // pending requests of any absence type.
   const holidayReasonIds = new Set(
     reasons.filter((r) => r.absence_type_name === "Annual Leave").map((r) => r.id),
   );
 
   function openBookSheetForRange(startDate: string, endDate: string) {
-    // If the picked range overlaps an existing PENDING Holiday booking,
-    // surface that booking in view+delete mode rather than treating the
-    // drag as a new request. Approved bookings are off-limits to employee
-    // editing — they have to go through the admin to cancel.
+    // If the picked range overlaps an existing pending OR approved
+    // booking, surface that booking in the sheet. Pending → editable
+    // (Save Changes + Delete Request). Approved → read-only ("Booked
+    // Absence" — must contact admin for changes). The sheet itself
+    // branches on existingBooking.status to pick the right chrome.
     const overlapping = bookings.find((b) => {
-      if (b.status !== "pending") return false;
-      if (!holidayReasonIds.has(b.leave_reason_id)) return false;
+      if (b.status !== "pending" && b.status !== "approved") return false;
       if (b.end_date === null) return b.start_date <= endDate;
       return b.start_date <= endDate && b.end_date >= startDate;
     });
@@ -217,13 +218,6 @@ export function MyHolidayClient({
     }
     setBookSheetOpen(true);
   }
-  function openBookSheetEmpty() {
-    setBookSheetExisting(null);
-    setBookSheetInitialStart(null);
-    setBookSheetInitialEnd(null);
-    setBookSheetOpen(true);
-  }
-
   function formatLongDate(ymd: string): string {
     const d = new Date(ymd + "T00:00:00Z");
     return d.toLocaleDateString("en-GB", {
@@ -276,18 +270,14 @@ export function MyHolidayClient({
 
   return (
     <>
-      <Tabs defaultValue="overview" className="w-full mb-6">
+      <Tabs defaultValue="calendar" className="w-full mb-6">
         <StickyPageHeader>
           <div className="flex items-center justify-between gap-4 mb-3">
-            <h1 className="text-2xl font-bold">My Holiday</h1>
-            <Button onClick={openBookSheetEmpty}>
-              <Plus className="h-4 w-4 mr-1.5" />
-              Request Holiday
-            </Button>
+            <h1 className="text-2xl font-bold">My Absences</h1>
           </div>
           <TabsList>
-            <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="calendar">Calendar</TabsTrigger>
+            <TabsTrigger value="overview">Holiday</TabsTrigger>
           </TabsList>
         </StickyPageHeader>
 
@@ -558,6 +548,7 @@ export function MyHolidayClient({
       {/* Book Holiday Sheet */}
       <BookHolidaySheet
         open={bookSheetOpen}
+        memberId={memberId}
         onOpenChange={(open) => {
           setBookSheetOpen(open);
           if (!open) {

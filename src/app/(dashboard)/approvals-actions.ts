@@ -257,17 +257,46 @@ export async function getPendingApprovals(): Promise<ApprovalRow[]> {
   return fetchAndMapBookings(supabase, member.organisation_id, "pending", ids);
 }
 
-/** Count of pending holiday bookings the caller can decide. */
-export async function getPendingApprovalsCount(): Promise<{ success: boolean; error?: string; count: number }> {
+/** Count of pending bookings the caller can decide. Returns the total
+ *  plus a split by absence-type category so the dashboard can render
+ *  separate "Holiday Approvals" (Annual Leave only) and "Absence
+ *  Approvals" (everything else) cards. The sidebar continues to use the
+ *  flat `count` for its badge. */
+export async function getPendingApprovalsCount(): Promise<{
+  success: boolean;
+  error?: string;
+  count: number;
+  holidayCount: number;
+  absenceCount: number;
+}> {
   try {
     const { member } = await getCallerAdmin();
     const ids = await getPendingApprovalBookingIds(member.organisation_id, member.id);
-    return { success: true, count: ids.length };
+    if (ids.length === 0) {
+      return { success: true, count: 0, holidayCount: 0, absenceCount: 0 };
+    }
+    const admin = getAdminClient();
+    const { data } = await admin
+      .from("holiday_bookings")
+      .select("id, absence_reasons(absence_types(name))")
+      .in("id", ids);
+    let holidayCount = 0;
+    let absenceCount = 0;
+    for (const row of data ?? []) {
+      const typeName = (row.absence_reasons as unknown as
+        | { absence_types: { name: string } | null }
+        | null)?.absence_types?.name;
+      if (typeName === "Annual Leave") holidayCount++;
+      else absenceCount++;
+    }
+    return { success: true, count: ids.length, holidayCount, absenceCount };
   } catch (e) {
     return {
       success: false,
       error: e instanceof Error ? e.message : "An error occurred",
       count: 0,
+      holidayCount: 0,
+      absenceCount: 0,
     };
   }
 }
@@ -748,11 +777,13 @@ export async function approveBooking(
     const admin = getAdminClient();
     const { data: booking } = await admin
       .from("holiday_bookings")
-      .select("member_id, start_date, end_date, days_deducted, employee_note, absence_reasons(name)")
+      .select("member_id, start_date, end_date, days_deducted, employee_note, absence_reasons(name, absence_types(name))")
       .eq("id", bookingId)
       .single();
     if (booking) {
-      const reasonName = (booking.absence_reasons as unknown as { name: string } | null)?.name ?? "Holiday";
+      const bookingReason = booking.absence_reasons as unknown as { name: string; absence_types: { name: string } | null } | null;
+      const reasonName = bookingReason?.name ?? "Holiday";
+      const absenceTypeName = bookingReason?.absence_types?.name ?? null;
 
       // Resolve employee name for audit label
       const { data: targetRow } = await admin
@@ -800,6 +831,7 @@ export async function approveBooking(
           endDate: booking.end_date,
           days: booking.days_deducted ? Number(booking.days_deducted) : null,
           leaveType: reasonName,
+          absenceTypeName,
           employeeNote: booking.employee_note,
           baseUrl,
         };
@@ -814,6 +846,7 @@ export async function approveBooking(
           endDate: booking.end_date,
           days: booking.days_deducted ? Number(booking.days_deducted) : null,
           leaveType: reasonName,
+          absenceTypeName,
           approverId: member.id,
           employeeNote: booking.employee_note,
           approverNote: note?.trim() || null,
@@ -876,11 +909,13 @@ export async function rejectBooking(
     const admin = getAdminClient();
     const { data: booking } = await admin
       .from("holiday_bookings")
-      .select("member_id, start_date, end_date, days_deducted, employee_note, absence_reasons(name)")
+      .select("member_id, start_date, end_date, days_deducted, employee_note, absence_reasons(name, absence_types(name))")
       .eq("id", bookingId)
       .single();
     if (booking) {
-      const reasonName = (booking.absence_reasons as unknown as { name: string } | null)?.name ?? "Holiday";
+      const bookingReason = booking.absence_reasons as unknown as { name: string; absence_types: { name: string } | null } | null;
+      const reasonName = bookingReason?.name ?? "Holiday";
+      const absenceTypeName = bookingReason?.absence_types?.name ?? null;
 
       // Resolve employee name for audit label
       const { data: targetRow } = await admin
@@ -917,7 +952,7 @@ export async function rejectBooking(
         bookingId, memberId: booking.member_id,
         startDate: booking.start_date, endDate: booking.end_date,
         days: booking.days_deducted ? Number(booking.days_deducted) : null,
-        leaveType: reasonName, approverId: member.id,
+        leaveType: reasonName, absenceTypeName, approverId: member.id,
         employeeNote: booking.employee_note,
         approverNote: note?.trim() || null, baseUrl,
       });
@@ -1046,7 +1081,7 @@ async function bulkDecision(
     const admin = getAdminClient();
     const { data: bookings } = await admin
       .from("holiday_bookings")
-      .select("id, member_id, start_date, end_date, days_deducted, employee_note, absence_reasons(name)")
+      .select("id, member_id, start_date, end_date, days_deducted, employee_note, absence_reasons(name, absence_types(name))")
       .in("id", allowedIds)
       .eq("organisation_id", member.organisation_id);
 
@@ -1067,7 +1102,9 @@ async function bulkDecision(
       const baseUrl = `${host.includes("localhost") ? "http" : "https"}://${host}`;
 
       for (const b of bookings) {
-        const reasonName = (b.absence_reasons as unknown as { name: string } | null)?.name ?? "Holiday";
+        const bookingReason = b.absence_reasons as unknown as { name: string; absence_types: { name: string } | null } | null;
+        const reasonName = bookingReason?.name ?? "Holiday";
+        const absenceTypeName = bookingReason?.absence_types?.name ?? null;
         const memberName = nameMap.get(b.member_id) ?? "";
         const cascadeNotify = cascadeNotifyByBookingId.get(b.id);
         const cascaded = cascadeNotify !== undefined;
@@ -1106,6 +1143,7 @@ async function bulkDecision(
           endDate: b.end_date,
           days: b.days_deducted ? Number(b.days_deducted) : null,
           leaveType: reasonName,
+          absenceTypeName,
           employeeNote: b.employee_note,
           approverNote: trimmedNote,
           baseUrl,
@@ -1166,7 +1204,10 @@ export async function cancelMyBooking(
 
     if (!member) return { success: false, error: "No organisation" };
 
-    // Snapshot the booking before updating so we can log the reason name
+    // Snapshot the booking before updating so we can log the reason name.
+    // Employees can only cancel their own pending bookings; approved
+    // bookings (whether or not the type required approval) are
+    // admin-cancel-only — they have to ask their manager to cancel.
     const { data: existing } = await supabase
       .from("holiday_bookings")
       .select("start_date, end_date, days_deducted, absence_reasons(name)")
@@ -1174,6 +1215,10 @@ export async function cancelMyBooking(
       .eq("member_id", member.id)
       .eq("status", "pending")
       .single();
+
+    const reasonRow = existing
+      ? (existing.absence_reasons as unknown as { name: string } | null)
+      : null;
 
     // Only allow cancelling own pending bookings
     const { error } = await supabase
@@ -1184,6 +1229,8 @@ export async function cancelMyBooking(
       .eq("status", "pending");
 
     if (error) return { success: false, error: error.message };
+
+    const oldStatus = "pending";
 
     // CLE-183 — mark any open booking_approvals rows for this booking as
     // withdrawn. Phase A bookings have at most one such row at L1; Phase B
@@ -1202,9 +1249,7 @@ export async function cancelMyBooking(
       .eq("status", "pending");
 
     const memberName = `${member.first_name ?? ""} ${member.last_name ?? ""}`.trim();
-    const reasonName = existing
-      ? ((existing.absence_reasons as unknown as { name: string } | null)?.name ?? "Booking")
-      : "Booking";
+    const reasonName = reasonRow?.name ?? "Booking";
     logAudit({
       organisationId: member.organisation_id,
       actorId: member.id,
@@ -1218,7 +1263,7 @@ export async function cancelMyBooking(
         startDate: (existing?.start_date as string | null | undefined) ?? null,
         endDate: (existing?.end_date as string | null | undefined) ?? null,
       }),
-      changes: { status: { old: "pending", new: "cancelled" } },
+      changes: { status: { old: oldStatus, new: "cancelled" } },
       metadata: { member_id: member.id, member_name: memberName },
     });
 

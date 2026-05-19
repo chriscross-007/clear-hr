@@ -6,7 +6,6 @@ import { HolidayCalendar, type CalendarBooking, type CalendarBankHoliday } from 
 import { HolidayUnitsPill } from "@/components/holiday-units-pill";
 import { CalendarLegend } from "@/components/calendar/calendar-legend";
 import { CalendarFilterPanel, type AbsenceTypeOption } from "@/components/calendar/calendar-filter-panel";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,9 +25,13 @@ import {
   SheetFooter,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { BookingConversation } from "./booking-conversation";
+import {
+  AbsenceFormFields,
+  type AbsenceFormState,
+  type HalfOption as SharedHalfOption,
+} from "@/components/absence-form-fields";
+import { BookingConversation, type BookingConversationHandle } from "./booking-conversation";
 import {
   getOrCreateBookingConversation,
   sendConversationMessage,
@@ -38,15 +41,6 @@ import { SickDetailsPanel, type OrgAdminOption } from "./sick-details-panel";
 import { BookingHistoryPopover } from "@/components/booking-history-popover";
 import { saveSickDetails } from "../../../sick-booking-actions";
 import type { SickDetailsInput } from "../../../sick-booking-types";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   adminBookAbsence,
   adminUpdateBooking,
@@ -165,7 +159,9 @@ function formatLongDate(ymd: string): string {
   });
 }
 
-type HalfOption = "full" | "am" | "pm";
+// Alias the shared HalfOption so the rest of this file's `HalfOption`
+// references continue to work without sprinkling the new name everywhere.
+type HalfOption = SharedHalfOption;
 
 export function AdminCalendarClient({
   memberId,
@@ -303,6 +299,39 @@ export function AdminCalendarClient({
     reasonId: string;
   } | null>(null);
 
+  // Unsent-draft guard. The conversation panel below holds its own
+  // draft state; this ref lets us peek at it just before any close path
+  // (Cancel, Save Changes, Book, Approve, Reject, Delete, Sheet close)
+  // so we can prompt the admin to Send / Discard before the form goes
+  // away and the typed text is lost.
+  const conversationRef = useRef<BookingConversationHandle | null>(null);
+  const [draftDialogAction, setDraftDialogAction] = useState<(() => void | Promise<void>) | null>(null);
+
+  async function withDraftGuard(action: () => void | Promise<void>) {
+    if (conversationRef.current?.hasUnsentDraft()) {
+      setDraftDialogAction(() => action);
+      return;
+    }
+    await action();
+  }
+
+  async function handleDraftSendAndContinue() {
+    const action = draftDialogAction;
+    setDraftDialogAction(null);
+    const res = await conversationRef.current?.sendUnsentDraft();
+    if (res && !res.success) {
+      setError(res.error ?? "Could not send your comment");
+      return;
+    }
+    if (action) await action();
+  }
+
+  async function handleDraftDiscardAndContinue() {
+    const action = draftDialogAction;
+    setDraftDialogAction(null);
+    if (action) await action();
+  }
+
   // Auto-open a specific booking's edit form when navigated to with ?bookingId=
   const initialBookingHandled = useRef(false);
   useEffect(() => {
@@ -329,23 +358,50 @@ export function AdminCalendarClient({
   const selectedReason = absenceReasons.find((r) => r.id === reasonId);
   const isSickType = selectedReason?.absence_type_name?.startsWith("Sick") ?? false;
 
-  // Group reasons by absence type for the dropdown — Annual Leave first,
-  // Sick second, then any remaining types alphabetically.
-  const groupedReasons = useMemo(() => {
-    const TYPE_ORDER: Record<string, number> = { "Annual Leave": 0, "Sick": 1 };
-    const map = new Map<string, AbsenceReasonOption[]>();
-    for (const r of absenceReasons) {
-      const group = map.get(r.absence_type_name) ?? [];
-      group.push(r);
-      map.set(r.absence_type_name, group);
+  // Reasons reshaped for the shared <AbsenceFormFields> component. The
+  // page fetches non-deprecated reasons only, so `is_deprecated: false`
+  // is a safe constant; `requires_approval` is unused by the shared
+  // component (the admin path is always auto-approved) so a placeholder
+  // is fine.
+  const sharedReasons = useMemo(
+    () =>
+      absenceReasons.map((r) => ({
+        ...r,
+        is_deprecated: false,
+        requires_approval: false,
+      })),
+    [absenceReasons],
+  );
+
+  // Project the admin's existing state (`range` + separate scalars) into
+  // the shared `AbsenceFormState` shape, and route patches back to the
+  // individual setters. Keeps the rest of the admin sheet untouched
+  // (sick details, conversation, approve/reject, delete) while letting
+  // the form-fields portion be the same component the employee uses.
+  const formState: AbsenceFormState = {
+    typeId: selectedReason?.absence_type_id ?? "",
+    reasonId,
+    startDate: range?.start ?? "",
+    endDate: range?.end ?? null,
+    startHalf,
+    endHalf,
+    hours: "", // admin always books in days
+    note: "",  // admin uses the Conversation panel instead of a note
+  };
+
+  function handleFormChange(patch: Partial<AbsenceFormState>) {
+    if (patch.reasonId !== undefined) setReasonId(patch.reasonId);
+    if (patch.startDate !== undefined || patch.endDate !== undefined) {
+      setRange((prev) => ({
+        start: patch.startDate !== undefined ? patch.startDate : (prev?.start ?? ""),
+        end: patch.endDate !== undefined ? patch.endDate : (prev?.end ?? null),
+      }));
     }
-    return Array.from(map.entries()).sort(([a], [b]) => {
-      const oa = TYPE_ORDER[a] ?? 999;
-      const ob = TYPE_ORDER[b] ?? 999;
-      if (oa !== ob) return oa - ob;
-      return a.localeCompare(b);
-    });
-  }, [absenceReasons]);
+    if (patch.startHalf !== undefined) setStartHalf(patch.startHalf);
+    if (patch.endHalf !== undefined) setEndHalf(patch.endHalf);
+    // typeId is derived from reasonId — no separate setter. hours/note
+    // are intentionally not stored.
+  }
 
   function openForRange(start: string, end: string) {
     setEditingBookingId(null);
@@ -777,12 +833,28 @@ export function AdminCalendarClient({
         Tip: click and drag across dates to book an absence for {memberName}.
       </p>
 
-      <Sheet open={range !== null} onOpenChange={(o) => !o && closeSheet()}>
+      <Sheet
+        open={range !== null}
+        onOpenChange={(o) => {
+          if (o) return;
+          // Closing — route through the unsent-draft guard so a typed
+          // comment isn't silently dropped when the Sheet tears down.
+          withDraftGuard(() => closeSheet());
+        }}
+      >
         <SheetContent className="flex flex-col gap-4 sm:max-w-md">
           <SheetHeader>
             <div className="flex items-center gap-2">
               <SheetTitle>
-                {editingBookingId ? "Edit Booking" : `Book absence for ${memberName}`}
+                {/* Sheet title pivots on the parent absence type so the
+                    admin sees the same Holiday vs Absence framing the
+                    employee gets on Request Absence. */}
+                {(() => {
+                  const isAnnualLeave = selectedReason?.absence_type_name === "Annual Leave";
+                  const noun = isAnnualLeave ? "Holiday" : "Absence";
+                  if (editingBookingId) return `Edit ${noun}`;
+                  return `Book ${noun} for ${memberName}`;
+                })()}
               </SheetTitle>
               {editingBookingId && (
                 <BookingHistoryPopover bookingId={editingBookingId} />
@@ -809,137 +881,20 @@ export function AdminCalendarClient({
                 formReadOnly && "opacity-60",
               )}
             >
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label htmlFor="booking-start-date">Start Date</Label>
-                {editingBookingId ? (
-                  <Input
-                    id="booking-start-date"
-                    type="date"
-                    value={range?.start ?? ""}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (!v) return;
-                      // Keep start <= end by bumping end forward when needed.
-                      // Open-ended bookings (end = null) don't need bumping.
-                      setRange((prev) => prev ? { start: v, end: prev.end !== null && v > prev.end ? v : prev.end } : prev);
-                    }}
-                  />
-                ) : (
-                  <Input disabled value={range ? formatLongDate(range.start) : ""} className="bg-muted" />
-                )}
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="booking-end-date">End Date</Label>
-                {editingBookingId ? (
-                  <div className="flex items-center gap-2">
-                    <Input
-                      id="booking-end-date"
-                      type="date"
-                      value={range?.end ?? ""}
-                      min={range?.start}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (!v) {
-                          // Only allow clearing end date for sick-type reasons
-                          if (isSickType) {
-                            setRange((prev) => prev ? { start: prev.start, end: null } : prev);
-                          }
-                          return;
-                        }
-                        setRange((prev) => prev ? { start: prev.start, end: v < prev.start ? prev.start : v } : prev);
-                      }}
-                    />
-                    {isOpenEnded && (
-                      <span className="shrink-0 rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-                        Open
-                      </span>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <Input disabled value={range?.end ? formatLongDate(range.end) : ""} className="bg-muted" />
-                    {isSickType && (
-                      <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs">
-                        <Checkbox
-                          checked={isOpenEnded}
-                          onCheckedChange={(v) => {
-                            if (v) {
-                              setRange((prev) => prev ? { start: prev.start, end: null } : prev);
-                            } else {
-                              // Restore end = start when un-checking "Open"
-                              setRange((prev) => prev ? { start: prev.start, end: prev.start } : prev);
-                            }
-                          }}
-                        />
-                        <span>Open</span>
-                      </label>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label>Start</Label>
-                <Select value={startHalf} onValueChange={(v) => setStartHalf(v as HalfOption)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="full">Full day</SelectItem>
-                    <SelectItem value="am">AM only</SelectItem>
-                    <SelectItem value="pm">PM only</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label>End</Label>
-                <Select
-                  value={sameDay || isOpenEnded ? "full" : endHalf}
-                  disabled={sameDay || isOpenEnded}
-                  onValueChange={(v) => setEndHalf(v as HalfOption)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="full">Full day</SelectItem>
-                    <SelectItem value="am">AM only</SelectItem>
-                    <SelectItem value="pm">PM only</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <Label>Absence reason</Label>
-              <Select value={reasonId} onValueChange={setReasonId}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {groupedReasons.map(([typeName, typeReasons]) => (
-                    <SelectGroup key={typeName}>
-                      <SelectLabel>{typeName}</SelectLabel>
-                      {typeReasons.map((r) => (
-                        <SelectItem key={r.id} value={r.id}>
-                          <span className="flex items-center gap-2">
-                            <span
-                              aria-hidden
-                              className="inline-block h-3 w-3 rounded-sm"
-                              style={{ backgroundColor: r.colour }}
-                            />
-                            {r.name}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* Shared form fields — Type / Reason / dates / half-days.
+                Same component the employee's Request Absence sheet uses
+                so the two surfaces stay consistent. Admin-only chrome
+                (sick details, conversation, approve/reject, delete) is
+                rendered below this and around the footer. */}
+            <AbsenceFormFields
+              state={formState}
+              onChange={handleFormChange}
+              reasons={sharedReasons}
+              measurementMode="days"
+              allowOpenEnded={isSickType}
+              disabled={formReadOnly}
+              hideNote
+            />
 
             <div className="rounded-md border bg-muted/30 p-3 text-sm">
               <span className="text-muted-foreground">Working days to deduct: </span>
@@ -964,6 +919,7 @@ export function AdminCalendarClient({
             <div className="space-y-1">
               <Label>Conversation</Label>
               <BookingConversation
+                ref={conversationRef}
                 bookingId={editingBookingId}
                 memberId={memberId}
                 callerMemberId={callerMemberId}
@@ -974,13 +930,55 @@ export function AdminCalendarClient({
             </fieldset>
           </div>
 
-          <SheetFooter className="flex-row justify-between gap-2">
-            <div className="flex gap-2">
+          {/* Two-row footer so all five potential buttons fit at the
+              sheet's standard width without overflowing:
+                Row 1: Reject + Approve (only when the booking is
+                       pending — these aren't relevant otherwise).
+                Row 2: Cancel + Save/Book + Delete. */}
+          <SheetFooter className="flex flex-col gap-2 sm:flex-col sm:space-x-0">
+            {/* CLE-181 — admin can approve/reject pending bookings inline.
+                Non-routed admins see the buttons but they're disabled. */}
+            {editingBookingId && editingBookingStatus === "pending" && (
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  className="border-red-500 text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950"
+                  disabled={saving || decisionLoading !== null || formReadOnly}
+                  onClick={() => withDraftGuard(handleReject)}
+                >
+                  <X className="mr-2 h-4 w-4" />
+                  {decisionLoading === "reject" ? "Rejecting…" : "Reject"}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="border-green-500 text-green-600 hover:bg-green-50 hover:text-green-700 dark:hover:bg-green-950"
+                  disabled={saving || decisionLoading !== null || formReadOnly}
+                  onClick={() => withDraftGuard(handleApprove)}
+                >
+                  <Check className="mr-2 h-4 w-4" />
+                  {decisionLoading === "approve" ? "Approving…" : "Approve"}
+                </Button>
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => withDraftGuard(() => closeSheet())} disabled={saving || decisionLoading !== null}>
+                {formReadOnly ? "Close" : "Cancel"}
+              </Button>
+              {!formReadOnly && (
+                <Button
+                  onClick={() => withDraftGuard(handleBook)}
+                  disabled={saving || decisionLoading !== null || !reasonId || (editingBookingId !== null && !isDirty)}
+                >
+                  {saving
+                    ? (editingBookingId ? "Saving..." : "Booking...")
+                    : (editingBookingId ? "Save Changes" : "Book")}
+                </Button>
+              )}
               {editingBookingId && (
                 <Button
                   variant="destructive"
                   disabled={saving || decisionLoading !== null || formReadOnly}
-                  onClick={() => {
+                  onClick={() => withDraftGuard(() => {
                     const matched = absenceReasons.find((r) => r.id === reasonId);
                     const bk: CalendarBooking = {
                       id: editingBookingId,
@@ -994,49 +992,10 @@ export function AdminCalendarClient({
                       absence_type_id: null,
                     };
                     setDeletingBooking(bk);
-                  }}
+                  })}
                 >
                   <Trash2 className="mr-2 h-4 w-4" />
                   Delete
-                </Button>
-              )}
-              {/* CLE-181 — admin can approve/reject pending bookings inline.
-                  Non-routed admins see the buttons but they're disabled. */}
-              {editingBookingId && editingBookingStatus === "pending" && (
-                <>
-                  <Button
-                    variant="outline"
-                    className="border-red-500 text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950"
-                    disabled={saving || decisionLoading !== null || formReadOnly}
-                    onClick={handleReject}
-                  >
-                    <X className="mr-2 h-4 w-4" />
-                    {decisionLoading === "reject" ? "Rejecting…" : "Reject"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="border-green-500 text-green-600 hover:bg-green-50 hover:text-green-700 dark:hover:bg-green-950"
-                    disabled={saving || decisionLoading !== null || formReadOnly}
-                    onClick={handleApprove}
-                  >
-                    <Check className="mr-2 h-4 w-4" />
-                    {decisionLoading === "approve" ? "Approving…" : "Approve"}
-                  </Button>
-                </>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => closeSheet()} disabled={saving || decisionLoading !== null}>
-                {formReadOnly ? "Close" : "Cancel"}
-              </Button>
-              {!formReadOnly && (
-                <Button
-                  onClick={handleBook}
-                  disabled={saving || decisionLoading !== null || !reasonId || (editingBookingId !== null && !isDirty)}
-                >
-                  {saving
-                    ? (editingBookingId ? "Saving..." : "Booking...")
-                    : (editingBookingId ? "Save Changes" : "Book")}
                 </Button>
               )}
             </div>
@@ -1070,6 +1029,46 @@ export function AdminCalendarClient({
               onClick={(e) => { e.preventDefault(); handleDeleteConfirmed(); }}
             >
               {deleting ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Unsent-draft guard. Pops when any close path is triggered
+          while the conversation panel still has draft text or pending
+          attachments. The admin picks Send (post the comment then run
+          the original action — Save / Approve / Reject / Delete /
+          Close), Discard (drop the draft and run), or Keep editing
+          (stay on the form). */}
+      <AlertDialog
+        open={draftDialogAction !== null}
+        onOpenChange={(o) => { if (!o) setDraftDialogAction(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unsent comment</AlertDialogTitle>
+            <AlertDialogDescription>
+              Do you wish to send the comment you just made before closing?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <Button
+              variant="outline"
+              onClick={(e) => {
+                e.preventDefault();
+                handleDraftDiscardAndContinue();
+              }}
+            >
+              Discard
+            </Button>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                handleDraftSendAndContinue();
+              }}
+            >
+              Send
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

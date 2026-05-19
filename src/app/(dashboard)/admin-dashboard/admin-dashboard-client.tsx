@@ -140,8 +140,12 @@ export function AdminDashboardClient() {
   const [missingHolidayError, setMissingHolidayError] = useState<string | null>(null);
   const [missingHolidayExpanded, setMissingHolidayExpanded] = useState(false);
 
-  // Pending holiday approvals — card links straight to /approvals.
-  const [approvalsCount, setApprovalsCount] = useState(0);
+  // Pending approvals — split into two cards mirroring the Absent
+  // Today / On Holiday Today dichotomy. Holiday Approvals = Annual
+  // Leave bookings only; Absence Approvals = everything else
+  // (Compassionate, etc.). Both cards link to the same /approvals page.
+  const [holidayApprovalsCount, setHolidayApprovalsCount] = useState(0);
+  const [absenceApprovalsCount, setAbsenceApprovalsCount] = useState(0);
   const [approvalsLoading, setApprovalsLoading] = useState(true);
   const [approvalsError, setApprovalsError] = useState<string | null>(null);
 
@@ -186,14 +190,16 @@ export function AdminDashboardClient() {
       setMissingHolidayLoading(false);
     })();
 
-    // Pending holiday approvals count
+    // Pending approvals counts — fetched as a single call that returns
+    // both Holiday and Absence buckets.
     (async () => {
       const res = await getPendingApprovalsCount();
       if (cancelled) return;
       if (!res.success) {
         setApprovalsError(res.error ?? "Could not load approvals");
       } else {
-        setApprovalsCount(res.count);
+        setHolidayApprovalsCount(res.holidayCount);
+        setAbsenceApprovalsCount(res.absenceCount);
       }
       setApprovalsLoading(false);
     })();
@@ -271,20 +277,39 @@ export function AdminDashboardClient() {
           />
         )}
 
-        {/* ---- Holiday Approvals — links straight to /approvals ---- */}
+        {/* ---- Holiday Approvals — Annual Leave bookings only ---- */}
+        <SummaryCard
+          icon={<ClipboardCheck className="h-4 w-4 text-green-500" />}
+          title="Holiday Approvals"
+          count={holidayApprovalsCount}
+          loading={approvalsLoading}
+          error={approvalsError}
+          emptyText="Nothing waiting"
+          href="/approvals"
+          borderColour="border-green-300"
+          subtitle={
+            holidayApprovalsCount > 0 ? (
+              <span className="text-sm text-muted-foreground">
+                {holidayApprovalsCount === 1 ? "request" : "requests"} awaiting your decision
+              </span>
+            ) : undefined
+          }
+        />
+
+        {/* ---- Absence Approvals — every other absence type ---- */}
         <SummaryCard
           icon={<ClipboardCheck className="h-4 w-4 text-blue-500" />}
-          title="Holiday Approvals"
-          count={approvalsCount}
+          title="Absence Approvals"
+          count={absenceApprovalsCount}
           loading={approvalsLoading}
           error={approvalsError}
           emptyText="Nothing waiting"
           href="/approvals"
           borderColour="border-blue-300"
           subtitle={
-            approvalsCount > 0 ? (
+            absenceApprovalsCount > 0 ? (
               <span className="text-sm text-muted-foreground">
-                {approvalsCount === 1 ? "request" : "requests"} awaiting your decision
+                {absenceApprovalsCount === 1 ? "request" : "requests"} awaiting your decision
               </span>
             ) : undefined
           }

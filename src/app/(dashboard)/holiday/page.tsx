@@ -1,6 +1,8 @@
-// CLE-176/CLE-177 — My Holiday page (server). The Overview balance and the
-// Calendar tab widget both derive from `computeAllHolidayPeriodValues`, so
-// they always agree and pick up Holiday Period edits without staleness.
+// My Absences page (server). The Holiday tab balance and the Calendar
+// tab widget both derive from `computeAllHolidayPeriodValues`, so they
+// always agree and pick up Holiday Period edits without staleness.
+// Renamed from "My Holiday" — the route stays at /holiday for now so
+// existing bookmarks keep working.
 
 export const dynamic = "force-dynamic";
 

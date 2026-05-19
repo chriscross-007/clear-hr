@@ -232,11 +232,25 @@ export async function getOrCreateBookingConversation(
 ): Promise<{ success: boolean; error?: string; conversationId?: string }> {
   try {
     const { member: caller } = await getCallerMember();
-    if (caller.role !== "owner" && caller.role !== "admin") {
-      return { success: false, error: "Not authorised" };
-    }
 
     const admin = getAdminClient();
+
+    // Verify the booking is in the caller's org. Owners + admins can
+    // open any booking's conversation in their org; employees are
+    // limited to their own bookings (so they can see the same thread
+    // the admin sees, post replies, etc.).
+    const { data: booking } = await admin
+      .from("holiday_bookings")
+      .select("id, organisation_id, member_id")
+      .eq("id", bookingId)
+      .eq("organisation_id", caller.organisation_id)
+      .single();
+    if (!booking) return { success: false, error: "Booking not found" };
+
+    const isAdmin = caller.role === "owner" || caller.role === "admin";
+    if (!isAdmin && booking.member_id !== caller.id) {
+      return { success: false, error: "Not authorised" };
+    }
 
     // Already exists?
     const { data: existing } = await admin
@@ -246,15 +260,6 @@ export async function getOrCreateBookingConversation(
       .eq("entity_id", bookingId)
       .maybeSingle();
     if (existing) return { success: true, conversationId: existing.id as string };
-
-    // Otherwise create one. Verify the booking is in the caller's org first.
-    const { data: booking } = await admin
-      .from("holiday_bookings")
-      .select("id, organisation_id")
-      .eq("id", bookingId)
-      .eq("organisation_id", caller.organisation_id)
-      .single();
-    if (!booking) return { success: false, error: "Booking not found" };
 
     const { data: created, error: insertError } = await admin
       .from("conversations")

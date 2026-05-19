@@ -896,12 +896,14 @@ export async function submitHolidayBooking(
     // Determine workflow from the absence reason's parent type
     const { data: reason } = await supabase
       .from("absence_reasons")
-      .select("name, absence_type_id, absence_types(requires_approval)")
+      .select("name, absence_type_id, absence_types(name, requires_approval)")
       .eq("id", input.leaveReasonId)
       .single();
 
-    const requiresApproval = (reason?.absence_types as unknown as { requires_approval: boolean } | null)?.requires_approval ?? false;
+    const reasonAbsenceType = reason?.absence_types as unknown as { name: string; requires_approval: boolean } | null;
+    const requiresApproval = reasonAbsenceType?.requires_approval ?? false;
     const leaveTypeName = reason?.name ?? "Holiday";
+    const absenceTypeName = reasonAbsenceType?.name ?? null;
     const status = requiresApproval ? "pending" : "approved";
 
     // Server-side authoritative day counting (for days mode)
@@ -1067,6 +1069,7 @@ export async function submitHolidayBooking(
       endDate: input.endDate,
       days: daysDeducted,
       leaveType: leaveTypeName,
+      absenceTypeName,
       employeeNote: input.note || null,
       baseUrl,
     };
@@ -1081,6 +1084,39 @@ export async function submitHolidayBooking(
       }
     } else {
       await sendBookingConfirmedEmail({ ...baseEmailData, approverId: teamApproverId });
+    }
+
+    // Seed the booking's conversation thread with the employee's note
+    // (when present), so the message they wrote appears as message #1 on
+    // the admin's Edit Absence form. Fire-and-forget — a conversation
+    // failure here mustn't unwind the booking itself. The conversation is
+    // created lazily by `getOrCreateBookingConversation` on the admin
+    // side too; doing it eagerly here is fine because the conversation
+    // table is keyed by (entity_type, entity_id) which is unique per
+    // booking.
+    const trimmedNote = input.note?.trim();
+    if (bookingId && trimmedNote) {
+      try {
+        const adm = getAdminClient();
+        const { data: conv } = await adm
+          .from("conversations")
+          .insert({
+            organisation_id: member.organisation_id,
+            entity_type: "absence_booking",
+            entity_id: bookingId,
+          })
+          .select("id")
+          .single();
+        if (conv?.id) {
+          await adm.from("conversation_messages").insert({
+            conversation_id: conv.id,
+            author_member_id: member.id,
+            body: trimmedNote,
+          });
+        }
+      } catch {
+        // Swallow — the booking is saved; the message just won't seed.
+      }
     }
 
     // Check team overlap (warning only)
@@ -1115,6 +1151,8 @@ export async function updateHolidayBooking(
     const { supabase, member } = await getCallerMember();
 
     // Verify booking belongs to current user and is pending or cancelled.
+    // Approved bookings (whether or not the type required approval) are
+    // admin-edit-only — the employee must ask their manager to update.
     // Fetch full row for the audit diff.
     const { data: existing } = await supabase
       .from("holiday_bookings")
@@ -1178,7 +1216,14 @@ export async function updateHolidayBooking(
       updatePayload.approver_note = null;
     }
 
-    const { error } = await supabase
+    // Use the admin client for the UPDATE. The
+    // `holiday_bookings_update_own_pending` RLS policy restricts the
+    // caller's session to status='pending' only, so a session-client
+    // UPDATE silently matches zero rows on a cancelled-being-resubmitted
+    // or approved auto-approved booking. Ownership was already verified
+    // by the SELECT above.
+    const adm = getAdminClient();
+    const { error } = await adm
       .from("holiday_bookings")
       .update(updatePayload)
       .eq("id", bookingId)
@@ -1308,14 +1353,18 @@ export async function adminBookAbsence(
       return { success: false, error: "This employee already has a booking on one or more of those dates." };
     }
 
-    // Verify the reason belongs to the org
+    // Verify the reason belongs to the org. Pull the parent absence type
+    // name too so the booking-confirmed email can pick the right
+    // Holiday-vs-Absence wording.
     const { data: reason } = await supabase
       .from("absence_reasons")
-      .select("id, name, organisation_id")
+      .select("id, name, organisation_id, absence_types(name)")
       .eq("id", input.leaveReasonId)
       .eq("organisation_id", caller.organisation_id)
       .single();
     if (!reason) return { success: false, error: "Invalid absence reason" };
+    const reasonAbsenceTypeName =
+      (reason.absence_types as unknown as { name: string } | null)?.name ?? null;
 
     // Authoritative day count using the TARGET member's work pattern.
     // Open-ended bookings (no end date) use today as the effective end for the
@@ -1377,6 +1426,29 @@ export async function adminBookAbsence(
       },
       metadata: { member_id: target.id, member_name: memberName },
     });
+
+    // Fire-and-forget email to the employee letting them know an admin
+    // booked an absence on their behalf. Reuses the auto-approved
+    // "booking confirmed" template, with `bookedByAdmin: true` flipping
+    // the body wording to "an administrator has booked … for you" so it
+    // doesn't read as if the employee did it themselves.
+    if (inserted?.id) {
+      const headersList = await headers();
+      const host = headersList.get("host") ?? "localhost:3000";
+      const baseUrl = `${host.includes("localhost") ? "http" : "https"}://${host}`;
+      await sendBookingConfirmedEmail({
+        bookingId: inserted.id as string,
+        memberId: target.id,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        days: daysDeducted,
+        leaveType: reason.name,
+        absenceTypeName: reasonAbsenceTypeName,
+        employeeNote: input.note?.trim() || null,
+        bookedByAdmin: true,
+        baseUrl,
+      });
+    }
 
     return { success: true, bookingId: inserted?.id as string | undefined };
   } catch (e) {

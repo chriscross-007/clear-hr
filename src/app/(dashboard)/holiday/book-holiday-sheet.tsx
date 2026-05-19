@@ -1,12 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Loader2, AlertTriangle, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Sheet,
   SheetContent,
@@ -16,16 +12,13 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  AbsenceFormFields,
+  type AbsenceFormState,
+  type HalfOption,
+} from "@/components/absence-form-fields";
 import {
   submitHolidayBooking,
+  updateHolidayBooking,
   getMyWorkPattern,
   getMyBankHolidayContext,
   getMyTeamCoverContext,
@@ -38,10 +31,29 @@ import { cancelMyBooking } from "../approvals-actions";
 import { getMyOrgNoticeContext } from "../notice-period-actions";
 import { countWorkingDaysSimple, type WorkPatternHours } from "@/lib/day-counting";
 import { BookingHistoryPopover } from "@/components/booking-history-popover";
+import {
+  BookingConversation,
+  type BookingConversationHandle,
+} from "@/app/(dashboard)/members/[memberId]/calendar/booking-conversation";
+import { Label } from "@/components/ui/label";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface BookHolidaySheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Member id of the booking owner — same as the viewing employee on
+   *  My Absences. Passed to <BookingConversation> in existing-mode so
+   *  the thread + document upload metadata are scoped correctly. */
+  memberId: string;
   reasons: AbsenceReasonOption[];
   balance: BalanceSummary | null;
   measurementMode: string;
@@ -68,9 +80,23 @@ interface BookHolidaySheetProps {
   }>;
 }
 
+function emptyFormState(defaultTypeId: string, defaultReasonId: string): AbsenceFormState {
+  return {
+    typeId: defaultTypeId,
+    reasonId: defaultReasonId,
+    startDate: "",
+    endDate: "",
+    startHalf: "full",
+    endHalf: "full",
+    hours: "",
+    note: "",
+  };
+}
+
 export function BookHolidaySheet({
   open,
   onOpenChange,
+  memberId,
   reasons,
   balance,
   measurementMode,
@@ -81,16 +107,33 @@ export function BookHolidaySheet({
   existingHolidayBookings = [],
 }: BookHolidaySheetProps) {
   const isExistingMode = !!existingBooking;
-  const defaultReasonId = reasons.find((r) => r.absence_type_name === "Annual Leave" && !r.is_deprecated)?.id ?? "";
-  const [reasonId, setReasonId] = useState(defaultReasonId);
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [startHalfEnabled, setStartHalfEnabled] = useState(false);
-  const [startHalf, setStartHalf] = useState<"am" | "pm">("am");
-  const [endHalfEnabled, setEndHalfEnabled] = useState(false);
-  const [endHalf, setEndHalf] = useState<"am" | "pm">("pm");
-  const [hours, setHours] = useState("");
-  const [note, setNote] = useState("");
+  // Pending bookings → fully editable existing mode (Save + Delete).
+  // Approved bookings (any type) → read-only "Booked Absence" view; any
+  // change has to go through an admin. Notice/cover preview panels and
+  // the balance projection are also suppressed in read-only mode — the
+  // booking has already been accepted, so warning the user that it
+  // "might be rejected" is misleading.
+  const isApprovedBooking = isExistingMode && existingBooking?.status === "approved";
+  const isReadOnly = isApprovedBooking;
+
+  // Default opens on Annual Leave / Annual Leave (the canonical "request
+  // holiday" path). Type drives the Reason list — switching type reloads
+  // Reason to the first non-deprecated reason within the new type, so the
+  // dropdown is never left pointing at a reason from a different type.
+  const defaultReason = reasons.find((r) => r.absence_type_name === "Annual Leave" && !r.is_deprecated);
+  const defaultReasonId = defaultReason?.id ?? "";
+  const defaultTypeId = defaultReason?.absence_type_id ?? "";
+
+  // Single form-state object shared with the AbsenceFormFields component.
+  // CLE — consolidated from six separate useStates so the shared component
+  // can drive Type / Reason / dates / half-days / hours / note as a unit.
+  const [form, setForm] = useState<AbsenceFormState>(() =>
+    emptyFormState(defaultTypeId, defaultReasonId),
+  );
+  function updateForm(patch: Partial<AbsenceFormState>) {
+    setForm((prev) => ({ ...prev, ...patch }));
+  }
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -121,41 +164,52 @@ export function BookHolidaySheet({
     }
   }, [open]);
 
-  // Pre-fill start/end dates when the sheet opens with an initial range
-  // (e.g. drag-to-select on the planner calendar). When an existingBooking
-  // is supplied, populate the whole form from it instead. Only on the open
-  // transition — subsequent edits in the form are preserved.
+  // Seed the form on open. When an existingBooking is supplied, populate
+  // every field from it; otherwise prefill any dates the parent passed in
+  // (e.g. drag-to-select on the calendar). Only on the open transition —
+  // subsequent in-form edits are preserved.
   useEffect(() => {
-    if (open) {
-      if (existingBooking) {
-        setReasonId(existingBooking.leave_reason_id);
-        setStartDate(existingBooking.start_date);
-        setEndDate(existingBooking.end_date ?? existingBooking.start_date);
-        setStartHalfEnabled(!!existingBooking.start_half);
-        setStartHalf((existingBooking.start_half as "am" | "pm" | null) ?? "am");
-        setEndHalfEnabled(!!existingBooking.end_half);
-        setEndHalf((existingBooking.end_half as "am" | "pm" | null) ?? "pm");
-        setHours(existingBooking.hours_deducted !== null ? String(existingBooking.hours_deducted) : "");
-        setNote(existingBooking.employee_note ?? "");
-        return;
-      }
-      if (initialStartDate) setStartDate(initialStartDate);
-      if (initialEndDate) setEndDate(initialEndDate);
+    if (!open) return;
+    if (existingBooking) {
+      const existingReason = reasons.find((r) => r.id === existingBooking.leave_reason_id);
+      // Translate stored half-day flags ("am"/"pm"/null) into the
+      // HalfOption ("full"/"am"/"pm") used by the shared form.
+      const half = (v: string | null): HalfOption => (v === "am" || v === "pm" ? v : "full");
+      setForm({
+        typeId: existingReason?.absence_type_id ?? defaultTypeId,
+        reasonId: existingBooking.leave_reason_id,
+        startDate: existingBooking.start_date,
+        endDate: existingBooking.end_date ?? existingBooking.start_date,
+        startHalf: half(existingBooking.start_half),
+        endHalf: half(existingBooking.end_half),
+        hours: existingBooking.hours_deducted !== null ? String(existingBooking.hours_deducted) : "",
+        note: existingBooking.employee_note ?? "",
+      });
+      return;
     }
+    setForm((prev) => ({
+      ...prev,
+      startDate: initialStartDate ?? prev.startDate,
+      endDate: initialEndDate ?? prev.endDate,
+    }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const unit = measurementMode === "hours" ? "hours" : "days";
   const isHoursMode = measurementMode === "hours";
-  const sameDay = startDate === endDate && startDate !== "";
+  const sameDay = form.startDate === form.endDate && form.startDate !== "";
 
-  // Calculate estimated deduction using work pattern
+  // Calculate estimated deduction using work pattern. The shared form
+  // uses HalfOption ("full"/"am"/"pm"); convert to the booleans the day
+  // counter expects.
   let estimatedDeduction = 0;
+  const startIsHalf = form.startHalf !== "full";
+  const endIsHalf = form.endHalf !== "full";
   if (isHoursMode) {
-    estimatedDeduction = Number(hours) || 0;
-  } else if (startDate && endDate && endDate >= startDate) {
+    estimatedDeduction = Number(form.hours) || 0;
+  } else if (form.startDate && form.endDate && form.endDate >= form.startDate) {
     estimatedDeduction = countWorkingDaysSimple(
-      startDate, endDate, startHalfEnabled, endHalfEnabled && !sameDay, workPattern,
+      form.startDate, form.endDate, startIsHalf, endIsHalf && !sameDay, workPattern,
       bankHolidays, bankHolidayHandling
     );
   }
@@ -179,18 +233,15 @@ export function BookHolidaySheet({
   const noticeViolation:
     | { noticeDays: number; minBookingDays: number; daysGiven: number; combined: boolean; combinedDays: number }
     | null = (() => {
-    if (isExistingMode) return null;
-    if (!startDate || !endDate) return null;
+    // Already-approved bookings have cleared whatever approval workflow
+    // the org has — surfacing "this might be rejected" warnings on them
+    // would be misleading.
+    if (isReadOnly) return null;
+    if (!form.startDate || !form.endDate) return null;
     if (estimatedDeduction <= 0) return null;
     if (noticeRules.length === 0) return null;
 
-    // Find existing bookings whose gap to the new request contains zero
-    // working days — Wed → Fri stitches with Mon → Tue because the only
-    // days in between are a weekend. Uses the same Work Profile + bank
-    // holiday handling the rest of the booking flow uses, so the
-    // arithmetic stays consistent.
     const workingDaysInGap = (afterIso: string, beforeIso: string): number => {
-      // Working days strictly between afterIso and beforeIso. Exclusive.
       if (afterIso >= beforeIso) return 0;
       const inner = new Date(new Date(afterIso + "T00:00:00Z").getTime() + 86_400_000)
         .toISOString()
@@ -205,13 +256,13 @@ export function BookHolidaySheet({
     };
     const adjacent = existingHolidayBookings.filter((b) => {
       if (!b.end_date) return false;
-      if (b.end_date < startDate && workingDaysInGap(b.end_date, startDate) === 0) return true;
-      if (b.start_date > endDate && workingDaysInGap(endDate, b.start_date) === 0) return true;
+      if (b.end_date < form.startDate && workingDaysInGap(b.end_date, form.startDate) === 0) return true;
+      if (form.endDate !== null && b.start_date > form.endDate && workingDaysInGap(form.endDate, b.start_date) === 0) return true;
       return false;
     });
 
     let combinedDays = estimatedDeduction;
-    let earliestStart = startDate;
+    let earliestStart = form.startDate;
     for (const a of adjacent) {
       combinedDays += Number(a.days_deducted ?? 0);
       if (a.start_date < earliestStart) earliestStart = a.start_date;
@@ -235,40 +286,68 @@ export function BookHolidaySheet({
     };
   })();
 
-  // Filter to Annual Leave reasons only, exclude deprecated
-  const activeReasons = reasons.filter((r) => r.absence_type_name === "Annual Leave" && !r.is_deprecated);
-
-  // Group reasons by absence type
-  const grouped = new Map<string, AbsenceReasonOption[]>();
-  for (const r of activeReasons) {
-    const group = grouped.get(r.absence_type_name) ?? [];
-    group.push(r);
-    grouped.set(r.absence_type_name, group);
-  }
-
   // Determine if the selected reason requires approval
-  const selectedReason = reasons.find((r) => r.id === reasonId);
+  const selectedReason = reasons.find((r) => r.id === form.reasonId);
   const requiresApproval = selectedReason ? selectedReason.requires_approval : true;
+  // Only Annual Leave bookings deduct from the holiday balance, so the
+  // remaining / projected / over-allowance panels only make sense for AL.
+  // Sick / Compassionate / other absence types are submitted as-is and the
+  // server-side compute helper already filters them out of the balance.
+  const affectsHolidayBalance = selectedReason?.absence_type_name === "Annual Leave";
 
   function resetForm() {
-    setReasonId(defaultReasonId);
-    setStartDate("");
-    setEndDate("");
-    setStartHalfEnabled(false);
-    setStartHalf("am");
-    setEndHalfEnabled(false);
-    setEndHalf("pm");
-    setHours("");
-    setNote("");
+    setForm(emptyFormState(defaultTypeId, defaultReasonId));
     setError(null);
     setWarning(null);
   }
 
   const [showOverBookWarning, setShowOverBookWarning] = useState(false);
 
+  // Unsent-draft guard. If the user types a comment in the conversation
+  // panel but never hits Send, then triggers any close path (Cancel,
+  // Save Changes, Delete Request, Sheet X / overlay), prompt them to
+  // Send / Discard / stay before proceeding.
+  const conversationRef = useRef<BookingConversationHandle | null>(null);
+  const [draftDialogAction, setDraftDialogAction] = useState<(() => void | Promise<void>) | null>(null);
+
+  async function withDraftGuard(action: () => void | Promise<void>) {
+    if (conversationRef.current?.hasUnsentDraft()) {
+      // Stash the original action and pop the confirm dialog. The
+      // dialog buttons will either send first then run the action, or
+      // discard and run, or cancel and stay.
+      setDraftDialogAction(() => action);
+      return;
+    }
+    await action();
+  }
+
+  async function handleDraftSendAndContinue() {
+    const action = draftDialogAction;
+    setDraftDialogAction(null);
+    const res = await conversationRef.current?.sendUnsentDraft();
+    if (res && !res.success) {
+      setError(res.error ?? "Could not send your comment");
+      return;
+    }
+    if (action) await action();
+  }
+
+  async function handleDraftDiscardAndContinue() {
+    const action = draftDialogAction;
+    setDraftDialogAction(null);
+    if (action) await action();
+  }
+
   function handleSubmit() {
-    if (!reasonId || !startDate || !endDate) return;
-    if (projectedRemaining !== null && projectedRemaining < 0 && !showOverBookWarning) {
+    if (!form.reasonId || !form.startDate || !form.endDate) return;
+    // Only Annual Leave touches the holiday balance, so the
+    // over-allowance confirm step is skipped for other absence types.
+    if (
+      affectsHolidayBalance
+      && projectedRemaining !== null
+      && projectedRemaining < 0
+      && !showOverBookWarning
+    ) {
       setShowOverBookWarning(true);
       return;
     }
@@ -277,20 +356,22 @@ export function BookHolidaySheet({
   }
 
   async function doSubmit() {
-    if (!reasonId || !startDate || !endDate) return;
+    if (!form.reasonId || !form.startDate || !form.endDate) return;
     setLoading(true);
     setError(null);
     setWarning(null);
 
     const result = await submitHolidayBooking({
-      leaveReasonId: reasonId,
-      startDate,
-      endDate,
-      startHalf: startHalfEnabled ? startHalf : null,
-      endHalf: endHalfEnabled && !sameDay ? endHalf : null,
+      leaveReasonId: form.reasonId,
+      startDate: form.startDate,
+      endDate: form.endDate,
+      // Convert HalfOption back to the "am"/"pm"/null shape the server
+      // action persists.
+      startHalf: form.startHalf === "full" ? null : form.startHalf,
+      endHalf: form.endHalf === "full" || sameDay ? null : form.endHalf,
       daysDeducted: !isHoursMode ? estimatedDeduction : null,
       hoursDeducted: isHoursMode ? estimatedDeduction : null,
-      note: note.trim() || null,
+      note: form.note.trim() || null,
     });
 
     setLoading(false);
@@ -323,12 +404,15 @@ export function BookHolidaySheet({
     onLeaveCount: number;
     onLeaveIds: string[];
   } | null = (() => {
-    if (isExistingMode) return null;
-    if (!startDate || !endDate) return null;
+    // Same rationale as the notice preview — approved bookings have
+    // already cleared the workflow; warning the user that the team
+    // won't have cover is just noise at this point.
+    if (isReadOnly) return null;
+    if (!form.startDate || !form.endDate) return null;
     if (!teamCover || !teamCover.teamId) return null;
     if (teamCover.minCover <= 0) return null;
-    const start = new Date(startDate + "T00:00:00Z");
-    const end = new Date(endDate + "T00:00:00Z");
+    const start = new Date(form.startDate + "T00:00:00Z");
+    const end = new Date(form.endDate + "T00:00:00Z");
     const cur = new Date(start);
     while (cur <= end) {
       const dow = cur.getUTCDay();
@@ -360,14 +444,43 @@ export function BookHolidaySheet({
   })();
   const coverBlocksSubmit = coverViolation !== null && (teamCover?.blockCover ?? false);
 
-  const canSubmit = !isExistingMode
-    && reasonId
-    && startDate
-    && endDate
-    && endDate >= startDate
+  // Form validity — same conditions gate both Submit Request (new) and
+  // Save Changes (edit existing). Notice/cover hard-blocks apply to both.
+  const validForm = !!form.reasonId
+    && !!form.startDate
+    && !!form.endDate
+    && form.endDate >= form.startDate
     && estimatedDeduction > 0
     && !noticeBlocksSubmit
     && !coverBlocksSubmit;
+
+  async function handleSaveChanges() {
+    if (!existingBooking || !form.reasonId || !form.startDate || !form.endDate) return;
+    setLoading(true);
+    setError(null);
+    setWarning(null);
+
+    const result = await updateHolidayBooking(existingBooking.id, {
+      leaveReasonId: form.reasonId,
+      startDate: form.startDate,
+      endDate: form.endDate,
+      startHalf: form.startHalf === "full" ? null : form.startHalf,
+      endHalf: form.endHalf === "full" || sameDay ? null : form.endHalf,
+      daysDeducted: !isHoursMode ? estimatedDeduction : null,
+      hoursDeducted: isHoursMode ? estimatedDeduction : null,
+      note: form.note.trim() || null,
+    });
+
+    setLoading(false);
+
+    if (!result.success) {
+      setError(result.error ?? "An error occurred");
+      return;
+    }
+
+    resetForm();
+    onSuccess();
+  }
 
   async function handleDelete() {
     if (!existingBooking) return;
@@ -383,15 +496,30 @@ export function BookHolidaySheet({
     onSuccess();
   }
 
+  function closeSheet() {
+    resetForm();
+    onOpenChange(false);
+  }
+
   return (
-    <Sheet open={open} onOpenChange={(v) => { if (!v) resetForm(); onOpenChange(v); }}>
+    <Sheet
+      open={open}
+      onOpenChange={(v) => {
+        if (v) { onOpenChange(v); return; }
+        // Closing — intercept so an unsent conversation draft can be
+        // captured before the Sheet tears down its state.
+        withDraftGuard(closeSheet);
+      }}
+    >
       <SheetContent className="overflow-y-auto">
         <SheetHeader>
           <div className="flex items-center gap-2">
             <SheetTitle>
-              {isExistingMode
-                ? "Existing Holiday Request"
-                : (requiresApproval ? "Request Holiday" : "Book Holiday")}
+              {isApprovedBooking
+                ? "Booked Absence"
+                : isExistingMode
+                  ? "Existing Absence Request"
+                  : (requiresApproval ? "Request Absence" : "Book Absence")}
             </SheetTitle>
             {/* History popover — visible only on existing requests so the
                 employee can see who has acted on the request and how far
@@ -401,148 +529,52 @@ export function BookHolidaySheet({
             )}
           </div>
           <SheetDescription>
-            {isExistingMode
-              ? `Status: ${existingBooking?.status ?? "—"}. Use Delete Request to cancel this booking.`
-              : (requiresApproval
-                  ? "This request will need manager approval."
-                  : "This booking will be confirmed immediately.")}
+            {isApprovedBooking
+              ? "Status: Booked. Please contact your manager to request changes."
+              : isExistingMode
+                ? `Status: ${existingBooking?.status ?? "—"}. Edit and save your changes, or use Delete Request to cancel.`
+                : (requiresApproval
+                    ? "This request will need manager approval."
+                    : "This booking will be confirmed immediately.")}
           </SheetDescription>
         </SheetHeader>
 
         <div className="flex flex-col gap-5 px-4">
-          {/* Absence Reason */}
-          <div className="flex flex-col gap-1.5">
-            <Label>Absence Reason</Label>
-            <Select value={reasonId} onValueChange={setReasonId} disabled={isExistingMode}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select a reason" />
-              </SelectTrigger>
-              <SelectContent>
-                {activeReasons.length === 0 && (
-                  <div className="px-2 py-3 text-sm text-muted-foreground text-center">No active absence reasons available.</div>
-                )}
-                {Array.from(grouped.entries()).map(([typeName, typeReasons]) => (
-                  <SelectGroup key={typeName}>
-                    <SelectLabel>{typeName}</SelectLabel>
-                    {typeReasons.map((r) => (
-                      <SelectItem key={r.id} value={r.id}>
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="inline-block h-2.5 w-2.5 rounded-full shrink-0"
-                            style={{ backgroundColor: r.colour }}
-                          />
-                          {r.name}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {/* Shared form fields — Type, Reason, dates, half-days, hours,
+              note. Fields are read-only when viewing an approved booking
+              (employee must contact admin to amend); editable in pending
+              existing mode and in new-request mode. */}
+          <AbsenceFormFields
+            state={form}
+            onChange={updateForm}
+            reasons={reasons}
+            measurementMode={isHoursMode ? "hours" : "days"}
+            disabled={isReadOnly}
+            // For existing bookings the conversation panel below
+            // replaces the single-shot Note field — the employee can
+            // see admin replies and post follow-ups instead of just
+            // owning a one-line note. New requests keep the Note field
+            // since it becomes the first message in the conversation
+            // when the booking is created (handled server-side in
+            // submitHolidayBooking).
+            hideNote={isExistingMode}
+          />
 
-          {/* Dates */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* Conversation thread on existing bookings — same component
+              the admin uses on their Edit Absence form, so both sides
+              see the same messages and attachments. */}
+          {isExistingMode && existingBooking && (
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="booking-start">Start Date</Label>
-              <Input
-                id="booking-start"
-                type="date"
-                value={startDate}
-                onChange={(e) => {
-                  setStartDate(e.target.value);
-                  if (!endDate || e.target.value > endDate) setEndDate(e.target.value);
-                }}
-                required
-                disabled={isExistingMode}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="booking-end">End Date</Label>
-              <Input
-                id="booking-end"
-                type="date"
-                min={startDate}
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                required
-                disabled={isExistingMode}
-              />
-            </div>
-          </div>
-
-          {/* Half-day toggles (days mode only) */}
-          {!isHoursMode && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label>Start half day</Label>
-                <Switch checked={startHalfEnabled} onCheckedChange={setStartHalfEnabled} disabled={isExistingMode} />
-              </div>
-              {startHalfEnabled && (
-                <div className="flex gap-4 pl-4">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="startHalf" value="am" checked={startHalf === "am"} onChange={() => setStartHalf("am")} disabled={isExistingMode} className="accent-primary" />
-                    <span className="text-sm">AM</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="startHalf" value="pm" checked={startHalf === "pm"} onChange={() => setStartHalf("pm")} disabled={isExistingMode} className="accent-primary" />
-                    <span className="text-sm">PM</span>
-                  </label>
-                </div>
-              )}
-
-              {!sameDay && (
-                <>
-                  <div className="flex items-center justify-between">
-                    <Label>End half day</Label>
-                    <Switch checked={endHalfEnabled} onCheckedChange={setEndHalfEnabled} disabled={isExistingMode} />
-                  </div>
-                  {endHalfEnabled && (
-                    <div className="flex gap-4 pl-4">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="endHalf" value="am" checked={endHalf === "am"} onChange={() => setEndHalf("am")} disabled={isExistingMode} className="accent-primary" />
-                        <span className="text-sm">AM</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="endHalf" value="pm" checked={endHalf === "pm"} onChange={() => setEndHalf("pm")} disabled={isExistingMode} className="accent-primary" />
-                        <span className="text-sm">PM</span>
-                      </label>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Hours input (hours mode only) */}
-          {isHoursMode && (
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="booking-hours">Hours</Label>
-              <Input
-                id="booking-hours"
-                type="number"
-                min={0}
-                step={0.5}
-                value={hours}
-                onChange={(e) => setHours(e.target.value)}
-                required
-                disabled={isExistingMode}
+              <Label>Conversation</Label>
+              <BookingConversation
+                ref={conversationRef}
+                bookingId={existingBooking.id}
+                memberId={memberId}
+                callerMemberId={memberId}
+                callerRole="employee"
               />
             </div>
           )}
-
-          {/* Note */}
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="booking-note">Note (optional)</Label>
-            <Textarea
-              id="booking-note"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              rows={2}
-              placeholder="Any additional details..."
-              disabled={isExistingMode}
-            />
-          </div>
 
           {/* Notice period preview (CLE-178 / CLE-179). Hard-block when the
               org has notice_rules_block_requests=true; soft-warn otherwise.
@@ -577,16 +609,8 @@ export function BookHolidaySheet({
             );
           })()}
 
-          {/* Team cover preview (CLE-187). Hard-block when the org has
-              notice_rules_block_requests=true; soft-warn otherwise.
-              CLE-188 — show the exact computed present count + minimum so
-              the user can see how close they are and so any mis-counting
-              shows up directly in the message. */}
+          {/* Team cover preview (CLE-187). */}
           {coverViolation !== null && (() => {
-            // CLE-187 — production-ready wording. Names of already-on-leave
-            // teammates go inside the sentence (not parens) so admins can
-            // see at a glance which existing bookings are pushing the team
-            // close to the minimum.
             const onLeaveNames = coverViolation.onLeaveIds
               .map((id) => teamCover?.teammateNames[id] ?? id)
               .join(" and ");
@@ -616,27 +640,42 @@ export function BookHolidaySheet({
             );
           })()}
 
-          {/* Balance indicator */}
-          {balance && estimatedDeduction > 0 && (
+          {/* Booking summary. "This booking" always renders when there's
+              a measurable duration — it's just the size of the request,
+              useful regardless of absence type. The balance-projection
+              rows (Current remaining / After …) only render when the
+              user can actually act on the balance: Annual Leave with an
+              active Holiday Period, AND the form isn't in read-only mode
+              (approved bookings show the deduction only — any change has
+              to go through admin).
+
+              Sign convention on "This booking":
+                • Pending editable (delete refunds the balance) → +N
+                • New request OR approved read-only → −N (it's a deduction) */}
+          {estimatedDeduction > 0 && (
             <div className="rounded-md border p-3 space-y-1 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Current remaining</span>
-                <span className="font-medium">{balance.remaining} {unit}</span>
-              </div>
+              {affectsHolidayBalance && balance && !isReadOnly && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Current remaining</span>
+                  <span className="font-medium">{balance.remaining} {unit}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">This booking</span>
-                <span className={`font-medium ${isExistingMode ? "text-green-600" : "text-amber-600"}`}>
-                  {isExistingMode ? "+" : "−"}{estimatedDeduction} {unit}
+                <span className={`font-medium ${isExistingMode && !isReadOnly ? "text-green-600" : "text-amber-600"}`}>
+                  {isExistingMode && !isReadOnly ? "+" : "−"}{estimatedDeduction} {unit}
                 </span>
               </div>
-              <div className="flex justify-between border-t pt-1">
-                <span className="text-muted-foreground">
-                  {isExistingMode ? "After deletion" : "After booking"}
-                </span>
-                <span className={`font-bold ${projectedRemaining !== null && projectedRemaining < 0 ? "text-destructive" : "text-primary"}`}>
-                  {projectedRemaining} {unit}
-                </span>
-              </div>
+              {affectsHolidayBalance && balance && !isReadOnly && (
+                <div className="flex justify-between border-t pt-1">
+                  <span className="text-muted-foreground">
+                    {isExistingMode ? "After deletion" : "After booking"}
+                  </span>
+                  <span className={`font-bold ${projectedRemaining !== null && projectedRemaining < 0 ? "text-destructive" : "text-primary"}`}>
+                    {projectedRemaining} {unit}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
@@ -648,8 +687,8 @@ export function BookHolidaySheet({
             </div>
           )}
 
-          {/* Error */}
-          {showOverBookWarning && projectedRemaining !== null && (
+          {/* Over-allowance confirm step (AL only). */}
+          {affectsHolidayBalance && showOverBookWarning && projectedRemaining !== null && (
             <div className="rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3 space-y-2">
               <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1.5">
                 <AlertTriangle className="h-4 w-4" /> Exceeds allowance
@@ -667,27 +706,73 @@ export function BookHolidaySheet({
         </div>
 
         <SheetFooter>
-          <Button variant="outline" onClick={() => { resetForm(); onOpenChange(false); }} disabled={loading}>
-            Cancel
+          <Button variant="outline" onClick={() => withDraftGuard(closeSheet)} disabled={loading}>
+            {isReadOnly ? "Close" : "Cancel"}
           </Button>
-          {isExistingMode && (
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={loading}
-            >
-              {loading
-                ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                : <Trash2 className="h-4 w-4 mr-2" />}
-              Delete Request
+          {isReadOnly ? null : isExistingMode ? (
+            <>
+              <Button
+                variant="destructive"
+                onClick={() => withDraftGuard(handleDelete)}
+                disabled={loading}
+              >
+                {loading
+                  ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  : <Trash2 className="h-4 w-4 mr-2" />}
+                Delete Request
+              </Button>
+              <Button onClick={() => withDraftGuard(handleSaveChanges)} disabled={loading || !validForm}>
+                {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Save Changes
+              </Button>
+            </>
+          ) : (
+            <Button onClick={handleSubmit} disabled={loading || !validForm}>
+              {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Submit Request
             </Button>
           )}
-          <Button onClick={handleSubmit} disabled={loading || !canSubmit}>
-            {loading && !isExistingMode && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            {requiresApproval ? "Submit Request" : "Book Holiday"}
-          </Button>
         </SheetFooter>
       </SheetContent>
+
+      {/* Unsent-draft guard. Pops when a close path is triggered while
+          the conversation panel still has draft text or pending file
+          attachments — the user picks Send (post first, then proceed),
+          Discard (drop the draft, proceed), or Cancel (stay on the
+          form). */}
+      <AlertDialog
+        open={draftDialogAction !== null}
+        onOpenChange={(o) => { if (!o) setDraftDialogAction(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unsent comment</AlertDialogTitle>
+            <AlertDialogDescription>
+              Do you wish to send the comment you just made before closing?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <Button
+              variant="outline"
+              onClick={(e) => {
+                e.preventDefault();
+                handleDraftDiscardAndContinue();
+              }}
+            >
+              Discard
+            </Button>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                handleDraftSendAndContinue();
+              }}
+            >
+              Send
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Sheet>
   );
 }

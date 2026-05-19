@@ -183,7 +183,7 @@ export function Sidebar({
           )}
           <Link href="/holiday" className={linkClass("/holiday")}>
             <Palmtree className="h-4 w-4 shrink-0" />
-            My Holiday
+            My Absences
           </Link>
           {showEmployees && (
             <Link

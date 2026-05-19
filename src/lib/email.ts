@@ -1,5 +1,6 @@
 import { Resend } from "resend";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { capitalize } from "@/lib/label-utils";
 
 function getAdminClient() {
   return createSupabaseClient(
@@ -39,9 +40,17 @@ function cta(label: string, url: string): string {
   return `<p><a href="${url}" style="display:inline-block;padding:12px 24px;background:#18181b;color:#fff;text-decoration:none;border-radius:6px">${label}</a></p>`;
 }
 
-function notesHtml(employeeNote?: string | null, approverNote?: string | null): string {
+/** Renders the employee + approver note paragraphs. The "Employee" label
+ *  honours the org's `member_label` (e.g. "Partner", "Colleague") via the
+ *  same convention used throughout the UI — no hardcoded "Employee" in
+ *  user-facing strings. */
+function notesHtml(
+  employeeNote: string | null | undefined,
+  approverNote: string | null | undefined,
+  memberLabel: string,
+): string {
   const parts: string[] = [];
-  if (employeeNote) parts.push(`<p style="margin:12px 0;padding:12px;background:#f3f4f6;border-radius:6px;font-size:14px"><strong>Employee note:</strong> ${employeeNote}</p>`);
+  if (employeeNote) parts.push(`<p style="margin:12px 0;padding:12px;background:#f3f4f6;border-radius:6px;font-size:14px"><strong>${capitalize(memberLabel)} note:</strong> ${employeeNote}</p>`);
   if (approverNote) parts.push(`<p style="margin:12px 0;padding:12px;background:#f3f4f6;border-radius:6px;font-size:14px"><strong>Approver note:</strong> ${approverNote}</p>`);
   return parts.join("");
 }
@@ -55,16 +64,21 @@ function appLink(baseUrl: string, path: string): string {
 // Lookup helpers (cross-user — admin client)
 // ---------------------------------------------------------------------------
 
-async function getMemberEmail(memberId: string): Promise<{ email: string; firstName: string; orgName: string } | null> {
+async function getMemberEmail(memberId: string): Promise<{ email: string; firstName: string; orgName: string; memberLabel: string } | null> {
   const admin = getAdminClient();
   const { data } = await admin
     .from("members")
-    .select("email, first_name, organisations(name)")
+    .select("email, first_name, organisations(name, member_label)")
     .eq("id", memberId)
     .single();
   if (!data) return null;
-  const org = data.organisations as unknown as { name: string } | null;
-  return { email: data.email, firstName: data.first_name, orgName: org?.name ?? "your organisation" };
+  const org = data.organisations as unknown as { name: string; member_label: string | null } | null;
+  return {
+    email: data.email,
+    firstName: data.first_name,
+    orgName: org?.name ?? "your organisation",
+    memberLabel: org?.member_label?.trim() || "employee",
+  };
 }
 
 async function getMemberName(memberId: string): Promise<string> {
@@ -88,10 +102,20 @@ export type BookingEmailData = {
   endDate: string | null;
   days: number | null;
   leaveType: string;
+  /** Parent absence-type name (e.g. "Annual Leave", "Sickness"). When the
+   *  type is "Annual Leave" the approver email uses Holiday terminology;
+   *  any other value falls back to the generic Absence wording. Optional
+   *  because some legacy callsites haven't been wired through yet — those
+   *  default to Absence (the safe generic). */
+  absenceTypeName?: string | null;
   approverId?: string | null;
   approverNote?: string | null;
   employeeNote?: string | null;
   cancelledByAdmin?: boolean;
+  /** Set by `adminBookAbsence` to flip the auto-approved booking email
+   *  from "your X has been booked" to "an administrator has booked an X
+   *  for you", so the employee knows they didn't request it themselves. */
+  bookedByAdmin?: boolean;
   baseUrl: string;
 };
 
@@ -107,17 +131,26 @@ export async function sendRequestPendingEmail(data: BookingEmailData): Promise<v
 
     const employee = await getMemberName(data.memberId);
     const noteHtml = data.employeeNote
-      ? `<p style="margin:12px 0;padding:12px;background:#f3f4f6;border-radius:6px;font-size:14px"><strong>Employee note:</strong> ${data.employeeNote}</p>`
+      ? `<p style="margin:12px 0;padding:12px;background:#f3f4f6;border-radius:6px;font-size:14px"><strong>${capitalize(approver.memberLabel)} note:</strong> ${data.employeeNote}</p>`
       : "";
+
+    // Holiday-vs-Absence terminology pivots on the parent absence type.
+    // Annual Leave bookings read as "holiday request"; anything else
+    // (Sickness, Compassionate, etc.) falls back to the generic
+    // "absence request" wording.
+    const isAnnualLeave = data.absenceTypeName === "Annual Leave";
+    const noun = isAnnualLeave ? "Holiday" : "Absence";
+    const nounLower = isAnnualLeave ? "holiday" : "absence";
+    const article = isAnnualLeave ? "a" : "an";
 
     const resend = new Resend(process.env.RESEND_API_KEY);
     await resend.emails.send({
       from: FROM,
       to: approver.email,
-      subject: `Holiday request pending your approval — ${employee}`,
+      subject: `${noun} request pending your approval — ${employee}`,
       html: wrap(`
-        <h2 style="margin:0 0 16px;color:#18181b">Holiday Request</h2>
-        <p><strong>${employee}</strong> has submitted a holiday request that needs your approval.</p>
+        <h2 style="margin:0 0 16px;color:#18181b">${noun} Request</h2>
+        <p><strong>${employee}</strong> has submitted ${article} ${nounLower} request that needs your approval.</p>
         <table style="margin:16px 0;font-size:14px">
           <tr><td style="padding:4px 16px 4px 0;color:#6b7280">Dates</td><td>${dateRange(data.startDate, data.endDate)}</td></tr>
           <tr><td style="padding:4px 16px 4px 0;color:#6b7280">Days</td><td>${data.days ?? "—"}</td></tr>
@@ -141,20 +174,30 @@ export async function sendBookingConfirmedEmail(data: BookingEmailData): Promise
     const employee = await getMemberEmail(data.memberId);
     if (!employee) return;
 
+    const isAnnualLeave = data.absenceTypeName === "Annual Leave";
+    const noun = isAnnualLeave ? "Holiday" : "Absence";
+    const nounLower = isAnnualLeave ? "holiday" : "absence";
+    const article = isAnnualLeave ? "a" : "an";
+    // Distinguish self-booking (auto-approved on submit) from
+    // admin-on-behalf so the employee knows which it was.
+    const bodyLine = data.bookedByAdmin
+      ? `Hi ${employee.firstName}, an administrator has booked ${article} ${nounLower} for you.`
+      : `Hi ${employee.firstName}, your ${nounLower} has been booked.`;
+
     const resend = new Resend(process.env.RESEND_API_KEY);
     await resend.emails.send({
       from: FROM,
       to: employee.email,
-      subject: `Holiday booked — ${dateRange(data.startDate, data.endDate)}`,
+      subject: `${noun} booked — ${dateRange(data.startDate, data.endDate)}`,
       html: wrap(`
-        <h2 style="margin:0 0 16px;color:#18181b">Holiday Booked</h2>
-        <p>Hi ${employee.firstName}, your holiday has been booked.</p>
+        <h2 style="margin:0 0 16px;color:#18181b">${noun} Booked</h2>
+        <p>${bodyLine}</p>
         <table style="margin:16px 0;font-size:14px">
           <tr><td style="padding:4px 16px 4px 0;color:#6b7280">Dates</td><td>${dateRange(data.startDate, data.endDate)}</td></tr>
           <tr><td style="padding:4px 16px 4px 0;color:#6b7280">Days</td><td>${data.days ?? "—"}</td></tr>
           <tr><td style="padding:4px 16px 4px 0;color:#6b7280">Type</td><td>${data.leaveType}</td></tr>
         </table>
-        ${cta("View My Holiday", `${appLink(data.baseUrl, "/holiday")}`)}
+        ${cta("View My Absences", `${appLink(data.baseUrl, "/holiday")}`)}
       `, employee.orgName),
     });
   } catch (e) {
@@ -173,21 +216,25 @@ export async function sendRequestApprovedEmail(data: BookingEmailData): Promise<
 
     const approverName = data.approverId ? await getMemberName(data.approverId) : "your manager";
 
+    const isAnnualLeave = data.absenceTypeName === "Annual Leave";
+    const noun = isAnnualLeave ? "Holiday" : "Absence";
+    const nounLower = isAnnualLeave ? "holiday" : "absence";
+
     const resend = new Resend(process.env.RESEND_API_KEY);
     await resend.emails.send({
       from: FROM,
       to: employee.email,
-      subject: `Holiday request approved — ${dateRange(data.startDate, data.endDate)}`,
+      subject: `${noun} request approved — ${dateRange(data.startDate, data.endDate)}`,
       html: wrap(`
-        <h2 style="margin:0 0 16px;color:#16a34a">Holiday Request Approved</h2>
-        <p>Hi ${employee.firstName}, your holiday request has been approved by ${approverName}.</p>
+        <h2 style="margin:0 0 16px;color:#16a34a">${noun} Request Approved</h2>
+        <p>Hi ${employee.firstName}, your ${nounLower} request has been approved by ${approverName}.</p>
         <table style="margin:16px 0;font-size:14px">
           <tr><td style="padding:4px 16px 4px 0;color:#6b7280">Dates</td><td>${dateRange(data.startDate, data.endDate)}</td></tr>
           <tr><td style="padding:4px 16px 4px 0;color:#6b7280">Days</td><td>${data.days ?? "—"}</td></tr>
           <tr><td style="padding:4px 16px 4px 0;color:#6b7280">Type</td><td>${data.leaveType}</td></tr>
         </table>
-        ${notesHtml(data.employeeNote, data.approverNote)}
-        ${cta("View My Holiday", `${appLink(data.baseUrl, "/holiday")}`)}
+        ${notesHtml(data.employeeNote, data.approverNote, employee.memberLabel)}
+        ${cta("View My Absences", `${appLink(data.baseUrl, "/holiday")}`)}
       `, employee.orgName),
     });
   } catch (e) {
@@ -206,21 +253,25 @@ export async function sendRequestRejectedEmail(data: BookingEmailData): Promise<
 
     const approverName = data.approverId ? await getMemberName(data.approverId) : "your manager";
 
+    const isAnnualLeave = data.absenceTypeName === "Annual Leave";
+    const noun = isAnnualLeave ? "Holiday" : "Absence";
+    const nounLower = isAnnualLeave ? "holiday" : "absence";
+
     const resend = new Resend(process.env.RESEND_API_KEY);
     await resend.emails.send({
       from: FROM,
       to: employee.email,
-      subject: `Holiday request rejected — ${dateRange(data.startDate, data.endDate)}`,
+      subject: `${noun} request rejected — ${dateRange(data.startDate, data.endDate)}`,
       html: wrap(`
-        <h2 style="margin:0 0 16px;color:#dc2626">Holiday Request Rejected</h2>
-        <p>Hi ${employee.firstName}, your holiday request has been rejected by ${approverName}.</p>
+        <h2 style="margin:0 0 16px;color:#dc2626">${noun} Request Rejected</h2>
+        <p>Hi ${employee.firstName}, your ${nounLower} request has been rejected by ${approverName}.</p>
         <table style="margin:16px 0;font-size:14px">
           <tr><td style="padding:4px 16px 4px 0;color:#6b7280">Dates</td><td>${dateRange(data.startDate, data.endDate)}</td></tr>
           <tr><td style="padding:4px 16px 4px 0;color:#6b7280">Days</td><td>${data.days ?? "—"}</td></tr>
           <tr><td style="padding:4px 16px 4px 0;color:#6b7280">Type</td><td>${data.leaveType}</td></tr>
         </table>
-        ${notesHtml(data.employeeNote, data.approverNote)}
-        ${cta("View My Holiday", `${appLink(data.baseUrl, "/holiday")}`)}
+        ${notesHtml(data.employeeNote, data.approverNote, employee.memberLabel)}
+        ${cta("View My Absences", `${appLink(data.baseUrl, "/holiday")}`)}
       `, employee.orgName),
     });
   } catch (e) {

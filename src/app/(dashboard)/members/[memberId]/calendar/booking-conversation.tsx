@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
 import { Paperclip, SendHorizontal, FileText, X, Loader2, Download, Printer, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -36,6 +36,18 @@ const ABSENCE_DOCUMENT_LABELS = [
   { value: "prescription", label: "Prescription" },
   { value: "other", label: "Other" },
 ] as const;
+
+/** Imperative handle exposed via forwardRef. The parent sheets use this
+ *  to detect (and optionally send) an unsent draft just before they close
+ *  the form via Save / Approve / Reject / Cancel / Delete. */
+export interface BookingConversationHandle {
+  /** True when the user has typed text and/or attached files but hasn't
+   *  hit Send. False during create-mode (no bookingId / conversation). */
+  hasUnsentDraft(): boolean;
+  /** Send the current draft now. Resolves with the usual success/error
+   *  envelope. No-op (returns success) if there's no draft to send. */
+  sendUnsentDraft(): Promise<{ success: boolean; error?: string }>;
+}
 
 interface BookingConversationProps {
   /** null when the parent is creating a new booking — no conversation exists yet. */
@@ -81,13 +93,16 @@ function roleClass(role: string): string {
   return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300";
 }
 
-export function BookingConversation({
+export const BookingConversation = forwardRef<
+  BookingConversationHandle,
+  BookingConversationProps
+>(function BookingConversation({
   bookingId,
   memberId,
   callerMemberId,
   callerRole,
   onFirstMessageReady,
-}: BookingConversationProps) {
+}, imperativeRef) {
   const isAdmin = callerRole === "admin" || callerRole === "owner";
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -284,6 +299,37 @@ export function BookingConversation({
     setSending(false);
   }, [canSend, conversationId, draft, memberId, pendingFiles]);
 
+  // Expose draft state to the parent sheets so they can prompt the user
+  // before closing the form with an unsent message. `hasUnsentDraft`
+  // returns true only when there's a real conversation (existing
+  // booking) — the create-mode "first message" is handled separately
+  // via `onFirstMessageReady` and the parent's own submit flow.
+  useImperativeHandle(
+    imperativeRef,
+    () => ({
+      hasUnsentDraft() {
+        if (!bookingId) return false;
+        return draft.trim().length > 0 || pendingFiles.length > 0;
+      },
+      async sendUnsentDraft() {
+        if (!bookingId) return { success: true };
+        if (draft.trim().length === 0 && pendingFiles.length === 0) {
+          return { success: true };
+        }
+        try {
+          await handleSend();
+          return { success: true };
+        } catch (e) {
+          return {
+            success: false,
+            error: e instanceof Error ? e.message : "Could not send message",
+          };
+        }
+      },
+    }),
+    [bookingId, draft, pendingFiles, handleSend],
+  );
+
   const handleDocClick = useCallback(async (docId: string, fileName?: string, contentType?: string) => {
     const res = await getDocumentDownloadUrl(docId);
     if (res.success && res.url) {
@@ -386,7 +432,7 @@ export function BookingConversation({
       <DocumentViewerDialog doc={viewerDoc} onClose={() => setViewerDoc(null)} />
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Document viewer — shows the file in a dialog with Download and Print buttons.

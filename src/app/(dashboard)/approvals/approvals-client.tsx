@@ -2,7 +2,8 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, X, Loader2, Info, ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
+import Link from "next/link";
+import { Check, X, Loader2, Info, CalendarDays, ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -499,7 +500,7 @@ export function ApprovalsClient({ pendingRows, allRows, calendarMembers, calenda
       <StickyPageHeader>
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold">Holiday Approvals</h1>
+            <h1 className="text-2xl font-bold">Absence Approvals</h1>
             <p className="text-sm text-muted-foreground mt-0.5">
               {visibleRows.length} of {totalCount} request{totalCount === 1 ? "" : "s"}
               {pendingCount > 0 && (
@@ -1146,6 +1147,20 @@ function ApprovalsTable({
                             onClick={() => onToggleCalendar?.(row.id)}
                           >
                             <Info className="h-3.5 w-3.5" />
+                          </Button>
+                          {/* Calendar deep-link — opens the requester's
+                              planner with this booking auto-expanded so
+                              the admin can see it in the context of
+                              their own holiday history. */}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            title="Open in employee calendar"
+                            asChild
+                          >
+                            <Link href={`/members/${row.member_id}/calendar?bookingId=${row.id}`}>
+                              <CalendarDays className="h-3.5 w-3.5" />
+                            </Link>
                           </Button>
                           {canActOnRow && (
                             <>
