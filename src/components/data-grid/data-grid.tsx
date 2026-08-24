@@ -415,7 +415,10 @@ export function DataGrid<T extends object>({
           "mb-4 flex items-center justify-between gap-4",
           stickyHeader && "sticky z-30 bg-background py-2",
         )}
-        style={stickyHeader ? { top: stickyToolbarTop } : undefined}
+        // top-chrome-extra lets the sticky offset shift down when a
+        // trial / past-due banner is showing above the header (see
+        // sticky-page-header.tsx).
+        style={stickyHeader ? { top: `calc(var(--top-chrome-extra, 0px) + ${stickyToolbarTop}px)` } : undefined}
       >
         <div className="flex items-center gap-2">
           {!hideToolbarActions && <ColumnCustomiserTrigger onClick={() => setShowCustomiser(true)} />}
@@ -476,7 +479,7 @@ export function DataGrid<T extends object>({
                       header.column.columnDef.meta?.headerClassName ?? "",
                       stickyHeader && "sticky z-20 bg-background",
                     )}
-                    style={stickyHeader ? { top: stickyColumnHeaderTop } : undefined}
+                    style={stickyHeader ? { top: `calc(var(--top-chrome-extra, 0px) + ${stickyColumnHeaderTop}px)` } : undefined}
                   >
                     {header.isPlaceholder
                       ? null
@@ -488,8 +491,11 @@ export function DataGrid<T extends object>({
             {/* Filter row */}
             <TableRow className="bg-muted/50 hover:bg-muted/50">
               {table.getHeaderGroups()[0]?.headers.map((header) => {
-                const stickyFilterCls = stickyHeader ? "sticky z-20 bg-muted/95" : "";
-                const stickyFilterStyle = stickyHeader ? { top: stickyFilterRowTop } : undefined;
+                // Filter row uses fully-opaque bg-muted (was bg-muted/95)
+                // — the previous transparency let scrolling data bleed
+                // through the sticky filter bar.
+                const stickyFilterCls = stickyHeader ? "sticky z-20 bg-muted" : "";
+                const stickyFilterStyle = stickyHeader ? { top: `calc(var(--top-chrome-extra, 0px) + ${stickyFilterRowTop}px)` } : undefined;
                 if (!header.column.getCanFilter()) {
                   return (
                     <TableHead

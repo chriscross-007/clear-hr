@@ -114,29 +114,45 @@ export default async function DashboardLayout({
     membership.role === "owner" &&
     org?.subscription_status === "past_due";
 
+  // Trial + past-due banners live inside the top-chrome sticky wrapper
+  // so they stay visible on scroll. `--top-chrome-extra` records the
+  // extra pixels either banner adds above the header, so downstream
+  // sticky elements (StickyPageHeader, DataGrid rows) can shift down
+  // by the same amount via calc(var(--top-chrome-extra, 0px) + …).
+  // The banner div is `py-2 text-sm` → roughly 36px tall; use 36 for
+  // one banner, 72 for both.
+  const topChromeExtra =
+    (showTrialBanner ? 36 : 0) + (showPastDueBanner ? 36 : 0);
+
   return (
     <MemberLabelProvider memberLabel={memberLabel}>
-      <div className="flex min-h-screen flex-col">
-        {showTrialBanner && (
-          <div className="bg-amber-500 px-4 py-2 text-center text-sm font-medium text-white">
-            Your trial ends in {trialDaysLeft} day{trialDaysLeft !== 1 ? "s" : ""}.{" "}
-            <Link href="/billing" className="underline">
-              Subscribe now
-            </Link>{" "}
-            to keep using ClearHR.
-          </div>
-        )}
-        {showPastDueBanner && (
-          <div className="bg-destructive px-4 py-2 text-center text-sm font-medium text-white">
-            Your payment is overdue. Please{" "}
-            <Link href="/billing" className="underline">
-              update your billing
-            </Link>{" "}
-            to avoid service interruption.
-          </div>
-        )}
-        <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+      <div
+        className="flex min-h-screen flex-col"
+        style={{ ["--top-chrome-extra" as string]: `${topChromeExtra}px` }}
+      >
+        {/* Sticky top strip: banners + header. Fully opaque background so
+            scrolling data never bleeds through. */}
+        <div className="sticky top-0 z-50 border-b bg-background">
+          {showTrialBanner && (
+            <div className="bg-amber-500 px-4 py-2 text-center text-sm font-medium text-white">
+              Your trial ends in {trialDaysLeft} day{trialDaysLeft !== 1 ? "s" : ""}.{" "}
+              <Link href="/billing" className="underline">
+                Subscribe now
+              </Link>{" "}
+              to keep using ClearHR.
+            </div>
+          )}
+          {showPastDueBanner && (
+            <div className="bg-destructive px-4 py-2 text-center text-sm font-medium text-white">
+              Your payment is overdue. Please{" "}
+              <Link href="/billing" className="underline">
+                update your billing
+              </Link>{" "}
+              to avoid service interruption.
+            </div>
+          )}
+          <header className="w-full">
+            <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
             <div className="flex items-baseline gap-2">
               <Link href="/employees" className="text-xl font-bold">
                 {org?.name}
@@ -165,8 +181,9 @@ export default async function DashboardLayout({
               memberLabel={memberLabel}
               profileName={profileName}
             />
-          </div>
-        </header>
+            </div>
+          </header>
+        </div>
         <div className="flex flex-1">
           {/* CLE-194 — Sidebar's org-settings props were all consumed by
               the now-deleted OrganisationEditDialog. The Settings
