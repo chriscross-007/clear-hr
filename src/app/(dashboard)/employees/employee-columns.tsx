@@ -1,9 +1,16 @@
 "use client";
 
-import type { ColumnDef, Column, RowData } from "@tanstack/react-table";
+import type { ColumnDef, Column, Row, RowData } from "@tanstack/react-table";
 import type { ReactNode } from "react";
-import { ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { useState } from "react";
+import { ArrowUp, ArrowDown, ArrowUpDown, Check, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 import { capitalize } from "@/lib/label-utils";
 import { formatOptionForDisplay } from "@/components/custom-field-multiselect";
 import type { Profile } from "./profile-actions";
@@ -328,6 +335,144 @@ function NumberFilter({ column }: { column: Column<Member, unknown> }) {
 }
 
 // ---------------------------------------------------------------------------
+// Choice-mode custom field filter — Popover with a checkbox list of the
+// field's available options, formatted through the base-type formatter.
+// Filter value shape: `string[]` — the raw option strings the user has
+// ticked. Empty array / undefined = no filter (all rows match).
+// Match semantics: any (rows are included if they have at least one of
+// the ticked options).
+// ---------------------------------------------------------------------------
+
+function CustomFieldChoiceFilter({
+  column,
+  options,
+  fieldType,
+  currencySymbol,
+  maxDecimalPlaces,
+}: {
+  column: Column<Member, unknown>;
+  options: string[];
+  fieldType: string;
+  currencySymbol: string;
+  maxDecimalPlaces: number | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const value = (column.getFilterValue() as string[] | undefined) ?? [];
+  const formatOpts = { currencySymbol, maxDecimalPlaces };
+
+  function toggle(opt: string) {
+    const next = value.includes(opt)
+      ? value.filter((v) => v !== opt)
+      : [...value, opt];
+    column.setFilterValue(next.length === 0 ? undefined : next);
+  }
+
+  const triggerLabel =
+    value.length === 0
+      ? "Any"
+      : value.length === 1
+        ? formatOptionForDisplay(value[0], fieldType, formatOpts)
+        : `${value.length} picked`;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "flex h-7 w-full items-center justify-between rounded-md border border-input bg-background px-2 text-left text-xs",
+            "hover:bg-muted/40",
+          )}
+        >
+          <span className={cn("truncate", value.length === 0 && "text-muted-foreground")}>
+            {triggerLabel}
+          </span>
+          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-56 p-0" align="start">
+        <div className="max-h-64 overflow-y-auto py-1">
+          {options.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-muted-foreground">
+              No options.
+            </div>
+          ) : (
+            options.map((opt) => {
+              const checked = value.includes(opt);
+              return (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => toggle(opt)}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted/40"
+                >
+                  <span
+                    className={cn(
+                      "flex h-3.5 w-3.5 items-center justify-center rounded border shrink-0",
+                      checked ? "bg-primary border-primary" : "border-input",
+                    )}
+                  >
+                    {checked && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+                  </span>
+                  <span className="flex-1 truncate">
+                    {formatOptionForDisplay(opt, fieldType, formatOpts)}
+                  </span>
+                </button>
+              );
+            })
+          )}
+          {value.length > 0 && (
+            <>
+              <div className="my-1 border-t" />
+              <button
+                type="button"
+                onClick={() => column.setFilterValue(undefined)}
+                className="w-full px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted/40"
+              >
+                Clear filter
+              </button>
+            </>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Choice-mode custom field cell — renders selected values as inline pills.
+// Used for both single_choice (one pill) and multi_choice (many pills) so
+// the grid reads consistently. Empty value renders as "—".
+// ---------------------------------------------------------------------------
+
+function CustomFieldPillCell({
+  values,
+  fieldType,
+  currencySymbol,
+  maxDecimalPlaces,
+}: {
+  values: string[];
+  fieldType: string;
+  currencySymbol: string;
+  maxDecimalPlaces: number | null;
+}) {
+  if (values.length === 0) return <span className="text-muted-foreground">—</span>;
+  const formatOpts = { currencySymbol, maxDecimalPlaces };
+  return (
+    <div className="flex flex-wrap gap-1">
+      {values.map((v) => (
+        <span
+          key={v}
+          className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-xs"
+        >
+          {formatOptionForDisplay(v, fieldType, formatOpts)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Column builder
 // ---------------------------------------------------------------------------
 
@@ -622,27 +767,72 @@ export function buildEmployeeColumns(opts: {
         filterElement: (column) => <DatePresetFilter column={column} />,
       },
     },
-    ...customFieldDefs.map((def): ColumnDef<Member> => ({
+    ...customFieldDefs.map((def): ColumnDef<Member> => {
+      // Choice-mode columns (single or multi) render as pills, filter
+      // via a checkbox list of the field's options, and (for
+      // multi-choice) sort by the first alphabetically-sorted option.
+      // Handled separately from the free-form types below because the
+      // accessorFn returns a raw array/string rather than a display
+      // string, and TanStack's default sort/filter don't understand
+      // arrays.
+      if (def.input_mode === "multi_choice" || def.input_mode === "single_choice") {
+        const isMulti = def.input_mode === "multi_choice";
+        const readValues = (row: Member): string[] => {
+          const val = row.custom_fields?.[def.field_key];
+          if (isMulti) {
+            return Array.isArray(val) ? val.filter((v): v is string => typeof v === "string") : [];
+          }
+          return typeof val === "string" && val.length > 0 ? [val] : [];
+        };
+        return {
+          id: `cf_${def.field_key}`,
+          accessorFn: (row) => readValues(row),
+          header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label={def.label} />,
+          cell: ({ row }) => (
+            <CustomFieldPillCell
+              values={readValues(row.original)}
+              fieldType={def.field_type}
+              currencySymbol={currencySymbol}
+              maxDecimalPlaces={def.max_decimal_places}
+            />
+          ),
+          // ANY-match: row is included if it holds at least one of the
+          // ticked filter options. Empty / undefined filter = all rows.
+          filterFn: (row: Row<Member>, _columnId: string, filterValue: string[] | undefined) => {
+            if (!filterValue || filterValue.length === 0) return true;
+            const rowValues = readValues(row.original);
+            return filterValue.some((f) => rowValues.includes(f));
+          },
+          // Sort by the first alphabetically-sorted option on each row.
+          // A row with no picks sinks to the bottom for asc / top for
+          // desc via a lexically-max sentinel.
+          sortingFn: (a: Row<Member>, b: Row<Member>): number => {
+            const aVals = readValues(a.original);
+            const bVals = readValues(b.original);
+            const aKey = aVals.length === 0 ? "￿" : [...aVals].sort()[0];
+            const bKey = bVals.length === 0 ? "￿" : [...bVals].sort()[0];
+            return aKey.localeCompare(bKey);
+          },
+          meta: {
+            filterElement: (column: Column<Member, unknown>) => (
+              <CustomFieldChoiceFilter
+                column={column}
+                options={def.options ?? []}
+                fieldType={def.field_type}
+                currencySymbol={currencySymbol}
+                maxDecimalPlaces={def.max_decimal_places}
+              />
+            ),
+          },
+        };
+      }
+
+      // Free-form types below — accessorFn returns a display string
+      // (no cell renderer needed), text-search filter by default.
+      return {
       id: `cf_${def.field_key}`,
       accessorFn: (row) => {
         const val = row.custom_fields?.[def.field_key];
-        // Multi-choice picklists always store an array; join through the
-        // base-type formatter so a currency multi-choice reads
-        // "£500.00, £1,000.00" not "500, 1000".
-        if (def.input_mode === "multi_choice") {
-          const arr = Array.isArray(val) ? val.filter((v): v is string => typeof v === "string") : [];
-          if (arr.length === 0) return "—";
-          return arr
-            .map((v) => formatOptionForDisplay(v, def.field_type, { currencySymbol, maxDecimalPlaces: def.max_decimal_places }))
-            .join(", ");
-        }
-        // Single-choice picklists share the base-type formatter — a
-        // date picklist should still show "12 Jan 2027" not the raw
-        // ISO string.
-        if (def.input_mode === "single_choice") {
-          if (val === undefined || val === null || val === "") return "—";
-          return formatOptionForDisplay(String(val), def.field_type, { currencySymbol, maxDecimalPlaces: def.max_decimal_places });
-        }
         if (def.field_type === "checkbox") return val === true ? "Yes" : val === false ? "No" : "—";
         if (def.field_type === "date" && val) {
           try { return new Date(String(val)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }); } catch { return String(val); }
@@ -719,6 +909,7 @@ export function buildEmployeeColumns(opts: {
             meta: { filterElement: (column: Column<Member, unknown>) => <DatePresetFilter column={column} /> },
           }
         : {}),
-    })),
+      };
+    }),
   ];
 }
