@@ -39,7 +39,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { FileDown, Download } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { FileDown, Download, ArrowUpDown, Filter as FilterIcon, ArrowUp, ArrowDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Ensure the ColumnMeta augmentation from employee-columns is available here too
@@ -152,6 +164,27 @@ interface DataGridProps<T> {
   hideToolbarActions?: boolean;
   /** Ref populated with handlers to trigger customiser/PDF/CSV from outside DataGrid */
   toolbarRef?: React.MutableRefObject<DataGridToolbarHandle | null>;
+  /**
+   * CLE-194 — Body render mode. Defaults to `"table"` (the classic
+   * per-column table with sortable headers + filter row). Set to `"cards"`
+   * to render the same TanStack Table instance as a grid of cards using
+   * `renderCard`; the table header + filter row are hidden and replaced
+   * by Sort and Filters popovers in the toolbar. Sort/filter/customise/
+   * pagination state is shared across modes, so flipping this prop
+   * preserves the user's current view.
+   */
+  renderMode?: "table" | "cards";
+  /**
+   * Renderer for a single card in `renderMode="cards"`. Receives the row
+   * data and the list of currently-visible column IDs so the caller can
+   * mirror the Customise selection in the card body.
+   */
+  renderCard?: (row: T, visibleColumnIds: string[]) => ReactNode;
+  /**
+   * Optional Tailwind grid classes for the cards container. Defaults to
+   * `grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4`.
+   */
+  cardsGridClassName?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +219,11 @@ export function DataGrid<T extends object>({
   renderGroupHeaderPrefix,
   stickyHeader,
   stickyHeaderTop,
+  renderMode = "table",
+  renderCard,
+  cardsGridClassName,
 }: DataGridProps<T>) {
+  const isCards = renderMode === "cards";
   // Toolbar pins directly below <StickyPageHeader> via the CSS var it
   // publishes. Downstream offsets:
   //   - toolbar height  = pt-2 (8) + h-8 button (32) + pb-4 (16) = 56
@@ -438,6 +475,16 @@ export function DataGrid<T extends object>({
       >
         <div className="flex items-center gap-2">
           {!hideToolbarActions && <ColumnCustomiserTrigger onClick={() => setShowCustomiser(true)} />}
+          {/* In cards mode the column header row + filter row are hidden,
+              so sort and filter controls move into the toolbar as popovers.
+              List mode continues to expose sort via header clicks and
+              filters via the per-column input row underneath. */}
+          {isCards && (
+            <>
+              <CardsSortControl table={table} colLabels={colLabels} />
+              <CardsFilterControl table={table} colLabels={colLabels} />
+            </>
+          )}
           {columnFilters.length > 0 && (
             <Button variant="outline" size="sm" onClick={() => setColumnFilters([])}>
               Clear Filters
@@ -478,7 +525,18 @@ export function DataGrid<T extends object>({
         </div>
       </div>
 
-      {/* Table */}
+      {/* Body — table rows or card grid depending on renderMode. */}
+      {isCards ? (
+        <CardsBody
+          table={table}
+          renderCard={renderCard}
+          cardsGridClassName={cardsGridClassName}
+          groupBy={groupBy}
+          allGroupCounts={allGroupCounts}
+          colLabels={colLabels}
+          emptyMessage={emptyMessage}
+        />
+      ) : (
       <div className="rounded-md border">
         <Table
           className="w-full"
@@ -640,6 +698,7 @@ export function DataGrid<T extends object>({
           </TableBody>
         </Table>
       </div>
+      )}
 
       {/* Pagination */}
       <div className="mt-4 flex items-center justify-between gap-2">
@@ -733,6 +792,267 @@ export function DataGrid<T extends object>({
           </DialogContent>
         </Dialog>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Cards mode helpers (CLE-194)
+// ---------------------------------------------------------------------------
+
+// Local shape for the subset of the TanStack table we lean on. Keeping this
+// narrow avoids importing the fully-generic `Table<T>` type just to hand it
+// down to the child components.
+type CardsTableApi<T> = ReturnType<typeof useReactTable<T>>;
+
+/**
+ * Sort control shown in the DataGrid toolbar when `renderMode="cards"`. In
+ * table mode the sort UI lives inside each column header — in cards mode we
+ * replace it with a single popover: a Select listing every sortable column
+ * plus asc/desc toggle buttons. Writes into the same TanStack sorting state
+ * so flipping the view toggle preserves the user's current sort.
+ */
+function CardsSortControl<T>({
+  table,
+  colLabels,
+}: {
+  table: CardsTableApi<T>;
+  colLabels: Record<string, string>;
+}) {
+  const sortableColumns = table
+    .getAllLeafColumns()
+    .filter((c) => c.getCanSort() && c.id !== "select");
+  const sorting = table.getState().sorting;
+  const active = sorting[0];
+  const activeLabel = active ? colLabels[active.id] ?? active.id : null;
+  const activeDir = active?.desc ? "desc" : "asc";
+
+  function setSortColumn(id: string) {
+    // Preserve the current direction when switching column.
+    table.setSorting([{ id, desc: activeDir === "desc" }]);
+  }
+  function setSortDir(desc: boolean) {
+    if (!active) return;
+    table.setSorting([{ id: active.id, desc }]);
+  }
+  function clearSort() {
+    table.setSorting([]);
+  }
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm">
+          <ArrowUpDown className="h-4 w-4 mr-2" />
+          {activeLabel ? `Sort: ${activeLabel} ${activeDir === "asc" ? "↑" : "↓"}` : "Sort"}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-72">
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <div className="text-xs font-medium text-muted-foreground">Sort by</div>
+            <Select
+              value={active?.id ?? ""}
+              onValueChange={(v) => setSortColumn(v)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Choose a field" />
+              </SelectTrigger>
+              <SelectContent>
+                {sortableColumns.map((col) => (
+                  <SelectItem key={col.id} value={col.id}>
+                    {colLabels[col.id] ?? col.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <div className="text-xs font-medium text-muted-foreground">Direction</div>
+            <div className="flex gap-2">
+              <Button
+                variant={activeDir === "asc" ? "default" : "outline"}
+                size="sm"
+                className="flex-1"
+                onClick={() => setSortDir(false)}
+                disabled={!active}
+              >
+                <ArrowUp className="h-4 w-4 mr-1" />
+                Ascending
+              </Button>
+              <Button
+                variant={activeDir === "desc" ? "default" : "outline"}
+                size="sm"
+                className="flex-1"
+                onClick={() => setSortDir(true)}
+                disabled={!active}
+              >
+                <ArrowDown className="h-4 w-4 mr-1" />
+                Descending
+              </Button>
+            </div>
+          </div>
+          {active && (
+            <Button variant="ghost" size="sm" onClick={clearSort} className="w-full">
+              Clear sort
+            </Button>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * Filter control shown in the DataGrid toolbar when `renderMode="cards"`. In
+ * table mode filters live in the per-column input row underneath the header —
+ * in cards mode we surface them all inside one popover, stacked vertically,
+ * reusing each column's existing `meta.filterElement` widget so the filtering
+ * behaviour is identical between views.
+ */
+function CardsFilterControl<T>({
+  table,
+  colLabels,
+}: {
+  table: CardsTableApi<T>;
+  colLabels: Record<string, string>;
+}) {
+  const filterableColumns = table
+    .getAllLeafColumns()
+    .filter((c) => c.getCanFilter() && c.id !== "select");
+  const activeCount = table.getState().columnFilters.length;
+
+  if (filterableColumns.length === 0) return null;
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm">
+          <FilterIcon className="h-4 w-4 mr-2" />
+          {activeCount > 0 ? `Filters (${activeCount})` : "Filters"}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 max-h-[70vh] overflow-y-auto">
+        <div className="space-y-3">
+          {filterableColumns.map((col) => {
+            const filterEl = col.columnDef.meta?.filterElement?.(
+              col as Column<T, unknown>
+            );
+            return (
+              <div key={col.id} className="space-y-1">
+                <div className="text-xs font-medium text-muted-foreground">
+                  {colLabels[col.id] ?? col.id}
+                </div>
+                {filterEl ?? (
+                  <Input
+                    placeholder="Filter..."
+                    className="h-8 text-sm"
+                    value={(col.getFilterValue() as string) ?? ""}
+                    onChange={(e) =>
+                      col.setFilterValue(e.target.value || undefined)
+                    }
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * Body renderer for `renderMode="cards"`. Walks the current page's rows and
+ * hands each one to the caller-supplied `renderCard`, wrapping the results in
+ * a responsive grid. Group headers are emitted between rows when `groupBy`
+ * is set so cards mode preserves the same visual grouping as table mode.
+ */
+function CardsBody<T>({
+  table,
+  renderCard,
+  cardsGridClassName,
+  groupBy,
+  allGroupCounts,
+  colLabels,
+  emptyMessage,
+}: {
+  table: CardsTableApi<T>;
+  renderCard?: (row: T, visibleColumnIds: string[]) => ReactNode;
+  cardsGridClassName?: string;
+  groupBy: string;
+  allGroupCounts: Map<string, number>;
+  colLabels: Record<string, string>;
+  emptyMessage?: string;
+}) {
+  const pageRows = table.getRowModel().rows;
+  const visibleColumnIds = table
+    .getVisibleLeafColumns()
+    .map((c) => c.id)
+    .filter((id) => id !== "select");
+
+  if (!renderCard) {
+    return (
+      <div className="py-8 text-center text-sm text-muted-foreground">
+        Cards mode requires a <code>renderCard</code> prop.
+      </div>
+    );
+  }
+  if (pageRows.length === 0) {
+    return (
+      <p className="py-12 text-center text-muted-foreground">
+        {emptyMessage ?? "No results found."}
+      </p>
+    );
+  }
+
+  const gridCls = cardsGridClassName ?? "grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4";
+
+  if (!groupBy) {
+    // pt-4 gives the top-row cards' selection ring room to render above the
+    // card border without being clipped by the sticky toolbar's opaque
+    // background. Matches the inter-row gap-4 spacing between card rows.
+    return (
+      <div className={cn(gridCls, "pt-4")}>
+        {pageRows.map((row) => (
+          <div key={row.id}>{renderCard(row.original, visibleColumnIds)}</div>
+        ))}
+      </div>
+    );
+  }
+
+  // Grouped: emit a section header + card grid per group, in the order the
+  // rows appear on the current page (sorted primary-by-groupBy upstream).
+  const sections: { value: string; rows: typeof pageRows }[] = [];
+  let current: (typeof sections)[number] | null = null;
+  for (const row of pageRows) {
+    const gv = String(row.getValue(groupBy) ?? "—");
+    if (!current || current.value !== gv) {
+      current = { value: gv, rows: [] };
+      sections.push(current);
+    }
+    current.rows.push(row);
+  }
+
+  return (
+    // pt-4 mirrors the ungrouped path — top-row cards need room for their
+    // selection ring above the border, otherwise the sticky toolbar clips it.
+    <div className="space-y-6 pt-4">
+      {sections.map((section) => (
+        <div key={section.value} className="space-y-3">
+          <div className="text-base font-bold">
+            {colLabels[groupBy] ?? groupBy}: {section.value}{" "}
+            <span className="font-normal text-muted-foreground text-sm">
+              ({allGroupCounts.get(section.value) ?? section.rows.length})
+            </span>
+          </div>
+          <div className={gridCls}>
+            {section.rows.map((row) => (
+              <div key={row.id}>{renderCard(row.original, visibleColumnIds)}</div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

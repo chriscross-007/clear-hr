@@ -47,6 +47,7 @@ import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 import { AddEmployeeDialog } from "./add-employee-dialog";
 import type { Profile } from "./profile-actions";
 import type { FieldDef } from "./custom-field-actions";
+import { formatMemberForPdf } from "@/lib/format-member-pdf-row";
 import { cn } from "@/lib/utils";
 
 export type { Team, Member };
@@ -127,7 +128,6 @@ export function EmployeesClient({
   const [showCapacityDialog, setShowCapacityDialog] = useState(false);
   const [view, setView] = useState<"list" | "card">("list");
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
-  const [cardRows, setCardRows] = useState<Member[]>(initialMembers);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const handleSelect = (id: string) => {
@@ -403,7 +403,6 @@ export function EmployeesClient({
       </div>
       {canAdd && (
         <Button
-          variant="outline"
           onClick={() => atCapacity ? setShowCapacityDialog(true) : setShowAddDialog(true)}
         >
           <Plus className="h-4 w-4 mr-2" />
@@ -415,6 +414,88 @@ export function EmployeesClient({
 
   // Resolve active filter label for PDF (passed to DATE_PRESET_LABELS)
   void DATE_PRESET_LABELS; // imported for re-export use in other files
+
+  // CLE-194 — Card renderer. Sits inside DataGrid (renderMode="cards") so
+  // sort/filter/customise/selection state is shared with the list view. The
+  // card body mirrors the user's Customise selection: fixed header (avatar,
+  // name, email) + label/value pairs for every other visible column. We
+  // reuse the PDF row formatter (formatMemberForPdf) as the display source
+  // so cards stay in lockstep with the list's cell rendering.
+  const teamsMap = useMemo(() => Object.fromEntries(teams.map((t) => [t.id, t.name])), [teams]);
+  const renderEmployeeCard = (m: Member, visibleColumnIds: string[]) => {
+    // Lazy-import to avoid pulling PDF formatting into initial bundle;
+    // this function only runs client-side after mount.
+    // (formatMemberForPdf is a pure helper — safe to import top-level too,
+    // but the module already has our imports at the top of the file.)
+    const initials = [m.first_name, m.last_name]
+      .map((n) => n?.charAt(0).toUpperCase())
+      .join("");
+    // Fields already shown in the fixed card header — never repeat in the
+    // details list.
+    const fixed = new Set(["select", "avatar", "first_name", "last_name", "email"]);
+    const detailIds = visibleColumnIds.filter((id) => !fixed.has(id));
+    const pdfRow = formatMemberForPdf(m, {
+      teams,
+      customFieldDefs,
+      currencySymbol,
+      memberLabel,
+    });
+
+    return (
+      <div
+        className={cn(
+          "relative flex flex-col gap-3 rounded-lg border bg-card p-4 cursor-pointer hover:bg-muted/50",
+          selectedIds.has(m.member_id) && "ring-2 ring-primary",
+        )}
+        onClick={() => router.push(`/members/${m.member_id}/calendar`)}
+      >
+        <div
+          className="absolute top-2 left-2 z-10"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Checkbox
+            checked={selectedIds.has(m.member_id)}
+            onCheckedChange={() => handleSelect(m.member_id)}
+            aria-label="Select member"
+          />
+        </div>
+        <div className="flex flex-col items-center gap-2 text-center">
+          {m.avatar_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={m.avatar_url}
+              alt={`${m.first_name} ${m.last_name}`}
+              className="h-24 w-24 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex h-24 w-24 items-center justify-center rounded-full bg-muted">
+              <span className="text-2xl font-medium text-muted-foreground">{initials}</span>
+            </div>
+          )}
+          <div className="w-full">
+            <p className="font-semibold leading-tight">{m.first_name} {m.last_name}</p>
+            <p className="truncate text-sm text-muted-foreground">{m.email}</p>
+          </div>
+        </div>
+        {detailIds.length > 0 && (
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs border-t pt-3">
+            {detailIds.map((id) => {
+              const label = allColLabels[id] ?? id;
+              const value = pdfRow[id] ?? "—";
+              return (
+                <div key={id} className="contents">
+                  <dt className="text-muted-foreground truncate">{label}</dt>
+                  <dd className="truncate text-right">{value}</dd>
+                </div>
+              );
+            })}
+          </dl>
+        )}
+      </div>
+    );
+  };
+  // teamsMap kept for potential future use in the card (e.g. team badge).
+  void teamsMap;
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8">
@@ -428,8 +509,10 @@ export function EmployeesClient({
           visual break beneath the header border. */}
       <div className="pb-8">
 
-      {/* DataGrid — always mounted so state (filters/sort) survives view toggle */}
-      <div className={view !== "list" ? "hidden" : "flex justify-center w-full"}>
+      {/* DataGrid — shared shell for list + card views. renderMode="cards"
+          swaps the table body for a grid of cards but keeps the same
+          sort/filter/customise state + pagination + PDF/CSV export. */}
+      <div className="flex justify-center w-full">
         <div className="w-full max-w-[90%] min-w-0">
         <DataGrid<Member>
           data={members}
@@ -446,15 +529,16 @@ export function EmployeesClient({
           initialAggregateMetrics={initialAggregateMetrics}
           userId={userId}
           toolbar={toolbar}
-          onRowClick={(m) => router.push(`/members/${m.member_id}/calendar`)}
+          onRowClick={view === "list" ? (m) => router.push(`/members/${m.member_id}/calendar`) : undefined}
           emptyMessage={`No ${pluralize(memberLabel)} found.`}
           onExportPdf={handleExportPdf}
-          onPageRowsChange={setCardRows}
-          leadingColumnIds={["select"]}
+          leadingColumnIds={view === "list" ? ["select"] : undefined}
           initialFilters={initialFiltersArray}
           initialSorting={initialSorting}
           onPrefsChange={handlePrefsChange}
           stickyHeader
+          renderMode={view === "card" ? "cards" : "table"}
+          renderCard={renderEmployeeCard}
           renderGroupHeaderPrefix={({ rowsInGroup, groupValue }) => {
             const ids = rowsInGroup.map((r: Row<Member>) => r.original.member_id);
             const selectedInGroup = ids.filter((id) => selectedIds.has(id)).length;
@@ -472,87 +556,6 @@ export function EmployeesClient({
         />
         </div>
       </div>
-
-      {/* Card view */}
-      {view === "card" && (
-        <>
-          <div className="mb-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Checkbox
-                checked={
-                  cardRows.length > 0 && cardRows.every(m => selectedIds.has(m.member_id))
-                    ? true
-                    : cardRows.some(m => selectedIds.has(m.member_id))
-                    ? "indeterminate"
-                    : false
-                }
-                onCheckedChange={(value) => {
-                  if (value) {
-                    handleSelectAll(cardRows.map(m => m.member_id));
-                  } else {
-                    handleDeselectAll();
-                  }
-                }}
-                aria-label="Select all"
-              />
-              <span className="text-sm text-muted-foreground">Select all</span>
-            </div>
-            {toolbar}
-          </div>
-          <div className="mb-4">
-            {cardRows.length ? (
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-                {cardRows.map((m) => {
-                  const initials = [m.first_name, m.last_name]
-                    .map((n) => n?.charAt(0).toUpperCase())
-                    .join("");
-                  return (
-                    <div
-                      key={m.member_id}
-                      className={cn(
-                        "relative flex flex-col items-center gap-3 rounded-lg border bg-card p-6 text-center cursor-pointer hover:bg-muted/50",
-                        selectedIds.has(m.member_id) && "ring-2 ring-primary"
-                      )}
-                      onClick={() => router.push(`/members/${m.member_id}/calendar`)}
-                    >
-                      <div
-                        className="absolute top-2 left-2 z-10"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Checkbox
-                          checked={selectedIds.has(m.member_id)}
-                          onCheckedChange={() => handleSelect(m.member_id)}
-                          aria-label="Select member"
-                        />
-                      </div>
-                      {m.avatar_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={m.avatar_url}
-                          alt={`${m.first_name} ${m.last_name}`}
-                          className="h-[7.5rem] w-[7.5rem] rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-[7.5rem] w-[7.5rem] items-center justify-center rounded-full bg-muted">
-                          <span className="text-3xl font-medium text-muted-foreground">{initials}</span>
-                        </div>
-                      )}
-                      <div className="w-full">
-                        <p className="font-semibold">{m.first_name} {m.last_name}</p>
-                        <p className="truncate text-sm text-muted-foreground">{m.email}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="py-12 text-center text-muted-foreground">
-                No {pluralize(memberLabel)} found.
-              </p>
-            )}
-          </div>
-        </>
-      )}
 
       {/* Edit dialog */}
       <EditEmployeeDialog
