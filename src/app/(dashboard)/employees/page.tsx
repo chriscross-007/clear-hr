@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { parseGridPrefs } from "@/lib/grid-prefs";
 import { EmployeesClient } from "./employees-client";
+import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
+import type { Profile } from "@/app/(dashboard)/employees/profile-actions";
 
 export default async function EmployeesPage({
   searchParams,
@@ -58,7 +60,7 @@ export default async function EmployeesPage({
       supabase.from("admin_profiles").select("id, name, rights").eq("organisation_id", membership!.organisation_id).order("name"),
       supabase.from("employee_profiles").select("id, name, rights").eq("organisation_id", membership!.organisation_id).order("name"),
       supabase.from("user_grid_preferences").select("prefs").eq("user_id", user.id).eq("grid_id", "employees").maybeSingle(),
-      supabase.from("custom_field_definitions").select("id, label, field_key, field_type, options, required, sort_order, max_decimal_places").eq("organisation_id", membership!.organisation_id).eq("object_type", "member").order("sort_order"),
+      supabase.from("custom_field_definitions").select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places").eq("organisation_id", membership!.organisation_id).eq("object_type", "member").order("sort_order"),
       // CLE-167 — read holiday_periods for the current period name per member,
       // replacing the old absence_profiles + holiday_year_records lookup. The
       // directory column "Holiday Profile" now shows the current Period name
@@ -91,7 +93,10 @@ export default async function EmployeesPage({
     }
   }
 
-  const allDefs = (customFieldDefs ?? []) as { id: string; label: string; field_key: string; field_type: string; options: string[] | null; required: boolean; sort_order: number; max_decimal_places: number | null }[];
+  // Canonical FieldDef type — catches missing SELECT columns at
+  // compile time when the schema grows. See "Schema change discipline"
+  // in CLAUDE.md.
+  const allDefs = (customFieldDefs ?? []) as FieldDef[];
   const visibleDefs = canSeeCurrency ? allDefs : allDefs.filter((d) => d.field_type !== "currency");
   const gridPrefs = parseGridPrefs(columnPrefsRow?.prefs);
 
@@ -143,8 +148,8 @@ export default async function EmployeesPage({
       isOwner={membership?.role === "owner"}
       orgName={orgName}
       teams={teams ?? []}
-      adminProfiles={(adminProfiles ?? []) as { id: string; name: string; rights: Record<string, unknown> }[]}
-      employeeProfiles={(employeeProfiles ?? []) as { id: string; name: string; rights: Record<string, unknown> }[]}
+      adminProfiles={(adminProfiles ?? []) as Profile[]}
+      employeeProfiles={(employeeProfiles ?? []) as Profile[]}
       initialMemberId={memberId}
       initialColumnPrefs={gridPrefs.columns}
       initialGroupBy={gridPrefs.groupBy}

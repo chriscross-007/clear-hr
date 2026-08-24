@@ -1,6 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import {
+  CustomFieldMultiSelect,
+  CustomFieldSingleSelect,
+  normaliseMultiselectValue,
+} from "@/components/custom-field-multiselect";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize } from "@/lib/label-utils";
 import { updateEmployee, sendInvite, uploadMemberAvatar, getMemberHolidayFields } from "./actions";
@@ -415,7 +420,30 @@ export function EditEmployeeDialog({
                     <Label htmlFor={`cf-${def.field_key}`}>
                       {def.label}{def.required && <span className="text-destructive ml-0.5">*</span>}
                     </Label>
-                    {def.field_type === "checkbox" ? (
+                    {/* Input-mode preflight — see employment-form for the
+                        same pattern. */}
+                    {def.input_mode === "multi_choice" ? (
+                      <CustomFieldMultiSelect
+                        id={`cf-${def.field_key}`}
+                        options={def.options ?? []}
+                        value={normaliseMultiselectValue(customValues[def.field_key])}
+                        onChange={(next) => setCustomValues((prev) => ({ ...prev, [def.field_key]: next }))}
+                        fieldType={def.field_type}
+                        currencySymbol={currencySymbol}
+                        maxDecimalPlaces={def.max_decimal_places}
+                      />
+                    ) : def.input_mode === "single_choice" ? (
+                      <CustomFieldSingleSelect
+                        id={`cf-${def.field_key}`}
+                        options={def.options ?? []}
+                        value={String(customValues[def.field_key] ?? "")}
+                        onChange={(next) => setCustomValues((prev) => ({ ...prev, [def.field_key]: next }))}
+                        fieldType={def.field_type}
+                        currencySymbol={currencySymbol}
+                        maxDecimalPlaces={def.max_decimal_places}
+                        allowClear={!def.required}
+                      />
+                    ) : def.field_type === "checkbox" ? (
                       <div className="flex items-center gap-2">
                         <Switch
                           id={`cf-${def.field_key}`}
@@ -430,21 +458,6 @@ export function EditEmployeeDialog({
                         onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
                         rows={3}
                       />
-                    ) : def.field_type === "dropdown" ? (
-                      <Select
-                        value={String(customValues[def.field_key] ?? "__none__")}
-                        onValueChange={(v) => setCustomValues((prev) => ({ ...prev, [def.field_key]: v === "__none__" ? "" : v }))}
-                      >
-                        <SelectTrigger id={`cf-${def.field_key}`}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {!def.required && <SelectItem value="__none__">—</SelectItem>}
-                          {(def.options ?? []).map((opt) => (
-                            <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
                     ) : def.field_type === "currency" ? (
                       <div className="flex items-center gap-1.5">
                         <span className="shrink-0 text-sm text-muted-foreground">{currencySymbol}</span>

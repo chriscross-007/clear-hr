@@ -5,6 +5,8 @@ import { redirect, notFound } from "next/navigation";
 import { hasPlanFeature } from "@/lib/plan-config";
 import { ALL_STANDARD_REPORTS } from "../../definitions";
 import { CustomReportViewClient } from "./custom-report-view-client";
+import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
+import type { Profile } from "@/app/(dashboard)/employees/profile-actions";
 
 export default async function CustomReportViewPage({
   params,
@@ -70,11 +72,14 @@ export default async function CustomReportViewPage({
     supabase.from("teams").select("id, name").eq("organisation_id", membership.organisation_id).order("name"),
     supabase.from("admin_profiles").select("id, name, rights").eq("organisation_id", membership.organisation_id).order("name"),
     supabase.from("employee_profiles").select("id, name, rights").eq("organisation_id", membership.organisation_id).order("name"),
-    supabase.from("custom_field_definitions").select("id, label, field_key, field_type, options, required, sort_order, max_decimal_places").eq("organisation_id", membership.organisation_id).eq("object_type", "member").order("sort_order"),
+    supabase.from("custom_field_definitions").select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places").eq("organisation_id", membership.organisation_id).eq("object_type", "member").order("sort_order"),
     supabase.from("report_favourites").select("report_id").eq("user_id", user.id).eq("report_id", id).maybeSingle(),
   ]);
 
-  const allDefs = (rawCustomFieldDefs ?? []) as { id: string; label: string; field_key: string; field_type: string; options: string[] | null; required: boolean; sort_order: number; max_decimal_places: number | null }[];
+  // Canonical FieldDef type — catches missing SELECT columns at
+  // compile time when the schema grows. See "Schema change discipline"
+  // in CLAUDE.md.
+  const allDefs = (rawCustomFieldDefs ?? []) as FieldDef[];
   const visibleDefs = canSeeCurrency ? allDefs : allDefs.filter((d) => d.field_type !== "currency");
 
   const savedPrefs = customReport.prefs as { columns?: { id: string; visible: boolean }[]; filters?: Record<string, unknown>; groupBy?: string; pdfPageBreak?: boolean; pdfRepeatHeaders?: boolean; aggregateMetrics?: string[] };
@@ -94,8 +99,8 @@ export default async function CustomReportViewPage({
       baseReport={report}
       members={members ?? []}
       teams={teams ?? []}
-      adminProfiles={(adminProfiles ?? []) as { id: string; name: string; rights: Record<string, unknown> }[]}
-      employeeProfiles={(employeeProfiles ?? []) as { id: string; name: string; rights: Record<string, unknown> }[]}
+      adminProfiles={(adminProfiles ?? []) as Profile[]}
+      employeeProfiles={(employeeProfiles ?? []) as Profile[]}
       customFieldDefs={visibleDefs}
       currencySymbol={currencySymbol}
       userId={user.id}

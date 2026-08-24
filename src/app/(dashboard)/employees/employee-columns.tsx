@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { capitalize } from "@/lib/label-utils";
+import { formatOptionForDisplay } from "@/components/custom-field-multiselect";
 import type { Profile } from "./profile-actions";
 import type { FieldDef } from "./custom-field-actions";
 
@@ -625,6 +626,23 @@ export function buildEmployeeColumns(opts: {
       id: `cf_${def.field_key}`,
       accessorFn: (row) => {
         const val = row.custom_fields?.[def.field_key];
+        // Multi-choice picklists always store an array; join through the
+        // base-type formatter so a currency multi-choice reads
+        // "£500.00, £1,000.00" not "500, 1000".
+        if (def.input_mode === "multi_choice") {
+          const arr = Array.isArray(val) ? val.filter((v): v is string => typeof v === "string") : [];
+          if (arr.length === 0) return "—";
+          return arr
+            .map((v) => formatOptionForDisplay(v, def.field_type, { currencySymbol, maxDecimalPlaces: def.max_decimal_places }))
+            .join(", ");
+        }
+        // Single-choice picklists share the base-type formatter — a
+        // date picklist should still show "12 Jan 2027" not the raw
+        // ISO string.
+        if (def.input_mode === "single_choice") {
+          if (val === undefined || val === null || val === "") return "—";
+          return formatOptionForDisplay(String(val), def.field_type, { currencySymbol, maxDecimalPlaces: def.max_decimal_places });
+        }
         if (def.field_type === "checkbox") return val === true ? "Yes" : val === false ? "No" : "—";
         if (def.field_type === "date" && val) {
           try { return new Date(String(val)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }); } catch { return String(val); }

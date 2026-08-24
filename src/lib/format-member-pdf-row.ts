@@ -1,9 +1,12 @@
 import { capitalize } from "@/lib/label-utils";
 import type { Member, Team } from "@/app/(dashboard)/employees/employee-columns";
+import { formatOptionForDisplay } from "@/components/custom-field-multiselect";
+import type { InputMode } from "@/app/(dashboard)/employees/custom-field-actions";
 
 interface FieldDefLike {
   field_key: string;
   field_type: string;
+  input_mode?: InputMode;
   max_decimal_places?: number | null;
 }
 
@@ -42,7 +45,20 @@ export function formatMemberForPdf(
       customFieldDefs.flatMap((def) => {
         const val = (m.custom_fields as Record<string, unknown> | null)?.[def.field_key];
         let display: string;
-        if (def.field_type === "checkbox")
+        if (def.input_mode === "multi_choice") {
+          const arr = Array.isArray(val) ? val.filter((v): v is string => typeof v === "string") : [];
+          display = arr.length === 0
+            ? "—"
+            : arr
+                .map((v) => formatOptionForDisplay(v, def.field_type, { currencySymbol, maxDecimalPlaces: def.max_decimal_places }))
+                .join(", ");
+        }
+        else if (def.input_mode === "single_choice") {
+          display = val === undefined || val === null || val === ""
+            ? "—"
+            : formatOptionForDisplay(String(val), def.field_type, { currencySymbol, maxDecimalPlaces: def.max_decimal_places });
+        }
+        else if (def.field_type === "checkbox")
           display = val === true ? "Yes" : val === false ? "No" : "—";
         else if (def.field_type === "date" && val) {
           try {

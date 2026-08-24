@@ -3,6 +3,11 @@
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useMemberLabel } from "@/contexts/member-label-context";
+import {
+  CustomFieldMultiSelect,
+  CustomFieldSingleSelect,
+  normaliseMultiselectValue,
+} from "@/components/custom-field-multiselect";
 import { capitalize } from "@/lib/label-utils";
 import {
   updateEmployee,
@@ -462,7 +467,35 @@ export function EmploymentForm({
                       {def.label}
                       {def.required && <span className="ml-0.5 text-destructive">*</span>}
                     </Label>
-                    {def.field_type === "checkbox" ? (
+                    {/* Input-mode preflight (multi/single choice) takes
+                        precedence over the free-form type chain below.
+                        Options-driven inputs render their value through
+                        the shared MultiSelect / SingleSelect, which
+                        apply the base-type formatter to each option. */}
+                    {def.input_mode === "multi_choice" ? (
+                      <CustomFieldMultiSelect
+                        id={`cf-${def.field_key}`}
+                        options={def.options ?? []}
+                        value={normaliseMultiselectValue(customValues[def.field_key])}
+                        onChange={(next) => setCustomValues((prev) => ({ ...prev, [def.field_key]: next }))}
+                        disabled={!canEdit}
+                        fieldType={def.field_type}
+                        currencySymbol={currencySymbol}
+                        maxDecimalPlaces={def.max_decimal_places}
+                      />
+                    ) : def.input_mode === "single_choice" ? (
+                      <CustomFieldSingleSelect
+                        id={`cf-${def.field_key}`}
+                        options={def.options ?? []}
+                        value={String(customValues[def.field_key] ?? "")}
+                        onChange={(next) => setCustomValues((prev) => ({ ...prev, [def.field_key]: next }))}
+                        disabled={!canEdit}
+                        fieldType={def.field_type}
+                        currencySymbol={currencySymbol}
+                        maxDecimalPlaces={def.max_decimal_places}
+                        allowClear={!def.required}
+                      />
+                    ) : def.field_type === "checkbox" ? (
                       <div>
                         <Switch
                           id={`cf-${def.field_key}`}
@@ -479,22 +512,6 @@ export function EmploymentForm({
                         value={String(customValues[def.field_key] ?? "")}
                         onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
                       />
-                    ) : def.field_type === "dropdown" ? (
-                      <Select
-                        disabled={!canEdit}
-                        value={String(customValues[def.field_key] ?? "__none__")}
-                        onValueChange={(v) => setCustomValues((prev) => ({ ...prev, [def.field_key]: v === "__none__" ? "" : v }))}
-                      >
-                        <SelectTrigger id={`cf-${def.field_key}`}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {!def.required && <SelectItem value="__none__">—</SelectItem>}
-                          {(def.options ?? []).map((opt) => (
-                            <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
                     ) : def.field_type === "currency" ? (
                       <div className="flex items-center gap-1.5">
                         <span className="shrink-0 text-sm text-muted-foreground">{currencySymbol}</span>

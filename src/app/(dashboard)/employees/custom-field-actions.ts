@@ -35,11 +35,30 @@ async function requireCustomFieldDefWriteAccess(): Promise<
   return { ok: true, organisationId: membership.organisation_id as string };
 }
 
+/** Data type of the field's underlying value. Nine base types only —
+ *  "dropdown" and "multiselect" were folded into `input_mode` on the
+ *  20260824 migration. */
+export type FieldType =
+  | "text"
+  | "multiline"
+  | "email"
+  | "url"
+  | "phone"
+  | "number"
+  | "currency"
+  | "date"
+  | "checkbox";
+
+/** How the user enters (or picks) the value. Options apply for the two
+ *  choice modes; ignored/null for freeform. */
+export type InputMode = "freeform" | "single_choice" | "multi_choice";
+
 export type FieldDef = {
   id: string;
   label: string;
   field_key: string;
   field_type: string;
+  input_mode: InputMode;
   options: string[] | null;
   required: boolean;
   sort_order: number;
@@ -50,7 +69,7 @@ export async function getCustomFieldDefs(): Promise<FieldDef[]> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("custom_field_definitions")
-    .select("id, label, field_key, field_type, options, required, sort_order, max_decimal_places")
+    .select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places")
     .eq("object_type", "member")
     .order("sort_order");
   return (data ?? []) as FieldDef[];
@@ -69,6 +88,7 @@ export async function createCustomFieldDef(
     label: def.label,
     field_key: def.field_key,
     field_type: def.field_type,
+    input_mode: def.input_mode ?? "freeform",
     options: def.options ? def.options : null,
     required: def.required,
     sort_order: def.sort_order,
@@ -93,6 +113,7 @@ export async function updateCustomFieldDef(
   const payload: Record<string, unknown> = {};
   if (updates.label !== undefined) payload.label = updates.label;
   if (updates.field_type !== undefined) payload.field_type = updates.field_type;
+  if (updates.input_mode !== undefined) payload.input_mode = updates.input_mode;
   if (updates.options !== undefined)
     payload.options = updates.options?.length ? updates.options : null;
   if (updates.required !== undefined) payload.required = updates.required;

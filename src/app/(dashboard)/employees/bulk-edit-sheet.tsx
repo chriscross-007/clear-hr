@@ -3,6 +3,11 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { capitalize, pluralize } from "@/lib/label-utils";
+import {
+  CustomFieldMultiSelect,
+  formatOptionForDisplay,
+  normaliseMultiselectValue,
+} from "@/components/custom-field-multiselect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -320,7 +325,7 @@ function CustomFieldInput({
   onChange: (val: unknown) => void;
   onReset: () => void;
 }) {
-  const { field_type, label, options } = def;
+  const { field_type, input_mode, label, options, max_decimal_places } = def;
 
   // Checkbox field — use a Select with No change / Yes / No
   if (field_type === "checkbox") {
@@ -348,8 +353,11 @@ function CustomFieldInput({
     );
   }
 
-  // Dropdown field — use a Select with No change + defined options
-  if (field_type === "dropdown" && options) {
+  // Single-choice picklist — Select with a "No change" sentinel plus
+  // each option formatted through the base-type formatter (so a
+  // currency picklist shows £N, a date picklist shows "12 Jan 2027",
+  // etc.).
+  if (input_mode === "single_choice" && options) {
     const selectValue = isChanged ? String(value ?? "") : NO_CHANGE;
     return (
       <div className="flex flex-col gap-1.5">
@@ -368,11 +376,45 @@ function CustomFieldInput({
             <SelectItem value={NO_CHANGE}>No change</SelectItem>
             {options.map((opt) => (
               <SelectItem key={opt} value={opt}>
-                {opt}
+                {formatOptionForDisplay(opt, field_type, { currencySymbol, maxDecimalPlaces: max_decimal_places })}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
+      </div>
+    );
+  }
+
+  // Multi-choice picklist — Reset-button pattern (same as the date
+  // field). The underlying CustomFieldMultiSelect formats each option
+  // through the base-type formatter.
+  if (input_mode === "multi_choice" && options) {
+    const arrValue = normaliseMultiselectValue(value);
+    return (
+      <div className="flex flex-col gap-1.5">
+        <label className="text-sm font-medium">{label}</label>
+        <div className="flex items-start gap-2">
+          <div className="flex-1">
+            <CustomFieldMultiSelect
+              options={options}
+              value={isChanged ? arrValue : []}
+              onChange={(next) => {
+                // Any explicit pick counts as "changed" — even clearing
+                // to empty (which is different from No change).
+                onChange(next);
+              }}
+              placeholder={isChanged ? "None selected" : "No change"}
+              fieldType={field_type}
+              currencySymbol={currencySymbol}
+              maxDecimalPlaces={max_decimal_places}
+            />
+          </div>
+          {isChanged && (
+            <Button variant="ghost" size="sm" onClick={onReset} className="text-xs px-2">
+              Reset
+            </Button>
+          )}
+        </div>
       </div>
     );
   }

@@ -3,6 +3,18 @@
 // CLE-194 — Relocated from `organisation-edit-dialog-custom-fields.tsx`
 // after the legacy dialog was deleted. Same component, new home next to
 // its only consumer (`settings/custom-fields/custom-fields-client.tsx`).
+//
+// Data model (post the 20260824 migration):
+//   • field_type  → the underlying data type (nine values below)
+//   • input_mode  → the entry mechanism (three values below); when set
+//                   to single_choice / multi_choice the OptionsEditor
+//                   collects the allowed picks and stores them on the
+//                   definition's `options` text[] column.
+//
+// This split replaces the legacy `dropdown` / `multiselect` field types,
+// which conflated data type and entry mode into a single field. Any
+// combination is allowed (checkbox + single_choice is silly but
+// harmless — an admin can just avoid it). See CLAUDE.md for the schema.
 
 import { useState, useRef } from "react";
 import { GripVertical, Trash2, Plus, X, Check } from "lucide-react";
@@ -19,34 +31,49 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
+import type { FieldDef, InputMode } from "@/app/(dashboard)/employees/custom-field-actions";
 import {
   createCustomFieldDef,
   updateCustomFieldDef,
   deleteCustomFieldDef,
   reorderCustomFieldDefs,
 } from "@/app/(dashboard)/employees/custom-field-actions";
+import { formatOptionForDisplay } from "@/components/custom-field-multiselect";
 
 // ---------------------------------------------------------------------------
-// Field type options
+// Field type + input mode configs
 // ---------------------------------------------------------------------------
 const FIELD_TYPES = [
-  { value: "text",      label: "Text" },
-  { value: "multiline", label: "Multi-line Text" },
-  { value: "email",     label: "Email" },
-  { value: "url",       label: "URL" },
-  { value: "phone",     label: "Phone" },
-  { value: "number",    label: "Number" },
-  { value: "currency",  label: "Currency" },
-  { value: "date",      label: "Date" },
-  { value: "checkbox",  label: "Checkbox" },
-  { value: "dropdown",  label: "Dropdown" },
+  { value: "text",       label: "Text" },
+  { value: "multiline",  label: "Multi-line Text" },
+  { value: "email",      label: "Email" },
+  { value: "url",        label: "URL" },
+  { value: "phone",      label: "Phone" },
+  { value: "number",     label: "Number" },
+  { value: "currency",   label: "Currency" },
+  { value: "date",       label: "Date" },
+  { value: "checkbox",   label: "Checkbox" },
 ] as const;
 
 type FieldTypeValue = (typeof FIELD_TYPES)[number]["value"];
 
+const INPUT_MODES: { value: InputMode; label: string }[] = [
+  { value: "freeform",      label: "Free-form entry" },
+  { value: "single_choice", label: "Single choice from list" },
+  { value: "multi_choice",  label: "Multi choice from list" },
+];
+
 function fieldTypeLabel(type: string): string {
   return FIELD_TYPES.find((t) => t.value === type)?.label ?? type;
+}
+
+function inputModeLabel(mode: InputMode): string {
+  return INPUT_MODES.find((m) => m.value === mode)?.label ?? mode;
+}
+
+/** Options apply when the caller wants a picklist — not for free-form. */
+function usesOptions(mode: InputMode): boolean {
+  return mode === "single_choice" || mode === "multi_choice";
 }
 
 /** Convert a human label to a snake_case field_key */
@@ -61,20 +88,54 @@ function toFieldKey(label: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Dropdown options editor
+// Options editor — type-aware
 // ---------------------------------------------------------------------------
+// Each option is stored as a `string`, but the input control adapts to
+// the base field_type so an admin building e.g. a currency picklist
+// gets a numeric input rather than a raw text field. Display of each
+// existing option runs through `formatOptionForDisplay()` (shared with
+// the value-editor sites) so what's shown in the manager matches what
+// employees will see.
+
 interface OptionsEditorProps {
   options: string[];
   onChange: (opts: string[]) => void;
+  fieldType: FieldTypeValue;
+  /** Passed through for currency-symbol prefixing + number formatting. */
+  currencySymbol: string;
+  maxDecimalPlaces: number | null;
 }
 
-function OptionsEditor({ options, onChange }: OptionsEditorProps) {
+function OptionsEditor({
+  options,
+  onChange,
+  fieldType,
+  currencySymbol,
+  maxDecimalPlaces,
+}: OptionsEditorProps) {
   const [newOpt, setNewOpt] = useState("");
 
+  function normalise(raw: string): string | null {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    if (fieldType === "number" || fieldType === "currency") {
+      const n = Number(trimmed);
+      if (Number.isNaN(n)) return null;
+      // Round to max_decimal_places if set (currency defaults to 2)
+      const dp = fieldType === "currency" ? 2 : maxDecimalPlaces;
+      if (dp !== null && dp !== undefined) return n.toFixed(dp);
+      return String(n);
+    }
+    // For date, checkbox, text-family: store as-is (ISO date, "true"/"false"
+    // or free text). Validation is loose — the input control below already
+    // constrains the shape.
+    return trimmed;
+  }
+
   function addOption() {
-    const trimmed = newOpt.trim();
-    if (!trimmed || options.includes(trimmed)) return;
-    onChange([...options, trimmed]);
+    const stored = normalise(newOpt);
+    if (!stored || options.includes(stored)) return;
+    onChange([...options, stored]);
     setNewOpt("");
   }
 
@@ -82,12 +143,24 @@ function OptionsEditor({ options, onChange }: OptionsEditorProps) {
     onChange(options.filter((_, i) => i !== idx));
   }
 
+  // Pick an HTML input type that matches the base field_type. Text-family
+  // types collapse to plain text; number/currency use number; date uses
+  // date; checkbox degenerates to text (odd combo, but allowed).
+  const inputType =
+    fieldType === "number" || fieldType === "currency"
+      ? "number"
+      : fieldType === "date"
+        ? "date"
+        : "text";
+
   return (
     <div className="flex flex-col gap-1.5 pl-1">
       <Label className="text-xs text-muted-foreground">Options</Label>
       {options.map((opt, i) => (
         <div key={i} className="flex items-center gap-1">
-          <span className="flex-1 text-sm truncate">{opt}</span>
+          <span className="flex-1 text-sm truncate">
+            {formatOptionForDisplay(opt, fieldType, { currencySymbol, maxDecimalPlaces })}
+          </span>
           <button
             type="button"
             onClick={() => removeOption(i)}
@@ -98,7 +171,14 @@ function OptionsEditor({ options, onChange }: OptionsEditorProps) {
         </div>
       ))}
       <div className="flex gap-1">
+        {fieldType === "currency" && (
+          <span className="flex items-center text-xs text-muted-foreground pl-1">
+            {currencySymbol}
+          </span>
+        )}
         <Input
+          type={inputType}
+          step={fieldType === "currency" ? "0.01" : undefined}
           value={newOpt}
           onChange={(e) => setNewOpt(e.target.value)}
           onKeyDown={(e) => {
@@ -128,6 +208,7 @@ interface AddFieldFormProps {
 function AddFieldForm({ onAdd, nextOrder, existingKeys, currencySymbol }: AddFieldFormProps) {
   const [label, setLabel] = useState("");
   const [fieldType, setFieldType] = useState<FieldTypeValue>("text");
+  const [inputMode, setInputMode] = useState<InputMode>("freeform");
   const [required, setRequired] = useState(false);
   const [options, setOptions] = useState<string[]>([]);
   const [maxDecimalPlaces, setMaxDecimalPlaces] = useState<string>("");
@@ -135,18 +216,17 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys, currencySymbol }: AddFie
   const [saving, setSaving] = useState(false);
 
   const fieldKey = toFieldKey(label);
+  const parsedDecimalPlaces =
+    fieldType === "number" && maxDecimalPlaces !== ""
+      ? parseInt(maxDecimalPlaces, 10)
+      : null;
 
   async function handleAdd() {
     setError(null);
     if (!label.trim()) { setError("Label is required"); return; }
     if (!fieldKey) { setError("Label must contain at least one letter or number"); return; }
     if (existingKeys.has(fieldKey)) { setError("A field with that key already exists"); return; }
-    if (fieldType === "dropdown" && options.length === 0) { setError("Add at least one option"); return; }
-
-    const parsedDecimalPlaces =
-      fieldType === "number" && maxDecimalPlaces !== ""
-        ? parseInt(maxDecimalPlaces, 10)
-        : null;
+    if (usesOptions(inputMode) && options.length === 0) { setError("Add at least one option"); return; }
 
     setSaving(true);
     const result = await onAdd(
@@ -154,7 +234,8 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys, currencySymbol }: AddFie
         label: label.trim(),
         field_key: fieldKey,
         field_type: fieldType,
-        options: fieldType === "dropdown" ? options : null,
+        input_mode: inputMode,
+        options: usesOptions(inputMode) ? options : null,
         required,
         sort_order: nextOrder,
         max_decimal_places: parsedDecimalPlaces,
@@ -165,6 +246,7 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys, currencySymbol }: AddFie
     if (!result || result.success) {
       setLabel("");
       setFieldType("text");
+      setInputMode("freeform");
       setRequired(false);
       setOptions([]);
       setMaxDecimalPlaces("");
@@ -192,8 +274,10 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys, currencySymbol }: AddFie
         <Label className="text-xs">Type</Label>
         <Select value={fieldType} onValueChange={(v) => {
           setFieldType(v as FieldTypeValue);
-          if (v !== "dropdown") setOptions([]);
           if (v !== "number") setMaxDecimalPlaces("");
+          // Changing the base type invalidates the picklist because the
+          // options were typed against the old type — safer to clear.
+          setOptions([]);
         }}>
           <SelectTrigger className="h-8 text-sm">
             <SelectValue />
@@ -201,6 +285,22 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys, currencySymbol }: AddFie
           <SelectContent>
             {FIELD_TYPES.map((t) => (
               <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs">Input mode</Label>
+        <Select value={inputMode} onValueChange={(v) => {
+          setInputMode(v as InputMode);
+          if (v === "freeform") setOptions([]);
+        }}>
+          <SelectTrigger className="h-8 text-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {INPUT_MODES.map((m) => (
+              <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -222,8 +322,14 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys, currencySymbol }: AddFie
       {fieldType === "currency" && (
         <p className="text-xs text-muted-foreground">Currency symbol: <span className="font-medium">{currencySymbol}</span></p>
       )}
-      {fieldType === "dropdown" && (
-        <OptionsEditor options={options} onChange={setOptions} />
+      {usesOptions(inputMode) && (
+        <OptionsEditor
+          options={options}
+          onChange={setOptions}
+          fieldType={fieldType}
+          currencySymbol={currencySymbol}
+          maxDecimalPlaces={parsedDecimalPlaces}
+        />
       )}
       <div className="flex items-center gap-2">
         <Switch id="add-required" checked={required} onCheckedChange={setRequired} />
@@ -261,6 +367,7 @@ export function CustomFieldsManager({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState("");
   const [editRequired, setEditRequired] = useState(false);
+  const [editInputMode, setEditInputMode] = useState<InputMode>("freeform");
   const [editOptions, setEditOptions] = useState<string[]>([]);
   const [editMaxDecimalPlaces, setEditMaxDecimalPlaces] = useState<string>("");
   const [editError, setEditError] = useState<string | null>(null);
@@ -278,6 +385,7 @@ export function CustomFieldsManager({
     setEditingId(def.id);
     setEditLabel(def.label);
     setEditRequired(def.required);
+    setEditInputMode(def.input_mode ?? "freeform");
     setEditOptions(def.options ?? []);
     setEditMaxDecimalPlaces(def.max_decimal_places !== null && def.max_decimal_places !== undefined ? String(def.max_decimal_places) : "");
     setEditError(null);
@@ -290,7 +398,7 @@ export function CustomFieldsManager({
 
   async function saveEdit(def: FieldDef) {
     if (!editLabel.trim()) { setEditError("Label is required"); return; }
-    if (def.field_type === "dropdown" && editOptions.length === 0) { setEditError("Add at least one option"); return; }
+    if (usesOptions(editInputMode) && editOptions.length === 0) { setEditError("Add at least one option"); return; }
     setSaving(true);
 
     const parsedDecimalPlaces =
@@ -301,7 +409,8 @@ export function CustomFieldsManager({
     const result = await updateCustomFieldDef(def.id, {
       label: editLabel.trim(),
       required: editRequired,
-      options: def.field_type === "dropdown" ? editOptions : null,
+      input_mode: editInputMode,
+      options: usesOptions(editInputMode) ? editOptions : null,
       max_decimal_places: def.field_type === "number" ? parsedDecimalPlaces : undefined,
     });
     setSaving(false);
@@ -310,7 +419,8 @@ export function CustomFieldsManager({
       ...d,
       label: editLabel.trim(),
       required: editRequired,
-      options: def.field_type === "dropdown" ? editOptions : null,
+      input_mode: editInputMode,
+      options: usesOptions(editInputMode) ? editOptions : null,
       max_decimal_places: def.field_type === "number" ? parsedDecimalPlaces : d.max_decimal_places,
     } : d));
     setEditingId(null);
@@ -373,7 +483,12 @@ export function CustomFieldsManager({
         <p className="text-sm text-muted-foreground py-2">No custom fields defined yet.</p>
       )}
 
-      {defs.map((def, i) => (
+      {defs.map((def, i) => {
+        const parsedEditDecimalPlaces =
+          def.field_type === "number" && editMaxDecimalPlaces !== ""
+            ? parseInt(editMaxDecimalPlaces, 10)
+            : null;
+        return (
         <div
           key={def.id}
           draggable={canEdit && editingId !== def.id}
@@ -401,6 +516,33 @@ export function CustomFieldsManager({
                 />
                 <p className="text-[11px] text-muted-foreground">Key: <span className="font-mono">{def.field_key}</span> (fixed)</p>
               </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs">Type</Label>
+                <Input
+                  value={fieldTypeLabel(def.field_type)}
+                  disabled
+                  className="h-8 text-sm bg-muted"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Type is fixed after creation. Delete + recreate to change it.
+                </p>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs">Input mode</Label>
+                <Select value={editInputMode} onValueChange={(v) => {
+                  setEditInputMode(v as InputMode);
+                  if (v === "freeform") setEditOptions([]);
+                }}>
+                  <SelectTrigger className="h-8 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {INPUT_MODES.map((m) => (
+                      <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               {def.field_type === "number" && (
                 <div className="flex flex-col gap-1">
                   <Label className="text-xs">Max decimal places</Label>
@@ -418,8 +560,14 @@ export function CustomFieldsManager({
               {def.field_type === "currency" && (
                 <p className="text-xs text-muted-foreground">Currency symbol: <span className="font-medium">{currencySymbol}</span></p>
               )}
-              {def.field_type === "dropdown" && (
-                <OptionsEditor options={editOptions} onChange={setEditOptions} />
+              {usesOptions(editInputMode) && (
+                <OptionsEditor
+                  options={editOptions}
+                  onChange={setEditOptions}
+                  fieldType={def.field_type as FieldTypeValue}
+                  currencySymbol={currencySymbol}
+                  maxDecimalPlaces={parsedEditDecimalPlaces}
+                />
               )}
               <div className="flex items-center gap-2">
                 <Switch id={`edit-req-${def.id}`} checked={editRequired} onCheckedChange={setEditRequired} />
@@ -454,6 +602,11 @@ export function CustomFieldsManager({
                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
                   {fieldTypeLabel(def.field_type)}
                 </Badge>
+                {def.input_mode && def.input_mode !== "freeform" && (
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                    {inputModeLabel(def.input_mode)}
+                  </Badge>
+                )}
                 {def.field_type === "number" && def.max_decimal_places !== null && def.max_decimal_places !== undefined && (
                   <Badge variant="outline" className="text-[10px] px-1.5 py-0">
                     {def.max_decimal_places === 0 ? "Integer" : `${def.max_decimal_places}dp`}
@@ -478,7 +631,8 @@ export function CustomFieldsManager({
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
 
       {canEdit && (
         <AddFieldForm

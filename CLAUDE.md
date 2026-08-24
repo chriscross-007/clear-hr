@@ -270,7 +270,7 @@ A full-page Settings shell at `/settings` replaces the old `OrganisationEditDial
 - `/settings/organisation` — name, member label, currency, country, MFA, holiday year start, bank-holiday handling + colour. Partial-update via `updateOrganisation` (name + memberLabel made optional on that action so each sub-route only sends what it edits).
 - `/settings/rates` — wraps `RatesManager` (pay multipliers used by Timesheet).
 - `/settings/timesheet` — shift / break / variance / time-rounding rules.
-- `/settings/custom-fields` — wraps `CustomFieldsManager`. Triggers `router.refresh()` on defs change so downstream pages pick up schema shifts.
+- `/settings/custom-fields` — wraps `CustomFieldsManager`. Triggers `router.refresh()` on defs change so downstream pages pick up schema shifts. **Two-column shape (post the 20260824 migration):** `custom_field_definitions.field_type` is one of nine base data types (`text | multiline | email | url | phone | number | currency | date | checkbox`) and `input_mode` is one of three entry mechanisms (`freeform | single_choice | multi_choice`). Options apply for the two choice modes. This split replaces the legacy `dropdown` / `multiselect` field types, which conflated data type + entry mode. Value storage on `members.custom_fields`: single scalar for freeform / single_choice, `string[]` for multi_choice — always stored as the raw option string regardless of base type, and rendered through `formatOptionForDisplay()` (in `components/custom-field-multiselect.tsx`) so a currency picklist reads `"£500.00"` not `"500"`. All value-editor sites (Employment page, add/edit/bulk-edit dialogs) preflight on `input_mode` before falling into the free-form type chain, via the shared `CustomFieldMultiSelect` + `CustomFieldSingleSelect` components. Options list on the definition is stored as `text[]`; the manager's OptionsEditor is type-aware (number input for number options, date picker for date options, etc.).
 - `/settings/profiles/{rights,working-pattern,notice-period,approver,holiday}` — five profile types under one umbrella. List + popup CRUD pattern. Each sub-route has a Live/Seed-only explainer banner at the top (`profile-explainer.tsx`). Owner only.
 - `/settings/groups` — `TeamsManager` with per-row auto-save (rename on Enter/blur, approver + min cover on change). Optimistic with revert-on-failure.
 - `/settings/backups` — wraps `BackupsManager` (owner only).
@@ -326,6 +326,20 @@ If a new feature requires any of the following, stop and ask before implementing
 - Any cross-org data access (e.g. SuperUser features)
 - Removing or relaxing an existing RLS policy
 - A new unauthenticated endpoint
+
+## Schema change discipline
+
+Silent bugs from missed schema updates are a security concern in their own right — a page returning stale or incomplete data can leak or misrepresent org state. **When adding, renaming, or dropping a column on any table, follow this checklist:**
+
+1. **Grep every `.from("<table>")` fetch site** and read its SELECT list. Update every one to include the new column. Missing this is exactly how a schema change that "worked in the manager" ends up silently broken on downstream pages — the SELECT returns rows without the new column, TypeScript widens `undefined` through inline casts, and the UI falls through to a wrong-but-not-erroring render.
+2. **Grep for anonymous inline type casts** referring to that table's columns (`as { … field_type … }` and similar). Update each cast to include the new column, or — better — replace it with the canonical exported type from the actions file.
+3. **Update the canonical exported type** in the actions/types file (`FieldDef`, `HolidayBookingRow`, etc.) so downstream consumers get compile-time coverage.
+4. **Write the migration.** Prefer `add column if not exists` + a NOT NULL DEFAULT so applying twice is safe, and include any backfill of existing rows so the new column is meaningful on legacy data. Never mutate the schema of a live table in a way that requires application code to already be deployed — write the migration to be forward-compatible with the old code, deploy the code, then apply the migration.
+5. **Re-grep `.from("<table>")` one final time** as a post-check. If any hit doesn't select the new column, either update it or add a comment explaining why (usually there isn't a good reason).
+
+**Anti-pattern to flag on sight — anonymous type casts on Supabase fetches.** Inline `as { … }` casts on a `.from(...).select(...)` result silently swallow schema changes: the cast type doesn't include the new column, TypeScript treats it as `undefined`, and any consumer checking `x === 'something'` fails without a compiler warning. When you touch code that does this, convert it to import and cast to the canonical exported type instead. New fetch sites should always use canonical types.
+
+**Ordering of the migration file matters.** In a single migration, `ALTER TABLE … ADD COLUMN` runs before `UPDATE` backfills. Chain the CHECK constraint after the ADD COLUMN so the default value satisfies it. If you're adding a column with a CHECK constraint and no default, add the default first, backfill, then re-add the constraint without the default. Verify the migration applies cleanly to a database that already has real data — not just a fresh one.
 
 ## Commands
 - `npm run dev` — Start dev server

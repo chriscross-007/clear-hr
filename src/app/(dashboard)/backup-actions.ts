@@ -68,6 +68,10 @@ type BackupFieldDef = {
   label: string;
   field_key: string;
   field_type: string;
+  /** Added by the 20260824 migration. Optional in the type so older
+   *  backup JSON files still deserialise; missing values are treated as
+   *  `"freeform"` on restore. */
+  input_mode?: "freeform" | "single_choice" | "multi_choice";
   options: string[] | null;
   required: boolean;
   sort_order: number;
@@ -126,7 +130,7 @@ export async function createBackup(
     const { data: fieldDefs } = await admin
       .from("custom_field_definitions")
       .select(
-        "label, field_key, field_type, options, required, sort_order, max_decimal_places, object_type"
+        "label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places, object_type"
       )
       .eq("organisation_id", orgId)
       .order("sort_order");
@@ -363,7 +367,7 @@ export async function previewRestore(
       const { data: currentDefs } = await admin
         .from("custom_field_definitions")
         .select(
-          "field_key, label, field_type, options, required, sort_order, max_decimal_places"
+          "field_key, label, field_type, input_mode, options, required, sort_order, max_decimal_places"
         )
         .eq("organisation_id", orgId);
       const currentDefsMap = new Map(
@@ -378,6 +382,7 @@ export async function previewRestore(
           const changed =
             cur.label !== bf.label ||
             cur.field_type !== bf.field_type ||
+            (cur.input_mode ?? "freeform") !== (bf.input_mode ?? "freeform") ||
             JSON.stringify(cur.options) !== JSON.stringify(bf.options) ||
             cur.required !== bf.required ||
             cur.sort_order !== bf.sort_order ||
@@ -450,6 +455,7 @@ export async function restoreBackup(
               label: bf.label,
               field_key: bf.field_key,
               field_type: bf.field_type,
+              input_mode: bf.input_mode ?? "freeform",
               options: bf.options,
               required: bf.required,
               sort_order: bf.sort_order,

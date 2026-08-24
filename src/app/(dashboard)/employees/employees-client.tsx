@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { type ColPref, saveGridPrefs } from "@/lib/grid-prefs-actions";
+import { formatOptionForDisplay } from "@/components/custom-field-multiselect";
 import type { GridPrefs } from "@/lib/grid-prefs";
 import { type ColumnDef, type Row } from "@tanstack/react-table";
 import { DataGrid } from "@/components/data-grid/data-grid";
@@ -285,7 +286,20 @@ export function EmployeesClient({
           customFieldDefs.flatMap((def) => {
             const val = m.custom_fields?.[def.field_key];
             let display: string;
-            if (def.field_type === "checkbox") display = val === true ? "Yes" : val === false ? "No" : "—";
+            if (def.input_mode === "multi_choice") {
+              const arr = Array.isArray(val) ? val.filter((v): v is string => typeof v === "string") : [];
+              display = arr.length === 0
+                ? "—"
+                : arr
+                    .map((v) => formatOptionForDisplay(v, def.field_type, { currencySymbol, maxDecimalPlaces: def.max_decimal_places }))
+                    .join(", ");
+            }
+            else if (def.input_mode === "single_choice") {
+              display = val === undefined || val === null || val === ""
+                ? "—"
+                : formatOptionForDisplay(String(val), def.field_type, { currencySymbol, maxDecimalPlaces: def.max_decimal_places });
+            }
+            else if (def.field_type === "checkbox") display = val === true ? "Yes" : val === false ? "No" : "—";
             else if (def.field_type === "date" && val) {
               try { display = new Date(String(val)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }); } catch { display = String(val); }
             } else if (val === undefined || val === null || val === "") {
