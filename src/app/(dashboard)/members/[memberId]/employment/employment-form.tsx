@@ -8,6 +8,7 @@ import {
   CustomFieldSingleSelect,
   normaliseMultiselectValue,
 } from "@/components/custom-field-multiselect";
+import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
 import { capitalize } from "@/lib/label-utils";
 import {
   updateEmployee,
@@ -70,16 +71,11 @@ type Member = {
   current_profile_id: string | null;
 };
 
-type FieldDef = {
-  id: string;
-  label: string;
-  field_key: string;
-  field_type: string;
-  options: string[] | null;
-  required: boolean;
-  sort_order: number;
-  max_decimal_places: number | null;
-};
+// Canonical FieldDef type from custom-field-actions — imported below.
+// The old local duplicate here shadowed the canonical type and got left
+// behind when input_mode was added, which broke the Vercel build. See
+// "Schema change discipline" in CLAUDE.md — always import canonical
+// types for rows from schema-drift-prone tables.
 
 interface EmploymentFormProps {
   member: Member;
