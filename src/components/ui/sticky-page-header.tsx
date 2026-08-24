@@ -1,4 +1,6 @@
-import { type ReactNode } from "react";
+"use client";
+
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -8,26 +10,29 @@ import { cn } from "@/lib/utils";
  * displayed at the top — typically an `<h1>` plus optional right-aligned
  * controls — and the band stays anchored as the body scrolls.
  *
- * Pair with `<DataGrid stickyHeader />` on grid-driven pages so the toolbar,
- * column header row and filter row form one cohesive sticky stack:
+ * The component measures its own rendered height and publishes it on the root
+ * element as the `--page-header-height` CSS variable. `<DataGrid stickyHeader />`
+ * reads that var to pin its toolbar directly below this band, with no gap and
+ * no overlap regardless of how much content the caller stuffs in here.
  *
- * - top-0  (z-50): dashboard header + trial banner (in `(dashboard)/layout.tsx`)
- * - top-16 (z-30): this component — offset by `--top-chrome-extra` when
- *                  a trial / past-due banner is showing above the header
- * - DataGrid toolbar (z-30): stickyHeaderTop + --top-chrome-extra
- * - DataGrid column header (z-20): stickyHeaderTop + 56 + --top-chrome-extra
- * - DataGrid filter row (z-20): stickyHeaderTop + 96 + --top-chrome-extra
+ * Sticky-offset stack at the top of a dashboard list page:
+ * - top-0 (z-50):  dashboard header + trial banner (in (dashboard)/layout.tsx)
+ *                  → sets `--top-chrome-extra` (36px per banner, 0 otherwise)
+ * - top-16 (z-30): this component; shifts down by `--top-chrome-extra`
+ *                  → sets `--page-header-height` for the band's actual height
+ * - DataGrid toolbar (z-30):       auto-pins just below via CSS var
+ *                                  (height = pt-2 + h-8 + pb-4 = 56)
+ * - DataGrid column header (z-20): +56 (toolbar bottom)
+ * - DataGrid filter row (z-20):    +95 (column header h-10 = 40 more, -1
+ *                                  to overlap the tr border-b hairline)
  *
- * `--top-chrome-extra` is a CSS variable set on the dashboard layout root —
- * 36px per active banner, 0px otherwise. Downstream sticky offsets add it in
- * a calc() so they shift as a unit when the banner appears/disappears without
- * consumers needing to know about it.
+ * Pages that don't use `<StickyPageHeader>` can still position `<DataGrid
+ * stickyHeader />` by passing an explicit `stickyHeaderTop` prop — that
+ * overrides the CSS-var computation.
  *
  * The negative horizontal margins assume the consuming page uses the standard
  * `px-4 sm:px-6 lg:px-8` outer padding so the band can extend full-bleed and
  * its bottom border crosses the entire viewport width.
- *
- * Server-component safe — no hooks, no event handlers.
  */
 export function StickyPageHeader({
   className,
@@ -36,8 +41,32 @@ export function StickyPageHeader({
   className?: string;
   children: ReactNode;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const update = () => {
+      const h = el.getBoundingClientRect().height;
+      document.documentElement.style.setProperty(
+        "--page-header-height",
+        `${h}px`,
+      );
+    };
+    update();
+
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      document.documentElement.style.removeProperty("--page-header-height");
+    };
+  }, []);
+
   return (
     <div
+      ref={ref}
       className={cn(
         "sticky z-30 -mx-4 sm:-mx-6 lg:-mx-8 bg-background px-4 sm:px-6 lg:px-8 pt-8 pb-3 border-b",
         className,

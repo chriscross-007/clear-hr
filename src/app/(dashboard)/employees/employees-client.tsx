@@ -423,7 +423,10 @@ export function EmployeesClient({
           {capitalize(pluralize(memberLabel))} Directory
         </h1>
       </StickyPageHeader>
-      <div className="pb-8 pt-4">
+      {/* No pt- gap here: it lets the sticky DataGrid toolbar slide up by
+          that amount before sticking. Toolbar's own py-2 provides the
+          visual break beneath the header border. */}
+      <div className="pb-8">
 
       {/* DataGrid — always mounted so state (filters/sort) survives view toggle */}
       <div className={view !== "list" ? "hidden" : "flex justify-center w-full"}>

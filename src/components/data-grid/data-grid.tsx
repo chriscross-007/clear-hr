@@ -133,17 +133,19 @@ interface DataGridProps<T> {
    * context — the caller is responsible for providing any sticky page header
    * (e.g. a `<StickyPageHeader>`) that sits above the toolbar.
    *
-   * Combined with `stickyHeaderTop` to set where the toolbar pins. Default is
-   * 120 (matches a single-line `<StickyPageHeader>` containing one `<h1>`).
-   * Increase for pages whose sticky region is taller (e.g. multi-row title +
-   * action row).
+   * By default the toolbar auto-pins directly below the `<StickyPageHeader>` by
+   * reading the `--page-header-height` CSS variable it publishes. Pages that
+   * don't use `<StickyPageHeader>`, or that want a manual override, can pass
+   * `stickyHeaderTop` (px) to pin the toolbar at that exact distance from the
+   * viewport top instead.
    */
   stickyHeader?: boolean;
   /**
-   * Distance in px from the viewport top where the DataGrid toolbar pins. The
-   * column header row pins at `stickyHeaderTop + 56`, and the filter row at
-   * `stickyHeaderTop + 96` (toolbar height + column-header h-10). Defaults to
-   * 120.
+   * Manual override for the toolbar pin position (px from viewport top). If
+   * omitted, the toolbar auto-pins below `<StickyPageHeader>` via the
+   * `--page-header-height` CSS variable. When set, the column header pins at
+   * `stickyHeaderTop + 48` and the filter row at `stickyHeaderTop + 88`
+   * (toolbar h-8 button + py-2 = 48; column header h-10 = 40 more).
    */
   stickyHeaderTop?: number;
   /** When true, hide Customise/PDF/CSV buttons from DataGrid toolbar (caller renders them externally via toolbarRef) */
@@ -183,11 +185,23 @@ export function DataGrid<T extends object>({
   toolbarRef,
   renderGroupHeaderPrefix,
   stickyHeader,
-  stickyHeaderTop = 120,
+  stickyHeaderTop,
 }: DataGridProps<T>) {
-  const stickyToolbarTop = stickyHeaderTop;
-  const stickyColumnHeaderTop = stickyHeaderTop + 56;
-  const stickyFilterRowTop = stickyHeaderTop + 96;
+  // Toolbar pins directly below <StickyPageHeader> via the CSS var it
+  // publishes. Downstream offsets:
+  //   - toolbar height  = pt-2 (8) + h-8 button (32) + pb-4 (16) = 56
+  //   - column header   = toolbar bottom → +56
+  //   - filter row      = column header bottom → +56 + 40 (h-10) = +96,
+  //                       minus 1px to overlap the tr border-b hairline
+  // An explicit stickyHeaderTop overrides the CSS-var path for pages
+  // without a <StickyPageHeader>.
+  const toolbarBaseTop =
+    stickyHeaderTop != null
+      ? `${stickyHeaderTop}px`
+      : `calc(4rem + var(--page-header-height, 77px))`;
+  const stickyToolbarTopCss = `calc(var(--top-chrome-extra, 0px) + ${toolbarBaseTop})`;
+  const stickyColumnHeaderTopCss = `calc(var(--top-chrome-extra, 0px) + ${toolbarBaseTop} + 56px)`;
+  const stickyFilterRowTopCss = `calc(var(--top-chrome-extra, 0px) + ${toolbarBaseTop} + 95px)`;
   const [sorting, setSorting] = useState<SortingState>(initialSorting ?? []);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(initialFilters ?? []);
   const [pageIndex, setPageIndex] = useState(0);
@@ -409,16 +423,18 @@ export function DataGrid<T extends object>({
 
   return (
     <div>
-      {/* Toolbar */}
+      {/* Toolbar. Bottom spacing (previously mb-4) is folded into the
+          sticky box as pb-4 so the toolbar's opaque background covers
+          the gap between itself and the column header — otherwise the
+          column header slides up 16px before sticking. */}
       <div
         className={cn(
-          "mb-4 flex items-center justify-between gap-4",
-          stickyHeader && "sticky z-30 bg-background py-2",
+          "flex items-center justify-between gap-4",
+          stickyHeader ? "sticky z-30 bg-background pt-2 pb-4" : "mb-4",
         )}
-        // top-chrome-extra lets the sticky offset shift down when a
-        // trial / past-due banner is showing above the header (see
-        // sticky-page-header.tsx).
-        style={stickyHeader ? { top: `calc(var(--top-chrome-extra, 0px) + ${stickyToolbarTop}px)` } : undefined}
+        // Auto-pins directly below <StickyPageHeader> via --page-header-height;
+        // --top-chrome-extra shifts the whole stack down when a banner shows.
+        style={stickyHeader ? { top: stickyToolbarTopCss } : undefined}
       >
         <div className="flex items-center gap-2">
           {!hideToolbarActions && <ColumnCustomiserTrigger onClick={() => setShowCustomiser(true)} />}
@@ -479,7 +495,7 @@ export function DataGrid<T extends object>({
                       header.column.columnDef.meta?.headerClassName ?? "",
                       stickyHeader && "sticky z-20 bg-background",
                     )}
-                    style={stickyHeader ? { top: `calc(var(--top-chrome-extra, 0px) + ${stickyColumnHeaderTop}px)` } : undefined}
+                    style={stickyHeader ? { top: stickyColumnHeaderTopCss } : undefined}
                   >
                     {header.isPlaceholder
                       ? null
@@ -495,7 +511,7 @@ export function DataGrid<T extends object>({
                 // — the previous transparency let scrolling data bleed
                 // through the sticky filter bar.
                 const stickyFilterCls = stickyHeader ? "sticky z-20 bg-muted" : "";
-                const stickyFilterStyle = stickyHeader ? { top: `calc(var(--top-chrome-extra, 0px) + ${stickyFilterRowTop}px)` } : undefined;
+                const stickyFilterStyle = stickyHeader ? { top: stickyFilterRowTopCss } : undefined;
                 if (!header.column.getCanFilter()) {
                   return (
                     <TableHead

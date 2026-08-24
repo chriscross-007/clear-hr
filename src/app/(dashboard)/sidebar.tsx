@@ -136,7 +136,17 @@ export function Sidebar({
 
   return (
     <>
-      <nav className="w-48 shrink-0 border-r bg-background sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto">
+      <nav
+        className="w-48 shrink-0 border-r bg-background sticky overflow-y-auto"
+        // Shift below the top-chrome (dashboard header + any active trial /
+        // past-due banner). `--top-chrome-extra` is set on the dashboard
+        // layout root (36px per active banner, 0 otherwise). Height matches
+        // so the sidebar doesn't overflow past the viewport bottom.
+        style={{
+          top: "calc(var(--top-chrome-extra, 0px) + 4rem)",
+          height: "calc(100vh - var(--top-chrome-extra, 0px) - 4rem)",
+        }}
+      >
         {recentVisible.length > 0 && (
           <div className="border-b border-gray-200 px-2 pb-3 pt-4">
             <p className="mb-1 px-3 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
