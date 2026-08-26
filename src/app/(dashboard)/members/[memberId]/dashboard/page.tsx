@@ -19,15 +19,16 @@ export default async function EmployeeDashboardPage({
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  // Caller must be owner or admin
+  // Caller must be in the admin shell (Manager+)
   const { data: caller } = await supabase
     .from("members")
-    .select("role, organisation_id")
+    .select("organisation_id, rights_profiles(rank)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
-  if (!caller || caller.role === "employee") redirect("/dashboard");
+  const callerRank = (caller?.rights_profiles as unknown as { rank?: string } | null)?.rank ?? "employee";
+  if (!caller || callerRank === "employee") redirect("/dashboard");
 
   // Target member must be in the same org
   const { data: member } = await supabase

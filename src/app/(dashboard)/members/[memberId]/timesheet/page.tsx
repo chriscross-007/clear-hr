@@ -36,13 +36,14 @@ export default async function TimesheetPage({
 
   const { data: caller } = await supabase
     .from("members")
-    .select("id, organisation_id, role, permissions, organisations(ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins)")
+    .select("id, organisation_id, rights_profiles(rank), organisations(ts_round_first_in_mins, ts_round_first_in_grace_mins, ts_round_break_out_mins, ts_round_break_out_grace_mins, ts_round_break_in_mins, ts_round_break_in_grace_mins, ts_round_last_out_mins, ts_round_last_out_grace_mins)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!caller) redirect("/login");
-  if (caller.role !== "owner" && caller.role !== "admin") notFound();
+  const callerRank = (caller.rights_profiles as unknown as { rank?: string } | null)?.rank ?? "employee";
+  if (callerRank === "employee") notFound();
 
   const orgSettings = caller.organisations as unknown as {
     ts_round_first_in_mins:        number | null;
@@ -259,7 +260,7 @@ export default async function TimesheetPage({
       weekStart={weekStart}
       weekEnd={weekEnd}
       workPeriods={workPeriods}
-      callerRole={caller.role}
+      callerRole={callerRank}
       shiftDefs={shiftDefs}
       shiftByDate={shiftByDate}
       shiftBands={shiftBands}

@@ -2,13 +2,12 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
-import { getCustomFieldDefAccess } from "@/lib/rights-config";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 
 /**
- * Resolve the caller's tri-state access to custom field definitions.
- * Owners are always "write"; admins read it off their permissions blob
- * (handling the legacy boolean shape). Throws if not authenticated or
- * not a member.
+ * CLE-196b-2 — Resolve the caller's write access to custom field
+ * definitions via the Rights Profiles v2 resolver. Custom fields fold
+ * into `canEditOrgSettings` in the new model.
  */
 async function requireCustomFieldDefWriteAccess(): Promise<
   | { ok: true; organisationId: string }
@@ -20,19 +19,12 @@ async function requireCustomFieldDefWriteAccess(): Promise<
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated" };
 
-  const { data: membership } = await supabase
-    .from("members")
-    .select("organisation_id, role, permissions")
-    .eq("user_id", user.id)
-    .single();
-  if (!membership) return { ok: false, error: "No organisation" };
-
-  const perms = (membership.permissions as Record<string, unknown>) ?? {};
-  const access = getCustomFieldDefAccess(membership.role, perms);
-  if (access !== "write") {
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved) return { ok: false, error: "No organisation" };
+  if (!resolved.rights.canEditOrgSettings) {
     return { ok: false, error: "You don't have write access to custom field definitions" };
   }
-  return { ok: true, organisationId: membership.organisation_id as string };
+  return { ok: true, organisationId: resolved.ctx.organisationId };
 }
 
 /** Data type of the field's underlying value. Nine base types only —
@@ -166,24 +158,13 @@ export async function saveCustomFieldValues(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Not authenticated" };
 
-  // Verify caller has edit access to this member's org
-  const { data: callerMembership } = await supabase
-    .from("members")
-    .select("organisation_id, role, permissions")
-    .eq("user_id", user.id)
-    .single();
-  if (!callerMembership) return { success: false, error: "No organisation" };
-
-  const permissions =
-    (callerMembership.permissions as Record<string, unknown>) ?? {};
-  const accessMembers =
-    callerMembership.role === "admin"
-      ? (permissions.can_manage_members as string | undefined) ?? "none"
-      : callerMembership.role === "owner"
-        ? "write"
-        : "none";
-  const canEdit =
-    callerMembership.role === "owner" || accessMembers === "write";
+  // CLE-196b-2 — Resolver-shaped edit check. Custom fields sit on the
+  // Personal tab; anyone whose profile grants Personal.update on the
+  // target's scope may edit them.
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved) return { success: false, error: "No organisation" };
+  const callerOrgId = resolved.ctx.organisationId;
+  const canEdit = resolved.rights.tabs.personal?.update === true;
   if (!canEdit) return { success: false, error: "Insufficient permissions" };
 
   const adminClient = createAdminClient(
@@ -198,7 +179,7 @@ export async function saveCustomFieldValues(
     .eq("id", memberId)
     .single();
   if (!targetMember) return { success: false, error: "Member not found" };
-  if (targetMember.organisation_id !== callerMembership.organisation_id)
+  if (targetMember.organisation_id !== callerOrgId)
     return { success: false, error: "Member not in your organisation" };
 
   // Merge new values into existing custom_fields

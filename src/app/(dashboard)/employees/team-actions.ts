@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { logAudit } from "@/lib/audit";
+import { getEffectiveRightsForUser, type EffectiveRights } from "@/lib/rights-resolver";
 
 function createAdminClient() {
   return createSupabaseClient(
@@ -18,7 +19,19 @@ function createAdminClient() {
   );
 }
 
-async function getCallerMembership() {
+// CLE-196b-2 — Returns the caller's basic identity plus their
+// resolved Rights Profile v2 rights. Every downstream permission check
+// reads `membership.rights.canX` instead of the legacy `role` +
+// `permissions` blob.
+type CallerMembership = {
+  id: string;
+  organisation_id: string;
+  first_name: string;
+  last_name: string;
+  rights: EffectiveRights;
+};
+
+async function getCallerMembership(): Promise<CallerMembership> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -28,14 +41,23 @@ async function getCallerMembership() {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("id, organisation_id, role, permissions, first_name, last_name")
+    .select("id, organisation_id, first_name, last_name")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!membership) throw new Error("No organisation");
 
-  return membership;
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved) throw new Error("No rights profile");
+
+  return {
+    id: membership.id as string,
+    organisation_id: membership.organisation_id as string,
+    first_name: membership.first_name as string,
+    last_name: membership.last_name as string,
+    rights: resolved.rights,
+  };
 }
 
 export async function getTeams(): Promise<{
@@ -86,8 +108,8 @@ export async function updateTeamBlockCover(
   try {
     const membership = await getCallerMembership();
 
-    if (membership.role !== "owner" && membership.role !== "admin") {
-      return { success: false, error: "Only owners and admins can update team settings" };
+    if (!membership.rights.canManageTeams) {
+      return { success: false, error: "You don't have permission to update team settings" };
     }
 
     const admin = createAdminClient();
@@ -112,8 +134,8 @@ export async function updateTeamMinCover(
   try {
     const membership = await getCallerMembership();
 
-    if (membership.role !== "owner" && membership.role !== "admin") {
-      return { success: false, error: "Only owners and admins can update team settings" };
+    if (!membership.rights.canManageTeams) {
+      return { success: false, error: "You don't have permission to update team settings" };
     }
 
     const admin = createAdminClient();
@@ -140,28 +162,24 @@ export async function getApproverMembers(): Promise<{
     const membership = await getCallerMembership();
     const admin = createAdminClient();
 
-    // Holiday approvers for a team are the owner (always — owners have all
-    // rights by role) plus admins whose rights profile grants Approve
-    // Holidays. Admins without the right are excluded. Mirrors the
-    // approval-profile-actions.getApproverOptions filter.
+    // CLE-196b-2 — Holiday approvers for a team are any member whose
+    // rights profile grants Approve Holidays. Join to rights_profiles
+    // and filter server-side.
     const { data, error } = await admin
       .from("members")
-      .select("id, first_name, last_name, role, permissions")
+      .select("id, first_name, last_name, rights_profiles!inner(can_approve_holidays)")
       .eq("organisation_id", membership.organisation_id)
-      .in("role", ["owner", "admin"])
+      .eq("rights_profiles.can_approve_holidays", true)
       .order("first_name");
 
     if (error) return { success: false, error: error.message };
 
     return {
       success: true,
-      members: (data ?? [])
-        .filter((m) => {
-          if (m.role === "owner") return true;
-          const perms = (m.permissions as Record<string, unknown> | null) ?? {};
-          return perms.can_approve_holidays === true;
-        })
-        .map((m) => ({ id: m.id, name: `${m.first_name} ${m.last_name}` })),
+      members: (data ?? []).map((m) => ({
+        id: m.id as string,
+        name: `${m.first_name} ${m.last_name}`,
+      })),
     };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
@@ -175,8 +193,8 @@ export async function updateTeamApprover(
   try {
     const membership = await getCallerMembership();
 
-    if (membership.role !== "owner" && membership.role !== "admin") {
-      return { success: false, error: "Only owners and admins can update team settings" };
+    if (!membership.rights.canManageTeams) {
+      return { success: false, error: "You don't have permission to update team settings" };
     }
 
     const admin = createAdminClient();
@@ -200,8 +218,8 @@ export async function createTeam(
   try {
     const membership = await getCallerMembership();
 
-    if (membership.role !== "owner") {
-      return { success: false, error: "Only the owner can create teams" };
+    if (!membership.rights.canManageTeams) {
+      return { success: false, error: "You don't have permission to create teams" };
     }
 
     const admin = createAdminClient();
@@ -250,8 +268,8 @@ export async function renameTeams(
 
     const membership = await getCallerMembership();
 
-    if (membership.role !== "owner") {
-      return { success: false, error: "Only the owner can rename teams" };
+    if (!membership.rights.canManageTeams) {
+      return { success: false, error: "You don't have permission to rename teams" };
     }
 
     const admin = createAdminClient();
@@ -324,8 +342,8 @@ export async function deleteTeam(
   try {
     const membership = await getCallerMembership();
 
-    if (membership.role !== "owner") {
-      return { success: false, error: "Only the owner can delete teams" };
+    if (!membership.rights.canManageTeams) {
+      return { success: false, error: "You don't have permission to delete teams" };
     }
 
     const admin = createAdminClient();
@@ -382,13 +400,7 @@ export async function updateMemberTeam(
   try {
     const membership = await getCallerMembership();
 
-    const canManage =
-      membership.role === "owner" ||
-      (membership.role === "admin" &&
-        (membership.permissions as Record<string, boolean>)
-          ?.can_add_members === true);
-
-    if (!canManage) {
+    if (!membership.rights.canManageTeams) {
       return { success: false, error: "Insufficient permissions" };
     }
 

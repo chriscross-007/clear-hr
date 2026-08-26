@@ -42,12 +42,13 @@ export default async function EmployeeCalendarPage({
 
   const { data: caller } = await supabase
     .from("members")
-    .select("id, role, organisation_id")
+    .select("id, organisation_id, rights_profiles(rank)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
-  if (!caller || caller.role === "employee") redirect("/dashboard");
+  const callerRank = (caller?.rights_profiles as unknown as { rank?: string } | null)?.rank ?? "employee";
+  if (!caller || callerRank === "employee") redirect("/dashboard");
 
   const { data: member } = await supabase
     .from("members")

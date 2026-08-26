@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { parseGridPrefs } from "@/lib/grid-prefs";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { EmployeesClient } from "./employees-client";
 import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
 import type { Profile } from "@/app/(dashboard)/employees/profile-actions";
@@ -22,18 +23,20 @@ export default async function EmployeesPage({
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role, permissions, organisations(name, max_employees, currency_symbol)")
+    .select("organisation_id, organisations(name, max_employees, currency_symbol)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
-  const permissions = (membership?.permissions as Record<string, unknown>) ?? {};
+  // CLE-196b-2 — Rights Profiles v2 resolver replaces the legacy
+  // role + permissions.can_* checks that used to live here.
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved) redirect("/organisation-setup");
+  const { rights } = resolved;
 
-  const accessMembers = membership?.role === "admin"
-    ? (permissions.can_manage_members as string | undefined) ?? "none"
-    : membership?.role === "owner" ? "write" : "none";
-
-  const canView = membership?.role === "owner" || accessMembers === "read" || accessMembers === "write";
+  // Directory visibility: anyone whose access scope reaches beyond
+  // themselves. Employees (self-only) never see the directory.
+  const canView = rights.crossUserAccess !== "self";
 
   if (!canView) {
     return (
@@ -43,14 +46,16 @@ export default async function EmployeesPage({
     );
   }
 
-  const canAdd = membership?.role === "owner" ||
-    (membership?.role === "admin" && permissions.can_add_members === true);
+  const canAdd = rights.canCreateUsers || rights.canInviteUsers;
 
   const org = membership?.organisations as unknown as { name: string; max_employees: number; currency_symbol: string } | null;
   const orgName = org?.name ?? "";
   const maxEmployees = org?.max_employees ?? 999;
   const currencySymbol = org?.currency_symbol ?? "£";
-  const canSeeCurrency = membership?.role === "owner" || (membership?.role === "admin" && (permissions.can_see_currency as boolean) === true);
+  // Currency values are sensitive-ish; in the new model they follow the
+  // sensitive-field flag rather than a dedicated switch. Admins by
+  // default get canViewSensitiveFields = true.
+  const canSeeCurrency = rights.canViewSensitiveFields;
 
   const today = new Date().toISOString().slice(0, 10);
   const [{ data: members }, { data: teams }, { data: adminProfiles }, { data: employeeProfiles }, { data: columnPrefsRow }, { data: customFieldDefs }, { data: currentHolidayPeriods }, { data: empWorkProfiles }, { data: approvalProfilesRaw }, { data: memberAssignmentsRaw }, { data: holidayAbsenceTypeRow }] =
@@ -145,7 +150,7 @@ export default async function EmployeesPage({
       initialMembers={enrichedMembers}
       canAdd={canAdd}
       maxEmployees={maxEmployees}
-      isOwner={membership?.role === "owner"}
+      isOwner={rights.rank === "admin"}
       orgName={orgName}
       teams={teams ?? []}
       adminProfiles={(adminProfiles ?? []) as Profile[]}

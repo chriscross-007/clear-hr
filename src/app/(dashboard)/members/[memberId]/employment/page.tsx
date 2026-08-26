@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getEffectiveRightsForUser, resolveTab } from "@/lib/rights-resolver";
 import { EmploymentForm } from "./employment-form";
 import { BookingsCard } from "./bookings-card";
 import type { WorkProfileAssignmentRow } from "./work-profile-section";
@@ -20,20 +21,21 @@ export default async function EmploymentPage({
 
   const { data: caller } = await supabase
     .from("members")
-    .select("organisation_id, role, permissions, organisations(currency_symbol)")
+    .select("organisation_id, organisations(currency_symbol)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
   if (!caller) redirect("/organisation-setup");
-  if (caller.role === "employee") redirect("/dashboard");
 
-  const perms = (caller.permissions as Record<string, unknown>) ?? {};
-  const accessMembers = caller.role === "owner"
-    ? "write"
-    : caller.role === "admin" ? ((perms.can_manage_members as string | undefined) ?? "none") : "none";
-  const canEdit = caller.role === "owner" || accessMembers === "write";
-  const canSeeCurrency = caller.role === "owner" || (caller.role === "admin" && perms.can_see_currency === true);
-  const canAddMembers = caller.role === "owner" || (caller.role === "admin" && perms.can_add_members === true);
+  // CLE-196b-2 — Resolver-shaped permission gates.
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved) redirect("/organisation-setup");
+  const { rights } = resolved;
+  if (rights.crossUserAccess === "self") redirect("/dashboard");
+
+  const canEdit = resolveTab(rights, "employment").update;
+  const canSeeCurrency = rights.canViewSensitiveFields;
+  const canAddMembers = rights.canDeleteUsers; // delete-user right gates the delete button
   const currencySymbol = (caller.organisations as unknown as { currency_symbol: string } | null)?.currency_symbol ?? "£";
 
   // Target member
@@ -114,7 +116,7 @@ export default async function EmploymentPage({
           current_profile_id: currentProfileId,
         }}
         canEdit={canEdit}
-        canDelete={canAddMembers && member.role !== "owner"}
+        canDelete={canAddMembers}
         teams={(teams ?? []) as { id: string; name: string }[]}
         adminProfiles={(adminProfiles ?? []) as { id: string; name: string }[]}
         employeeProfiles={(employeeProfiles ?? []) as { id: string; name: string }[]}

@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { EmployeeSidebar } from "./employee-sidebar";
 
 export default async function EmployeeMemberLayout({
@@ -17,14 +18,16 @@ export default async function EmployeeMemberLayout({
 
   const { data: caller } = await supabase
     .from("members")
-    .select("organisation_id, role")
+    .select("organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
   if (!caller) redirect("/organisation-setup");
-  // Directory sub-pages are admin/owner only. Individual sub-pages also gate themselves;
-  // this short-circuits employees at the layout boundary so they don't even see the shell.
-  if (caller.role === "employee") redirect("/dashboard");
+  // CLE-196b-2 — Directory sub-pages are the admin shell; anyone whose
+  // scope is self-only bounces to /dashboard. Individual sub-pages
+  // gate themselves further.
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved || resolved.rights.crossUserAccess === "self") redirect("/dashboard");
   const { data: member } = await supabase
     .from("members")
     .select("id, first_name, last_name, avatar_url, role")

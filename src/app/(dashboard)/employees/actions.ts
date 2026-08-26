@@ -6,6 +6,7 @@ import { Resend } from "resend";
 import { headers } from "next/headers";
 import { logAudit, diffChanges } from "@/lib/audit";
 import { sendBookingCancelledEmail } from "@/lib/email";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 
 function createAdminClient() {
   return createSupabaseClient(
@@ -31,19 +32,17 @@ async function getCallerMembership() {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("id, organisation_id, role, permissions, first_name, last_name")
+    .select("id, organisation_id, first_name, last_name")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!membership) throw new Error("No organisation");
 
-  const canManage =
-    membership.role === "owner" ||
-    (membership.role === "admin" &&
-      (membership.permissions as Record<string, boolean>)
-        ?.can_add_members === true);
-
+  // CLE-196b-2 — Resolver-shaped permission gate. "Add employee" flow
+  // gated by canCreateUsers OR canInviteUsers (both cover the intent).
+  const resolved = await getEffectiveRightsForUser(user.id);
+  const canManage = resolved?.rights.canCreateUsers === true || resolved?.rights.canInviteUsers === true;
   if (!canManage) throw new Error("Insufficient permissions");
 
   return membership;
@@ -572,9 +571,10 @@ export async function deleteEmployee(
       return { success: false, error: "Employee not found" };
     }
 
-    if (member.role === "owner") {
-      return { success: false, error: "Cannot delete the organisation owner" };
-    }
+    // CLE-196b-2 — Delete gating. The last-Admin DB trigger blocks any
+    // deletion that would leave the org without an Admin, so we no
+    // longer need an app-level "cannot delete the owner" guard. The
+    // trigger handles it plus the new HR/Manager case.
 
     // CLE-181 — block deletion if this member is referenced as a main or
     // delegate approver in any active approval profile. Admin must reassign
@@ -861,18 +861,18 @@ export async function bulkUpdateMembers(
 
     const { data: membership } = await supabase
       .from("members")
-      .select("id, organisation_id, role, permissions, first_name, last_name")
+      .select("id, organisation_id, first_name, last_name")
       .eq("user_id", user.id)
       .limit(1)
       .single();
 
     if (!membership) return { success: false, error: "No organisation" };
 
-    const permissions = (membership.permissions as Record<string, unknown>) ?? {};
-    const canEdit =
-      membership.role === "owner" ||
-      (membership.role === "admin" && permissions.can_manage_members === "write");
-
+    // CLE-196b-2 — Bulk-edit gated by Personal tab update rights (bulk
+    // edit currently only touches team_id, role and custom_fields —
+    // all of which live under the Personal tab).
+    const resolved = await getEffectiveRightsForUser(user.id);
+    const canEdit = resolved?.rights.tabs.personal?.update === true;
     if (!canEdit) return { success: false, error: "Insufficient permissions" };
 
     // Validate role if provided
