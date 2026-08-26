@@ -8,6 +8,7 @@ import {
   Clock,
   ListChecks,
   IdCard,
+  ShieldCheck,
   LayoutGrid,
   Database,
 } from "lucide-react";
@@ -68,11 +69,20 @@ export function SettingsSidebar({
       visible: canEditOrgSettings,
     },
     {
+      href: "/settings/rights-profiles",
+      label: "Rights Profiles",
+      icon: ShieldCheck,
+      // CLE-197 — Rights Profiles v2 editor.
+      visible: canEditRightsProfiles,
+    },
+    {
       href: "/settings/profiles",
       label: "Profiles",
       icon: IdCard,
-      // Meta permission — editing Rights Profiles themselves.
-      visible: canEditRightsProfiles,
+      // Legacy profile-types index (approver / notice / holiday /
+      // working-pattern). Rights Profiles v2 has its own top-level
+      // item above; this remains for the other profile types.
+      visible: canEditOrgSettings,
     },
     {
       href: "/settings/groups",
