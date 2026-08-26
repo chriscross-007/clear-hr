@@ -16,11 +16,17 @@ export async function POST(request: Request) {
 
     const { data: callerMember } = await admin
       .from("members")
-      .select("id, role")
+      .select("id")
       .eq("user_id", user.id)
       .eq("organisation_id", organisationId)
       .single();
     if (!callerMember) return NextResponse.json({ error: "Member not found" }, { status: 404 });
+
+    // CLE-196b-6 — Resolve the caller's rights so we can gate on
+    // crossUserAccess instead of the legacy role blob.
+    const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+    const resolvedDL = await getEffectiveRightsForUser(user.id);
+    const canSeeAny = resolvedDL ? resolvedDL.rights.crossUserAccess !== "self" : false;
 
     let body: { documentId?: string };
     try {
@@ -39,9 +45,8 @@ export async function POST(request: Request) {
       .single();
     if (!doc) return NextResponse.json({ error: "Document not found" }, { status: 404 });
 
-    const isAdmin = callerMember.role === "admin" || callerMember.role === "owner";
     const isOwnDoc = doc.member_id === callerMember.id;
-    if (!isAdmin && !isOwnDoc) {
+    if (!canSeeAny && !isOwnDoc) {
       return NextResponse.json({ error: "Not authorised" }, { status: 403 });
     }
 

@@ -27,12 +27,15 @@ export async function POST() {
 
   const { data: member } = await supabase
     .from("members")
-    .select("id, organisation_id, role")
+    .select("id, organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
-  if (!member || (member.role !== "owner" && member.role !== "admin")) {
+  // CLE-196b-6 — Seeding bank holidays is org-level config.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!member || !resolved?.rights.canEditOrgSettings) {
     return NextResponse.json({ error: "Insufficient permissions" }, { status: 403 });
   }
 

@@ -16,11 +16,16 @@ export async function POST(request: Request) {
 
     const { data: callerMember } = await admin
       .from("members")
-      .select("id, role")
+      .select("id")
       .eq("user_id", user.id)
       .eq("organisation_id", organisationId)
       .single();
     if (!callerMember) return NextResponse.json({ error: "Member not found" }, { status: 404 });
+
+    // CLE-196b-6 — Resolver-shaped scope check.
+    const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+    const resolvedC = await getEffectiveRightsForUser(user.id);
+    const isSelfOnly = resolvedC?.rights.crossUserAccess === "self";
 
     let body: { bookingId?: string };
     try {
@@ -38,7 +43,7 @@ export async function POST(request: Request) {
       .eq("organisation_id", organisationId)
       .single();
     if (!booking) return NextResponse.json({ error: "Booking not found" }, { status: 404 });
-    if (callerMember.role === "employee" && booking.member_id !== callerMember.id) {
+    if (isSelfOnly && booking.member_id !== callerMember.id) {
       return NextResponse.json({ error: "Not authorised" }, { status: 403 });
     }
 

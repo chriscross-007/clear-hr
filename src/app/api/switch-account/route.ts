@@ -40,10 +40,12 @@ export async function GET(request: Request) {
 
   const admin = createAdminClient();
 
-  // Target member must be in same org and have accepted their invite
+  // Target member must be in same org and have accepted their invite.
+  // CLE-196b-6 — Read the target's rank via the joined rights_profile
+  // instead of the legacy role column.
   const { data: member } = await admin
     .from("members")
-    .select("email, role")
+    .select("email, rights_profiles(rank)")
     .eq("id", memberId)
     .eq("organisation_id", callerMembership.organisation_id)
     .not("user_id", "is", null)
@@ -51,7 +53,8 @@ export async function GET(request: Request) {
 
   if (!member) return NextResponse.redirect(`${origin}/employees`);
 
-  const targetHome = member.role === "employee" ? "/dashboard" : "/employees";
+  const targetRank = (member.rights_profiles as unknown as { rank?: string } | null)?.rank ?? "employee";
+  const targetHome = targetRank === "employee" ? "/dashboard" : "/employees";
 
   // Generate a magic link — gives us a hashed_token we can verify server-side
   const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({

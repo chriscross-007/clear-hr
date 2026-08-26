@@ -31,11 +31,16 @@ export async function POST(request: Request) {
     // Caller's member row
     const { data: callerMember } = await admin
       .from("members")
-      .select("id, role")
+      .select("id")
       .eq("user_id", user.id)
       .eq("organisation_id", organisationId)
       .single();
     if (!callerMember) return NextResponse.json({ error: "Member not found" }, { status: 404 });
+
+    // CLE-196b-6 — Resolver-shaped scope check.
+    const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+    const resolvedU = await getEffectiveRightsForUser(user.id);
+    const isSelfOnly = resolvedU?.rights.crossUserAccess === "self";
 
     let formData: FormData;
     try {
@@ -74,8 +79,8 @@ export async function POST(request: Request) {
       .single();
     if (!targetMember) return NextResponse.json({ error: "Member not found" }, { status: 404 });
 
-    // Employees can only upload for themselves
-    if (callerMember.role === "employee" && memberId !== callerMember.id) {
+    // Self-scoped callers can only upload for themselves
+    if (isSelfOnly && memberId !== callerMember.id) {
       return NextResponse.json({ error: "Not authorised" }, { status: 403 });
     }
 
