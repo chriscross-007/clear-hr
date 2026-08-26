@@ -137,10 +137,13 @@ export async function getBookingHistory(
       .eq("organisation_id", member.organisation_id)
       .single();
     if (!booking) return { success: false, error: "Booking not found", entries: [] };
-    if (member.role !== "admin" && member.role !== "owner") {
-      if (booking.member_id !== member.id) {
-        return { success: false, error: "Not authorised", entries: [] };
-      }
+    // CLE-196b-3 — Admin-shell viewers see any booking's history; an
+    // employee (self-only scope) can see only their own.
+    const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+    const resolvedHist = await getEffectiveRightsForUser(user.id);
+    const canSeeAny = resolvedHist ? resolvedHist.rights.crossUserAccess !== "self" : false;
+    if (!canSeeAny && booking.member_id !== member.id) {
+      return { success: false, error: "Not authorised", entries: [] };
     }
 
     // 1. Fetch all audit entries for this booking

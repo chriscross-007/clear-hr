@@ -121,7 +121,15 @@ async function getCallerMember() {
     .single();
 
   if (!member) throw new Error("No organisation");
-  return { supabase, member };
+
+  // CLE-196b-3 — Attach the caller's resolved rights so downstream
+  // gates can read `caller.rights.canApproveHolidays` etc. instead of
+  // the legacy role check.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  const rights = resolved?.rights ?? null;
+
+  return { supabase, member: { ...member, rights } };
 }
 
 /** Resolve the work pattern for a member on a given date */
@@ -1320,7 +1328,7 @@ export async function adminBookAbsence(
   try {
     const { supabase, member: caller } = await getCallerMember();
 
-    if (caller.role !== "owner" && caller.role !== "admin") {
+    if (!caller.rights?.canApproveHolidays) {
       return { success: false, error: "Only admins or owners can book on behalf of others." };
     }
 
@@ -1487,7 +1495,7 @@ export async function getBookingDetails(
 ): Promise<{ success: boolean; error?: string; booking?: AdminBookingDetails }> {
   try {
     const { member: caller } = await getCallerMember();
-    if (caller.role !== "owner" && caller.role !== "admin") {
+    if (!caller.rights?.canApproveHolidays) {
       return { success: false, error: "Forbidden" };
     }
     const admin = getAdminClient();
@@ -1567,7 +1575,7 @@ export async function adminUpdateBooking(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const { supabase, member: caller } = await getCallerMember();
-    if (caller.role !== "owner" && caller.role !== "admin") {
+    if (!caller.rights?.canApproveHolidays) {
       return { success: false, error: "Only admins or owners can edit bookings." };
     }
 
@@ -1706,7 +1714,7 @@ export async function adminDeleteBooking(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const { member: caller } = await getCallerMember();
-    if (caller.role !== "owner" && caller.role !== "admin") {
+    if (!caller.rights?.canApproveHolidays) {
       return { success: false, error: "Only admins or owners can delete bookings." };
     }
     const admin = getAdminClient();
@@ -1796,7 +1804,7 @@ export async function getMemberBookings(
 ): Promise<{ success: boolean; error?: string; bookings: MemberBookingRow[] }> {
   try {
     const { member: caller } = await getCallerMember();
-    if (caller.role !== "owner" && caller.role !== "admin") {
+    if (!caller.rights?.canApproveHolidays) {
       return { success: false, error: "Only admins or owners can view member bookings.", bookings: [] };
     }
     const admin = getAdminClient();

@@ -16,13 +16,16 @@ async function getCallerOrgMembership() {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("id, organisation_id, role")
+    .select("id, organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!membership) throw new Error("No organisation");
-  if (membership.role !== "owner" && membership.role !== "admin") {
+  // CLE-196b-3 — Absence-type CRUD is org-level config.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved?.rights.canEditOrgSettings) {
     throw new Error("Insufficient permissions");
   }
 

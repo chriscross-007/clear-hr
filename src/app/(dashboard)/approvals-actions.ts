@@ -95,13 +95,16 @@ async function getCallerAdmin() {
 
   const { data: member } = await supabase
     .from("members")
-    .select("id, organisation_id, role, first_name, last_name")
+    .select("id, organisation_id, first_name, last_name")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!member) throw new Error("No organisation");
-  if (member.role !== "owner" && member.role !== "admin") {
+  // CLE-196b-3 — Approvals actions require the Approve Holidays right.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved?.rights.canApproveHolidays) {
     throw new Error("Insufficient permissions");
   }
 

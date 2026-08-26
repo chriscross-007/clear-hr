@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { createClient } from "@/lib/supabase/server";
 import { redirect, notFound } from "next/navigation";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { AbsenceTypesClient } from "./absence-types-client";
 import type { AbsenceType, AbsenceReason } from "../absence-actions";
 
@@ -14,13 +15,15 @@ export default async function AbsenceTypesPage() {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("id, organisation_id, role")
+    .select("id, organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!membership) redirect("/login");
-  if (membership.role !== "owner" && membership.role !== "admin") notFound();
+  // CLE-196b-3 — Managing absence types is org-level configuration.
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved?.rights.canEditOrgSettings) notFound();
 
   const [{ data: absenceTypes }, { data: absenceReasons }] = await Promise.all([
     supabase

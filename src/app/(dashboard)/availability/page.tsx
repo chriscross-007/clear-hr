@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { AvailabilityClient } from "./availability-client";
 import type { TeamMember, TeamBooking, TeamBankHoliday } from "@/components/team-calendar";
 import { parseGridPrefs } from "@/lib/grid-prefs";
@@ -18,13 +19,15 @@ export default async function AvailabilityPage({
 
   const { data: member } = await supabase
     .from("members")
-    .select("id, organisation_id, role, team_id, permissions")
+    .select("id, organisation_id, team_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!member) redirect("/login");
-  if (member.role !== "owner" && member.role !== "admin") notFound();
+  // CLE-196b-3 — Availability page requires cross-user visibility.
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved || resolved.rights.crossUserAccess === "self") notFound();
 
   // Fetch teams
   const { data: allTeams } = await supabase
@@ -33,31 +36,15 @@ export default async function AvailabilityPage({
     .eq("organisation_id", member.organisation_id)
     .order("name");
 
-  // CLE-185 — restrict the Team dropdown to the viewer's Team Access.
-  //   - owners see all teams (implicit all-teams)
-  //   - admins follow their permissions.object_access.teams setting:
-  //       scope='all'      → every team
-  //       scope='own'      → the admin's own members.team_id
-  //       scope='selected' → the explicit ids list (with own team always
-  //                          included as a safety net)
-  // The "own" default ensures admins without object_access set fall back
-  // to seeing only their own team.
+  // CLE-196b-3 — Team dropdown scope maps onto the resolver's
+  // cross_user_access:
+  //   'all'  → every team
+  //   'team' → the viewer's own team only (fallback to empty if unset)
+  //   'self' → shouldn't reach here (page redirects above)
   const callerOwnTeamId = (member as { team_id?: string | null } | null)?.team_id ?? null;
   let visibleTeamIds: Set<string> | null = null; // null = unrestricted
-  if (member.role !== "owner") {
-    const perms = (member.permissions ?? {}) as Record<string, unknown>;
-    const oa = (perms.object_access ?? {}) as Record<string, unknown>;
-    const teamAccess = (oa.teams ?? { scope: "own", ids: [] }) as { scope: "own" | "all" | "selected"; ids: string[] };
-    if (teamAccess.scope === "all") {
-      visibleTeamIds = null;
-    } else if (teamAccess.scope === "selected") {
-      visibleTeamIds = new Set([
-        ...(teamAccess.ids ?? []),
-        ...(callerOwnTeamId ? [callerOwnTeamId] : []),
-      ]);
-    } else {
-      visibleTeamIds = new Set(callerOwnTeamId ? [callerOwnTeamId] : []);
-    }
+  if (resolved.rights.crossUserAccess === "team") {
+    visibleTeamIds = new Set(callerOwnTeamId ? [callerOwnTeamId] : []);
   }
   const teams = (allTeams ?? []).filter((t) => !visibleTeamIds || visibleTeamIds.has(t.id));
 

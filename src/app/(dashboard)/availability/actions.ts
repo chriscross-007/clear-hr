@@ -7,6 +7,7 @@
 // outside the loaded window we lazy-load it via the action below.
 
 import { createClient } from "@/lib/supabase/server";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import type { TeamBooking } from "@/components/team-calendar";
 
 export async function getAvailabilityBookingsForMonth(
@@ -20,12 +21,14 @@ export async function getAvailabilityBookingsForMonth(
 
     const { data: member } = await supabase
       .from("members")
-      .select("organisation_id, role")
+      .select("organisation_id")
       .eq("user_id", user.id)
       .limit(1)
       .single();
     if (!member) return { success: false, error: "No organisation", bookings: [] };
-    if (member.role !== "owner" && member.role !== "admin") {
+    // CLE-196b-3 — Availability data requires cross-user visibility.
+    const resolved = await getEffectiveRightsForUser(user.id);
+    if (!resolved || resolved.rights.crossUserAccess === "self") {
       return { success: false, error: "Not authorised", bookings: [] };
     }
 

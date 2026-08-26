@@ -93,7 +93,11 @@ async function getCallerMember() {
 
 async function requireAdminOrOwner() {
   const { supabase, member } = await getCallerMember();
-  if (member.role !== "admin" && member.role !== "owner") {
+  // CLE-196b-3 — Managing approval profiles = org-level config.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const { data: { user } } = await supabase.auth.getUser();
+  const resolved = user ? await getEffectiveRightsForUser(user.id) : null;
+  if (!resolved?.rights.canEditOrgSettings) {
     throw new Error("Insufficient permissions");
   }
   return { supabase, member };
@@ -262,26 +266,29 @@ export async function getApproverOptions(): Promise<{
   try {
     const { supabase, member } = await requireAdminOrOwner();
 
+    // CLE-196b-3 — Approver candidates are members whose Rights Profile
+    // grants can_approve_holidays. Join through and let Postgres filter.
     const { data, error } = await supabase
       .from("members")
-      .select("id, first_name, last_name, role, user_id, permissions")
+      .select("id, first_name, last_name, user_id, rights_profiles!inner(rank, can_approve_holidays)")
       .eq("organisation_id", member.organisation_id)
-      .in("role", ["owner", "admin"])
+      .eq("rights_profiles.can_approve_holidays", true)
       .order("first_name", { ascending: true });
     if (error) return { success: false, error: error.message, approvers: [] };
 
-    const approvers: ApproverOption[] = (data ?? [])
-      .filter((m) => {
-        if (m.role === "owner") return true;
-        const perms = (m.permissions as Record<string, unknown> | null) ?? {};
-        return perms.can_approve_holidays === true;
-      })
-      .map((m) => ({
+    const approvers: ApproverOption[] = (data ?? []).map((m) => {
+      const rp = m.rights_profiles as unknown as { rank: string } | null;
+      // Rank maps onto the legacy role shape for the picker's badge.
+      const rank = rp?.rank ?? "employee";
+      const legacyRole: "owner" | "admin" | "employee" =
+        rank === "admin" ? "owner" : rank === "employee" ? "employee" : "admin";
+      return {
         id: m.id as string,
         name: `${m.first_name ?? ""} ${m.last_name ?? ""}`.trim() || "—",
-        role: m.role as "owner" | "admin" | "employee",
+        role: legacyRole,
         isActive: m.user_id !== null,
-      }));
+      };
+    });
     return { success: true, approvers };
   } catch (e) {
     return {

@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { ApprovalsClient } from "./approvals-client";
 import { getPendingApprovals, getAllRequests } from "../approvals-actions";
 import type { TeamMember, TeamBooking, TeamBankHoliday } from "@/components/team-calendar";
@@ -15,13 +16,15 @@ export default async function ApprovalsPage() {
 
   const { data: member } = await supabase
     .from("members")
-    .select("id, organisation_id, role")
+    .select("id, organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!member) redirect("/login");
-  if (member.role !== "owner" && member.role !== "admin") notFound();
+  // CLE-196b-3 — Only members who can approve holidays see this page.
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved?.rights.canApproveHolidays) notFound();
 
   // Fetch org country code + bank-holiday handling. CLE-192 — handling
   // is used by the inline-calendar arrow row to decide whether a bank

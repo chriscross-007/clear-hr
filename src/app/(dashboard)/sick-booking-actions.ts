@@ -42,7 +42,13 @@ async function getCallerMember() {
 
 async function requireAdmin() {
   const { member } = await getCallerMember();
-  if (member.role !== "admin" && member.role !== "owner") {
+  // CLE-196b-3 — Sick booking admin actions require Approve Holidays
+  // (managers of a team can log sick on their team's behalf).
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const resolved = user ? await getEffectiveRightsForUser(user.id) : null;
+  if (!resolved?.rights.canApproveHolidays) {
     throw new Error("Not authorised");
   }
   return member;

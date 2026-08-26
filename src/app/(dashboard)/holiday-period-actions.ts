@@ -129,7 +129,12 @@ async function getCallerMember() {
 
 async function requireAdminOrOwner() {
   const { supabase, member } = await getCallerMember();
-  if (member.role !== "admin" && member.role !== "owner") {
+  // CLE-196b-3 — Managing holiday periods requires holiday-approve rights
+  // (Manager/HR/Admin), matching the approvals mental model.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const { data: { user } } = await supabase.auth.getUser();
+  const resolved = user ? await getEffectiveRightsForUser(user.id) : null;
+  if (!resolved?.rights.canApproveHolidays) {
     throw new Error("Insufficient permissions");
   }
   return { supabase, member };
@@ -246,8 +251,13 @@ export async function getHolidayPeriodsForMember(
   try {
     const { supabase, member } = await getCallerMember();
 
-    // Employees can only read their own; admins/owners read all in org.
-    if (member.role === "employee" && member.id !== memberId) {
+    // CLE-196b-3 — Members can only read their own periods unless
+    // their profile grants cross-user access.
+    const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+    const { data: { user } } = await supabase.auth.getUser();
+    const resolvedPeriods = user ? await getEffectiveRightsForUser(user.id) : null;
+    const canSeeOthers = resolvedPeriods ? resolvedPeriods.rights.crossUserAccess !== "self" : false;
+    if (!canSeeOthers && member.id !== memberId) {
       return { success: false, error: "Insufficient permissions", periods: [] };
     }
 
