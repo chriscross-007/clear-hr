@@ -221,8 +221,8 @@ export async function getRightsProfiles(): Promise<RightsProfileDto[]> {
       .from("rights_profiles")
       .select(SELECT_COLUMNS)
       .eq("organisation_id", guard.organisationId)
-      .order("rank", { ascending: false })
-      .order("is_default", { ascending: false })
+      // CLE-197 — Flat-list ordering. sort_order is authoritative;
+      // name breaks ties for stable output when two rows share it.
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true }),
     admin
@@ -341,24 +341,22 @@ export async function deleteRightsProfile(
 }
 
 export async function reorderRightsProfiles(
-  rank: Rank,
   orderedIds: string[]
 ): Promise<{ success: boolean; error?: string }> {
   const guard = await requireCanEditRightsProfiles();
   if (!guard.ok) return { success: false, error: guard.error };
   const admin = getAdmin();
 
-  // Default row sits at sort_order 0 and isn't drag-reorderable, so
-  // non-default rows start at 1.
+  // CLE-197 — Flat-list reorder. Every profile in the org gets a
+  // sort_order matching its index in the supplied list. rank + is_default
+  // are ignored — the user sees one list, we persist one order.
   await Promise.all(
     orderedIds.map((id, i) =>
       admin
         .from("rights_profiles")
-        .update({ sort_order: i + 1 })
+        .update({ sort_order: i })
         .eq("id", id)
         .eq("organisation_id", guard.organisationId)
-        .eq("rank", rank)
-        .eq("is_default", false)
     )
   );
   revalidatePath("/settings/rights-profiles");

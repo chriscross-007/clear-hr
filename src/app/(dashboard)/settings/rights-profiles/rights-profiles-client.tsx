@@ -6,9 +6,10 @@
 // preview. Every save round-trips through the server actions; reads
 // go live via the resolver so changes take effect immediately.
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Copy, Plus, Trash2 } from "lucide-react";
+import { Copy, GripVertical, Plus, Trash2 } from "lucide-react";
+import { useListReorder } from "@/app/(dashboard)/settings/profiles/use-list-reorder";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,6 +39,7 @@ import {
   updateRightsProfile,
   deleteRightsProfile,
   copyRightsProfile,
+  reorderRightsProfiles,
   getBlankProfilePayload,
   type RightsProfileDto,
   type RightsProfileWritePayload,
@@ -195,6 +197,21 @@ export function RightsProfilesClient({ initialProfiles }: Props) {
   const [rowError, setRowError] = useState<string | null>(null);
   const router = useRouter();
 
+  // CLE-197 — Sync local state whenever the server component re-renders
+  // (after router.refresh() following a create/copy/save). Without this,
+  // the local `profiles` state stays frozen at the initial mount value
+  // and Copy/Save appear to do nothing from the user's perspective.
+  useEffect(() => {
+    setProfiles(initialProfiles);
+  }, [initialProfiles]);
+
+  const drag = useListReorder<RightsProfileDto>({
+    items: profiles,
+    setItems: setProfiles,
+    onReorder: (ids) => reorderRightsProfiles(ids),
+    onError: (e) => setRowError(e),
+  });
+
   async function refresh() {
     router.refresh();
   }
@@ -271,7 +288,7 @@ export function RightsProfilesClient({ initialProfiles }: Props) {
           <p className="py-2 text-sm text-muted-foreground">No profiles yet.</p>
         ) : (
           <ul className="divide-y rounded-md border">
-            {profiles.map((p) => (
+            {profiles.map((p, i) => (
               <ProfileRow
                 key={p.id}
                 profile={p}
@@ -279,6 +296,8 @@ export function RightsProfilesClient({ initialProfiles }: Props) {
                 onCopy={() => handleCopy(p)}
                 onDelete={() => setDeleteTarget(p)}
                 disabled={pending}
+                dragProps={drag.rowProps(i)}
+                dragClassExtra={drag.rowClassExtra(i)}
               />
             ))}
           </ul>
@@ -305,11 +324,13 @@ export function RightsProfilesClient({ initialProfiles }: Props) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this profile?</AlertDialogTitle>
+            <AlertDialogTitle>
+              Delete &ldquo;{deleteTarget?.name}&rdquo;?
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget?.memberCount ?? 0} member
-              {(deleteTarget?.memberCount ?? 0) === 1 ? "" : "s"} currently assigned.
-              You&apos;ll need to reassign them before this can be deleted.
+              {(deleteTarget?.memberCount ?? 0) > 0
+                ? `${deleteTarget?.memberCount} member${deleteTarget?.memberCount === 1 ? "" : "s"} currently assigned. Reassign them before you can delete this profile.`
+                : "This profile has no members assigned. This can't be undone."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -334,12 +355,16 @@ function ProfileRow({
   onCopy,
   onDelete,
   disabled,
+  dragProps,
+  dragClassExtra,
 }: {
   profile: RightsProfileDto;
   onEdit: () => void;
   onCopy: () => void;
   onDelete: () => void;
   disabled: boolean;
+  dragProps: React.HTMLAttributes<HTMLDivElement> & { draggable: boolean };
+  dragClassExtra: string;
 }) {
   const cannotDelete = profile.isDefault || profile.memberCount > 0;
   const deleteReason = profile.isDefault
@@ -349,47 +374,60 @@ function ProfileRow({
       : undefined;
 
   return (
-    <li
-      className="flex items-center justify-between gap-3 px-4 py-3 cursor-pointer hover:bg-muted/50"
-      onClick={onEdit}
-    >
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="font-medium truncate">{profile.name}</span>
-        {profile.isDefault && (
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-            Default
-          </span>
-        )}
+    <li className={cn("flex items-stretch", dragClassExtra)}>
+      {/* Drag handle — the whole row is draggable, but this column is
+          the visible affordance so users know reorder is possible. */}
+      <div
+        {...dragProps}
+        className="flex items-center px-2 cursor-grab active:cursor-grabbing text-muted-foreground hover:bg-muted/40"
+        onClick={(e) => e.stopPropagation()}
+        aria-label="Drag to reorder"
+        title="Drag to reorder"
+      >
+        <GripVertical className="h-4 w-4" />
       </div>
-      <div className="flex items-center gap-3">
-        <span className="text-xs text-muted-foreground whitespace-nowrap">
-          {profile.memberCount} member{profile.memberCount === 1 ? "" : "s"}
-        </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            onCopy();
-          }}
-          disabled={disabled}
-          aria-label="Copy profile"
-        >
-          <Copy className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          disabled={disabled || cannotDelete}
-          title={deleteReason}
-          aria-label="Delete profile"
-        >
-          <Trash2 className={cn("h-4 w-4", cannotDelete && "opacity-40")} />
-        </Button>
+      <div
+        className="flex-1 flex items-center justify-between gap-3 px-2 py-3 cursor-pointer hover:bg-muted/50"
+        onClick={onEdit}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-medium truncate">{profile.name}</span>
+          {profile.isDefault && (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+              Default
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground whitespace-nowrap">
+            {profile.memberCount} member{profile.memberCount === 1 ? "" : "s"}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCopy();
+            }}
+            disabled={disabled}
+            aria-label="Copy profile"
+          >
+            <Copy className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            disabled={disabled || cannotDelete}
+            title={deleteReason}
+            aria-label="Delete profile"
+          >
+            <Trash2 className={cn("h-4 w-4", cannotDelete && "opacity-40")} />
+          </Button>
+        </div>
       </div>
     </li>
   );
