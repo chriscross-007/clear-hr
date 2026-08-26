@@ -10,7 +10,10 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
-import { getEffectiveRightsForUser, TAB_KEYS, type Rank, type CrossUserAccess, type TabKey, type TabAccess } from "@/lib/rights-resolver";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
+// CLE-197 — Types/constants live in `rights-types` so client-side
+// imports of RightsProfileWritePayload don't drag in `next/headers`.
+import { TAB_KEYS, type Rank, type CrossUserAccess, type TabKey, type TabAccess } from "@/lib/rights-types";
 import { revalidatePath } from "next/cache";
 
 // ---------------------------------------------------------------------------

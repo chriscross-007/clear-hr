@@ -43,7 +43,11 @@ import {
   type RightsProfileDto,
   type RightsProfileWritePayload,
 } from "./actions";
-import { TAB_KEYS, type Rank, type TabKey, type CrossUserAccess, type TabAccess } from "@/lib/rights-resolver";
+// CLE-197 — Import the shared runtime + types from `rights-types.ts`
+// rather than `rights-resolver.ts`; the resolver pulls in server-only
+// modules (next/headers, service-role client) that Turbopack won't
+// tolerate in a "use client" bundle.
+import { TAB_KEYS, type Rank, type TabKey, type CrossUserAccess, type TabAccess } from "@/lib/rights-types";
 import { cn } from "@/lib/utils";
 
 const RANKS = ["admin", "hr", "manager", "employee"] as const satisfies readonly Rank[];
