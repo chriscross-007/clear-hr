@@ -22,7 +22,9 @@ export default async function AuditPage() {
   if (!membership) redirect("/organisation-setup");
 
   // Only owners and admins can view audit trail
-  if (membership.role !== "owner" && membership.role !== "admin") {
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved?.rights.canViewAuditLogs) {
     redirect("/employees");
   }
 

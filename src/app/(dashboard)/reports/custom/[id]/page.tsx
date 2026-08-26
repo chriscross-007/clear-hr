@@ -36,7 +36,9 @@ export default async function CustomReportViewPage({
   const currencySymbol = org?.currency_symbol ?? "£";
   const orgName = org?.name ?? "";
 
-  if (!hasPlanFeature(plan, "custom_reports") || (membership.role !== "owner" && membership.role !== "admin")) {
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolvedCR = await getEffectiveRightsForUser(user.id);
+  if (!hasPlanFeature(plan, "custom_reports") || !resolvedCR?.rights.canRunReports) {
     return (
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <p className="text-muted-foreground">Custom reports require a Pro or higher plan.</p>
@@ -55,10 +57,7 @@ export default async function CustomReportViewPage({
   const report = ALL_STANDARD_REPORTS.find((r) => r.id === customReport.based_on);
   if (!report) notFound();
 
-  const permissions = (membership.permissions as Record<string, unknown>) ?? {};
-  const canSeeCurrency =
-    membership.role === "owner" ||
-    (membership.role === "admin" && (permissions.can_see_currency as boolean) === true);
+  const canSeeCurrency = resolvedCR.rights.canViewSensitiveFields;
 
   const [
     { data: members },

@@ -27,7 +27,9 @@ export default async function FavouritesPage() {
   const org = membership.organisations as unknown as { plan: string } | null;
   const plan = org?.plan ?? "lite";
 
-  if (!hasPlanFeature(plan, "reports") || (membership.role !== "owner" && membership.role !== "admin")) {
+  const { getEffectiveRightsForUser: _grF } = await import("@/lib/rights-resolver");
+  const _rF = await _grF(user.id);
+  if (!hasPlanFeature(plan, "reports") || !_rF?.rights.canRunReports) {
     return (
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <p className="text-muted-foreground">Reports require a Pro or higher plan.</p>

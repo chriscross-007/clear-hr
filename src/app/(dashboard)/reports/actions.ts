@@ -86,7 +86,10 @@ export async function createCustomReport(input: {
       return { success: false, error: "Custom reports require a Pro or higher plan" };
     }
 
-    if (membership.role !== "owner" && membership.role !== "admin") {
+    const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+    const { data: { user: uCheck } } = await supabase.auth.getUser();
+    const resolvedReports = uCheck ? await getEffectiveRightsForUser(uCheck.id) : null;
+    if (!resolvedReports?.rights.canRunReports) {
       return { success: false, error: "Only owners and admins can create custom reports" };
     }
 

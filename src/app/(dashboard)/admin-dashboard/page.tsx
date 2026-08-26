@@ -22,7 +22,9 @@ export default async function AdminDashboardPage() {
   if (!member) redirect("/organisation-setup");
 
   // Only admins and owners
-  if (member.role !== "admin" && member.role !== "owner") {
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved || resolved.rights.rank === "employee") {
     redirect("/dashboard");
   }
 

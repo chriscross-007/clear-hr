@@ -19,7 +19,9 @@ export default async function HolidayReportPage() {
     .single();
 
   if (!membership) redirect("/login");
-  if (membership.role !== "owner" && membership.role !== "admin") notFound();
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolvedR = await getEffectiveRightsForUser(user.id);
+  if (!resolvedR?.rights.canRunReports) notFound();
 
   const org = membership.organisations as unknown as {
     plan: string;

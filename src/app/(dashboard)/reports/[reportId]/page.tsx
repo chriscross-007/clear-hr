@@ -48,7 +48,9 @@ export default async function StandardReportPage({
     );
   }
 
-  if (membership.role !== "owner" && membership.role !== "admin") {
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolvedRep = await getEffectiveRightsForUser(user.id);
+  if (!resolvedRep?.rights.canRunReports) {
     return (
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <p className="text-muted-foreground">You don&apos;t have access to reports.</p>
@@ -56,10 +58,7 @@ export default async function StandardReportPage({
     );
   }
 
-  const permissions = (membership.permissions as Record<string, unknown>) ?? {};
-  const canSeeCurrency =
-    membership.role === "owner" ||
-    (membership.role === "admin" && (permissions.can_see_currency as boolean) === true);
+  const canSeeCurrency = resolvedRep.rights.canViewSensitiveFields;
 
   const gridId = `report_${reportId}`;
 
@@ -92,8 +91,7 @@ export default async function StandardReportPage({
   const favouriteIds = new Set((favouritesData ?? []).map((f: { report_id: string }) => f.report_id));
   const isFavourited = favouriteIds.has(reportId);
 
-  const canCreateCustom = hasPlanFeature(plan, "custom_reports") &&
-    (membership.role === "owner" || membership.role === "admin");
+  const canCreateCustom = hasPlanFeature(plan, "custom_reports") && resolvedRep.rights.canRunReports;
 
   const callerMemberId = membership.id;
   const customReports = (customReportsData ?? []) as { id: string; name: string; based_on: string; shared: boolean; created_by: string }[];

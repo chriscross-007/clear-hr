@@ -25,7 +25,9 @@ export default async function CustomReportsPage() {
   const org = membership.organisations as unknown as { plan: string } | null;
   const plan = org?.plan ?? "lite";
 
-  if (!hasPlanFeature(plan, "custom_reports") || (membership.role !== "owner" && membership.role !== "admin")) {
+  const { getEffectiveRightsForUser: _grC } = await import("@/lib/rights-resolver");
+  const _rC = await _grC(user.id);
+  if (!hasPlanFeature(plan, "custom_reports") || !_rC?.rights.canRunReports) {
     return (
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <p className="text-muted-foreground">Custom reports require a Pro or higher plan.</p>
@@ -53,7 +55,7 @@ export default async function CustomReportsPage() {
     <CustomReportsClient
       reports={reports}
       callerMemberId={membership.id}
-      callerRole={membership.role as string}
+      callerRole={_rC.rights.rank}
     />
   );
 }

@@ -23,7 +23,9 @@ async function requireAdmin() {
     .eq("user_id", user.id)
     .single();
   if (!member) throw new Error("No membership found");
-  if (member.role !== "admin" && member.role !== "owner") {
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolvedDA = user ? await getEffectiveRightsForUser(user.id) : null;
+  if (!resolvedDA || resolvedDA.rights.rank === "employee") {
     throw new Error("Not authorised");
   }
   return member;

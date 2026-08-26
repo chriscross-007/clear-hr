@@ -52,7 +52,14 @@ async function getCallerMember() {
     .single();
   if (!member) throw new Error("No membership found");
 
-  return { supabase, member };
+  // CLE-196b-4 — Attach the caller's resolved rights so downstream
+  // action gates can read `caller.rights.*` instead of the legacy
+  // `role === "admin"` check.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  const rights = resolved?.rights ?? null;
+
+  return { supabase, member: { ...member, rights } };
 }
 
 // ---------------------------------------------------------------------------
@@ -126,8 +133,9 @@ export async function uploadDocumentToMessage(
       .single();
     if (!targetMember) return { success: false, error: "Member not found" };
 
-    // 3. Employees can only upload documents for themselves.
-    if (caller.role === "employee" && memberId !== caller.id) {
+    // 3. Members whose scope is self-only can only upload documents
+    //    for themselves.
+    if (caller.rights?.crossUserAccess === "self" && memberId !== caller.id) {
       return { success: false, error: "Not authorised" };
     }
 
@@ -247,8 +255,10 @@ export async function getOrCreateBookingConversation(
       .single();
     if (!booking) return { success: false, error: "Booking not found" };
 
-    const isAdmin = caller.role === "owner" || caller.role === "admin";
-    if (!isAdmin && booking.member_id !== caller.id) {
+    // CLE-196b-4 — Admin-shell viewers see any booking's thread; the
+    // booking's own member always sees theirs.
+    const canSeeAny = caller.rights?.crossUserAccess !== "self";
+    if (!canSeeAny && booking.member_id !== caller.id) {
       return { success: false, error: "Not authorised" };
     }
 
@@ -419,7 +429,7 @@ export async function updateDocumentLabel(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const { member: caller } = await getCallerMember();
-    if (caller.role !== "owner" && caller.role !== "admin") {
+    if (caller.rights?.crossUserAccess === "self") {
       return { success: false, error: "Not authorised" };
     }
 
@@ -465,7 +475,7 @@ export async function getEmployeeDocuments(
 ): Promise<{ success: boolean; error?: string; documents: EmployeeDocument[] }> {
   try {
     const { member: caller } = await getCallerMember();
-    if (caller.role !== "owner" && caller.role !== "admin") {
+    if (caller.rights?.crossUserAccess === "self") {
       return { success: false, error: "Not authorised", documents: [] };
     }
 
