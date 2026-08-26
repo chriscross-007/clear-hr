@@ -303,6 +303,50 @@ A full-page Settings shell at `/settings` replaces the old `OrganisationEditDial
 - **Tabs in the sticky header:** when a page uses `<Tabs>`, place the `<Tabs>` wrapper around both `<StickyPageHeader>` and the `<TabsContent>`s, then put the `<TabsList>` inside `<StickyPageHeader>`. The Tabs context spans both so triggers stay sticky while content scrolls.
 - **Sticky table-header on `DataGrid` pages:** when a page uses `<DataGrid>` AND has `<StickyPageHeader>`, also pass `stickyHeader` to `DataGrid` so its toolbar, column-header row and filter row stack into the same sticky group. `<StickyPageHeader>` measures itself via `ResizeObserver` and publishes its height on the root as the `--page-header-height` CSS variable; `<DataGrid stickyHeader />` reads that var to auto-pin its toolbar directly beneath — no gap, no overlap, regardless of what the caller puts inside the band. Downstream offsets: toolbar height is 56 (`pt-2` + `h-8` button + `pb-4`), column header pins at `toolbarTop + 56`, filter row at `toolbarTop + 95` (column header `h-10 = 40` more, minus 1 to overlap the tr border-b hairline). Pages that don't use `<StickyPageHeader>` (or need to override) can pass a numeric `stickyHeaderTop` prop — that pins the toolbar at that exact px distance from the viewport top, with the same +56/+95 offsets for the two rows below. The two reports pages that currently pass explicit `stickyHeaderTop={160|240}` predate the auto-measure path; they can safely be migrated to bare `stickyHeader` once verified.
 
+## Rights Profiles v2 (CLE-195/196)
+
+Every access decision reads through `src/lib/rights-resolver.ts`, which
+resolves the caller's `members.rights_profile_id` into an
+`EffectiveRights` object. Ranks are `admin > hr > manager > employee`;
+`cross_user_access` is one of `self | team | all`; per-tab access lives
+in a `tab_matrix` JSONB keyed by the ten employee-form tabs. Two
+governance flags (`can_view_sensitive_fields` / `can_edit_sensitive_fields`)
+sit orthogonally to tab access. See `src/lib/rights-resolver.ts` for
+the full shape.
+
+**Never read `members.role` or `members.permissions.can_*` for security
+decisions.** Both columns still exist for backwards compatibility with
+the RLS helpers (`get_user_role`, `get_user_permission`, `get_org_members`)
+and are populated on legacy write paths — but they're advisory only.
+Use the resolver.
+
+### Residual legacy (to clean up in a follow-up issue)
+
+The full CLE-196 cutover intentionally stopped short of dropping the
+old plumbing so we didn't need to rewrite every RLS helper in one go.
+Known residual pieces:
+
+- `members.role`, `members.permissions`, `members.admin_profile_id`,
+  `members.employee_profile_id` — columns kept because the SECURITY
+  DEFINER RLS helpers still read them.
+- `admin_profiles` / `employee_profiles` tables — kept for the same
+  reason plus because the Edit Employee / Employment form / Bulk Edit
+  sheet still surface Admin/Employee Profile pickers backed by them.
+  Picks have **no security effect** (the resolver ignores them) but
+  the UI still lets users set them.
+- `src/lib/rights-config.ts` and
+  `src/app/(dashboard)/employees/profile-actions.ts` — kept because
+  the pickers above still import them.
+- `src/app/(dashboard)/settings/profiles/rights/rights-profiles-client.tsx`
+  is stubbed to `export {}` and unreachable (the route was replaced
+  with a placeholder in CLE-196a). Chris to delete the file from
+  Windows Explorer when convenient — the sandbox can't unlink it.
+
+Follow-up work: rewrite `get_user_role` / `get_user_permission` /
+`get_org_members` to source from `rights_profiles`, remove the
+Admin/Employee Profile pickers from the client UI, then drop the
+legacy columns/tables. Track under CLE-201 (to be created).
+
 ## Data Security — Non-Negotiable Rules
 
 ClearHR handles sensitive personal and employment data. Security is not optional. **When in doubt about any security decision, stop and ask the user before proceeding.**
