@@ -63,7 +63,10 @@ async function getCallerAdmin() {
     .single();
 
   if (!member) throw new Error("No organisation");
-  if (member.role !== "owner" && member.role !== "admin") {
+  // CLE-196b-5 — Work profile CRUD gated by canEditOrgSettings.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolvedWP = await getEffectiveRightsForUser(user.id);
+  if (!resolvedWP?.rights.canEditOrgSettings) {
     throw new Error("Insufficient permissions");
   }
 
@@ -212,9 +215,8 @@ export async function reorderWorkProfiles(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const { supabase, member } = await getCallerAdmin();
-    if (member.role !== "owner") {
-      return { success: false, error: "Only the owner can reorder profiles" };
-    }
+    // canEditOrgSettings already enforced by getCallerAdmin above.
+    void member;
 
     // Verify every supplied id is an org-level work profile in caller's org.
     const { data: existing } = await supabase

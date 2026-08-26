@@ -27,17 +27,16 @@ export default async function OrganisationSettingsPage() {
 
   const { data: caller } = await supabase
     .from("members")
-    .select("organisation_id, role, permissions")
+    .select("organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
   if (!caller) redirect("/organisation-setup");
 
-  const perms = (caller.permissions as Record<string, unknown>) ?? {};
-  const allowed =
-    caller.role === "owner"
-    || (caller.role === "admin" && perms.can_edit_organisation === true);
-  if (!allowed) redirect("/dashboard");
+  // CLE-196b-5 — Resolver-shaped gate.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved?.rights.canEditOrgSettings) redirect("/dashboard");
 
   const { data: org } = await supabase
     .from("organisations")

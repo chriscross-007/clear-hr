@@ -29,13 +29,18 @@ async function getCallerOrgId(): Promise<CallerInfo> {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("id, organisation_id, role, first_name, last_name")
+    .select("id, organisation_id, first_name, last_name")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!membership) throw new Error("No organisation");
-  if (membership.role !== "owner") throw new Error("Owner access required");
+  // CLE-196b-5 — Backup CRUD gated by canEditOrgSettings OR canManageBilling.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved || (!resolved.rights.canEditOrgSettings && !resolved.rights.canManageBilling)) {
+    throw new Error("You don't have permission to manage backups");
+  }
 
   return {
     orgId: membership.organisation_id,

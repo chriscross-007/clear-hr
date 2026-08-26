@@ -17,11 +17,17 @@ async function getCallerMembership() {
   if (!user) return null;
   const { data: membership } = await supabase
     .from("members")
-    .select("id, organisation_id, role")
+    .select("id, organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
-  return membership ?? null;
+  if (!membership) return null;
+  // CLE-196b-5 — Attach resolved rank so downstream can gate on
+  // `rank === "employee"` instead of the legacy role blob.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  const rank = resolved?.rights.rank ?? "employee";
+  return { ...membership, rank };
 }
 
 interface SaveShiftPayload {
@@ -45,7 +51,7 @@ export async function saveShiftDefinition(
 ): Promise<{ success: true; id: string } | { success: false; error: string }> {
   const caller = await getCallerMembership();
   if (!caller) return { success: false, error: "Not authenticated" };
-  if (caller.role !== "owner" && caller.role !== "admin") {
+  if (caller.rank === "employee") {
     return { success: false, error: "Insufficient permissions" };
   }
   // Ensure the org matches
@@ -137,7 +143,7 @@ export async function deleteShiftDefinition(
 ): Promise<{ success: boolean; error?: string }> {
   const caller = await getCallerMembership();
   if (!caller) return { success: false, error: "Not authenticated" };
-  if (caller.role !== "owner" && caller.role !== "admin") {
+  if (caller.rank === "employee") {
     return { success: false, error: "Insufficient permissions" };
   }
 

@@ -54,7 +54,11 @@ async function getCallerMember() {
 
 async function getCallerOwner() {
   const { supabase, member } = await getCallerMember();
-  if (member.role !== "owner") throw new Error("Owner only");
+  // CLE-196b-5 — Notice-period profile CRUD is org-level config.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const { data: { user } } = await supabase.auth.getUser();
+  const resolved = user ? await getEffectiveRightsForUser(user.id) : null;
+  if (!resolved?.rights.canEditOrgSettings) throw new Error("Not authorised");
   return { supabase, member };
 }
 
@@ -491,18 +495,15 @@ export async function setMemberNoticeProfile(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const { supabase, member } = await getCallerMember();
-    // Owners always; admins with member-write access.
-    const isOwner = member.role === "owner";
-    if (!isOwner) {
-      const { data: perms } = await supabase
-        .from("members")
-        .select("permissions")
-        .eq("id", member.id)
-        .single();
-      const writeAccess =
-        (perms?.permissions as Record<string, unknown> | undefined)?.can_manage_members === "write";
-      if (!writeAccess) return { success: false, error: "Insufficient permissions" };
-    }
+    // CLE-196b-5 — Assigning a notice-period profile to a member requires
+    // Personal-tab update rights (or org-settings for admins).
+    const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+    const { data: { user } } = await supabase.auth.getUser();
+    const resolvedNP = user ? await getEffectiveRightsForUser(user.id) : null;
+    const writeAccessNP =
+      resolvedNP?.rights.tabs.personal?.update === true ||
+      resolvedNP?.rights.canEditOrgSettings === true;
+    if (!writeAccessNP) return { success: false, error: "Insufficient permissions" };
 
     // Verify the target member is in the same org
     const { data: target } = await supabase

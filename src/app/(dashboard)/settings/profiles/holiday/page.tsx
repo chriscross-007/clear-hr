@@ -28,7 +28,9 @@ export default async function HolidayProfilesPage() {
     .limit(1)
     .single();
   if (!caller) redirect("/organisation-setup");
-  if (caller.role !== "owner") redirect("/settings");
+  const { getEffectiveRightsForUser: _grH } = await import("@/lib/rights-resolver");
+  const _rH = await _grH(user.id);
+  if (!_rH?.rights.canEditOrgSettings) redirect("/settings");
 
   const profilesRes = await getHolidayProfiles();
   const initialProfiles = profilesRes.success ? (profilesRes.profiles ?? []) : [];

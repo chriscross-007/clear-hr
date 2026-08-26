@@ -32,7 +32,9 @@ export default async function BillingPage({
     .single();
 
   if (!membership) redirect("/organisation-setup");
-  if (membership.role !== "owner") redirect("/employees");
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolvedB = await getEffectiveRightsForUser(user.id);
+  if (!resolvedB?.rights.canManageBilling) redirect("/employees");
 
   const org = membership.organisations as unknown as {
     name: string;

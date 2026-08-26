@@ -30,13 +30,16 @@ async function getOwnerMembership() {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role")
+    .select("organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!membership) throw new Error("No organisation");
-  if (membership.role !== "owner") throw new Error("Only the owner can manage billing");
+  // CLE-196b-5 — Billing management gated by canManageBilling.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved?.rights.canManageBilling) throw new Error("Only members with billing rights can manage billing");
 
   return membership;
 }

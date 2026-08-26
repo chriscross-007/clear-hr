@@ -23,7 +23,9 @@ export default async function ApproverProfilesPage() {
     .limit(1)
     .single();
   if (!caller) redirect("/organisation-setup");
-  if (caller.role !== "owner") redirect("/settings");
+  const { getEffectiveRightsForUser: _grA } = await import("@/lib/rights-resolver");
+  const _rA = await _grA(user.id);
+  if (!_rA?.rights.canEditOrgSettings) redirect("/settings");
 
   return (
     <div className="space-y-6">

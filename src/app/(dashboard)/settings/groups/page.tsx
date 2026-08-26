@@ -18,17 +18,16 @@ export default async function GroupsSettingsPage() {
 
   const { data: caller } = await supabase
     .from("members")
-    .select("role, permissions")
+    .select("organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
   if (!caller) redirect("/organisation-setup");
 
-  const perms = (caller.permissions as Record<string, unknown>) ?? {};
-  const allowed =
-    caller.role === "owner"
-    || (caller.role === "admin" && perms.can_add_members === true);
-  if (!allowed) redirect("/dashboard");
+  // CLE-196b-5 — Groups (teams) gated by canManageTeams.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved?.rights.canManageTeams) redirect("/dashboard");
 
   const [teamsRes, approverRes] = await Promise.all([
     getTeams(),

@@ -25,7 +25,9 @@ export default async function WorkingPatternProfilesPage() {
     .limit(1)
     .single();
   if (!caller) redirect("/organisation-setup");
-  if (caller.role !== "owner") redirect("/settings");
+  const { getEffectiveRightsForUser: _grW } = await import("@/lib/rights-resolver");
+  const _rW = await _grW(user.id);
+  if (!_rW?.rights.canEditOrgSettings) redirect("/settings");
 
   const { data: profiles } = await supabase
     .from("work_profiles")

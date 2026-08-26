@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCustomFieldDefs } from "@/app/(dashboard)/employees/custom-field-actions";
-import { getCustomFieldDefAccess } from "@/lib/rights-config";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { CustomFieldsPageClient } from "./custom-fields-client";
 
 // CLE-191 — /settings/custom-fields. Lifts the existing
@@ -20,18 +20,16 @@ export default async function CustomFieldsSettingsPage() {
 
   const { data: caller } = await supabase
     .from("members")
-    .select("organisation_id, role, permissions")
+    .select("organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
   if (!caller) redirect("/organisation-setup");
 
-  const perms = (caller.permissions as Record<string, unknown>) ?? {};
-  // Tri-state access: "none" blocks the page, "read" shows it read-only,
-  // "write" enables edit affordances + write actions.
-  const access = getCustomFieldDefAccess(caller.role, perms);
-  if (access === "none") redirect("/dashboard");
-  const canEdit = access === "write";
+  // CLE-196b-5 — Custom fields now folded under canEditOrgSettings.
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved?.rights.canEditOrgSettings) redirect("/dashboard");
+  const canEdit = resolved.rights.canEditOrgSettings;
 
   const [defs, { data: org }] = await Promise.all([
     getCustomFieldDefs(),

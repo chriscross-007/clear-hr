@@ -59,11 +59,10 @@ export async function updateOrganisation(data: {
     .single();
 
   if (!membership) return { success: false, error: "No organisation" };
-  const callerPerms = (membership.permissions as Record<string, unknown> | null) ?? {};
-  const isOwner = membership.role === "owner";
-  const isPermittedAdmin =
-    membership.role === "admin" && callerPerms.can_edit_organisation === true;
-  if (!isOwner && !isPermittedAdmin) {
+  // CLE-196b-5 — Resolver-shaped gate.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolvedOrg = await getEffectiveRightsForUser(user.id);
+  if (!resolvedOrg?.rights.canEditOrgSettings) {
     return { success: false, error: "You do not have permission to edit organisation settings" };
   }
 

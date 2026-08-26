@@ -21,7 +21,9 @@ export default async function ShiftsPage() {
     .single();
 
   if (!membership) redirect("/login");
-  if (membership.role !== "owner" && membership.role !== "admin") notFound();
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolvedS = await getEffectiveRightsForUser(user.id);
+  if (!resolvedS || resolvedS.rights.rank === "employee") notFound();
 
   const { data: shiftDefs } = await supabase
     .from("shift_definitions")

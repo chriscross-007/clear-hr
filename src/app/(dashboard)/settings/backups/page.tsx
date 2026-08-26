@@ -17,12 +17,16 @@ export default async function BackupsSettingsPage() {
 
   const { data: caller } = await supabase
     .from("members")
-    .select("organisation_id, role")
+    .select("organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
   if (!caller) redirect("/organisation-setup");
-  if (caller.role !== "owner") redirect("/dashboard");
+
+  // CLE-196b-5 — Backups gated by canEditOrgSettings (or canManageBilling).
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved || (!resolved.rights.canEditOrgSettings && !resolved.rights.canManageBilling)) redirect("/dashboard");
 
   const { data: org } = await supabase
     .from("organisations")

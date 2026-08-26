@@ -32,7 +32,9 @@ export default async function NoticePeriodProfilesPage() {
     .limit(1)
     .single();
   if (!caller) redirect("/organisation-setup");
-  if (caller.role !== "owner") redirect("/settings");
+  const { getEffectiveRightsForUser: _grN } = await import("@/lib/rights-resolver");
+  const _rN = await _grN(user.id);
+  if (!_rN?.rights.canEditOrgSettings) redirect("/settings");
 
   const profilesRes = await getNoticePeriodProfiles();
   const initialProfiles = profilesRes.success ? (profilesRes.profiles ?? []) : [];

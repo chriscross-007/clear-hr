@@ -18,19 +18,10 @@ export default async function RatesSettingsPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: caller } = await supabase
-    .from("members")
-    .select("role, permissions")
-    .eq("user_id", user.id)
-    .limit(1)
-    .single();
-  if (!caller) redirect("/organisation-setup");
-
-  const perms = (caller.permissions as Record<string, unknown>) ?? {};
-  const allowed =
-    caller.role === "owner"
-    || (caller.role === "admin" && perms.can_edit_organisation === true);
-  if (!allowed) redirect("/dashboard");
+  // CLE-196b-5 — Rates settings gated by canEditOrgSettings.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved?.rights.canEditOrgSettings) redirect("/dashboard");
 
   const rates = await getRates();
 

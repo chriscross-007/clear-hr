@@ -22,11 +22,10 @@ export default async function TimesheetSettingsPage() {
     .single();
   if (!caller) redirect("/organisation-setup");
 
-  const perms = (caller.permissions as Record<string, unknown>) ?? {};
-  const allowed =
-    caller.role === "owner"
-    || (caller.role === "admin" && perms.can_edit_organisation === true);
-  if (!allowed) redirect("/dashboard");
+  // CLE-196b-5 — Timesheet settings gated by canEditOrgSettings.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved?.rights.canEditOrgSettings) redirect("/dashboard");
 
   const { data: org } = await supabase
     .from("organisations")

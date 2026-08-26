@@ -26,7 +26,9 @@ export default async function ProfilesLayout({
     .limit(1)
     .single();
   if (!caller) redirect("/organisation-setup");
-  if (caller.role !== "owner") redirect("/settings");
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const _r = await getEffectiveRightsForUser(user.id);
+  if (!_r?.rights.canEditOrgSettings) redirect("/settings");
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">

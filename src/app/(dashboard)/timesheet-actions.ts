@@ -12,7 +12,9 @@ function getAdminClient() {
   );
 }
 
-/** Derive the caller's membership from the active session. */
+/** Derive the caller's membership from the active session, including
+ *  their resolved Rights Profile v2 rank so downstream gates can read
+ *  `caller.rank !== "employee"` instead of the legacy role check. */
 async function getCallerMembership() {
   const supabase = await createServerClient();
   const {
@@ -22,12 +24,18 @@ async function getCallerMembership() {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("id, organisation_id, role")
+    .select("id, organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
+  if (!membership) return null;
 
-  return membership ?? null;
+  // CLE-196b-5 — Attach resolved rank.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  const rank = resolved?.rights.rank ?? "employee";
+
+  return { ...membership, rank };
 }
 
 /**
@@ -45,7 +53,7 @@ export async function triggerInference(
 ): Promise<{ success: true; periodsCreated: number; periodsUpdated: number; conflicts: number } | { success: false; error: string }> {
   const caller = await getCallerMembership();
   if (!caller) return { success: false, error: "Not authenticated" };
-  if (caller.role !== "owner" && caller.role !== "admin") {
+  if (caller.rank === "employee") {
     return { success: false, error: "Insufficient permissions" };
   }
 
@@ -89,7 +97,7 @@ export async function overrideClockingType(
 ): Promise<{ success: boolean; error?: string }> {
   const caller = await getCallerMembership();
   if (!caller) return { success: false, error: "Not authenticated" };
-  if (caller.role !== "owner" && caller.role !== "admin") {
+  if (caller.rank === "employee") {
     return { success: false, error: "Insufficient permissions" };
   }
 
@@ -140,7 +148,7 @@ export async function setDayShift(
 ): Promise<{ success: boolean; error?: string }> {
   const caller = await getCallerMembership();
   if (!caller) return { success: false, error: "Not authenticated" };
-  if (caller.role !== "owner" && caller.role !== "admin") {
+  if (caller.rank === "employee") {
     return { success: false, error: "Insufficient permissions" };
   }
 
@@ -222,7 +230,7 @@ export async function debugCreateClocking(
 ): Promise<{ success: boolean; error?: string; id?: string }> {
   const caller = await getCallerMembership();
   if (!caller) return { success: false, error: "Not authenticated" };
-  if (caller.role !== "owner" && caller.role !== "admin") {
+  if (caller.rank === "employee") {
     return { success: false, error: "Insufficient permissions" };
   }
 
@@ -255,7 +263,7 @@ export async function debugUpdateClocking(
 ): Promise<{ success: boolean; error?: string; newId?: string }> {
   const caller = await getCallerMembership();
   if (!caller) return { success: false, error: "Not authenticated" };
-  if (caller.role !== "owner" && caller.role !== "admin") {
+  if (caller.rank === "employee") {
     return { success: false, error: "Insufficient permissions" };
   }
 
@@ -291,7 +299,7 @@ export async function debugDeleteClocking(
 ): Promise<{ success: boolean; error?: string }> {
   const caller = await getCallerMembership();
   if (!caller) return { success: false, error: "Not authenticated" };
-  if (caller.role !== "owner" && caller.role !== "admin") {
+  if (caller.rank === "employee") {
     return { success: false, error: "Insufficient permissions" };
   }
 
@@ -340,7 +348,7 @@ export async function editClocking(
 ): Promise<{ success: boolean; error?: string }> {
   const caller = await getCallerMembership();
   if (!caller) return { success: false, error: "Not authenticated" };
-  if (caller.role !== "owner" && caller.role !== "admin") {
+  if (caller.rank === "employee") {
     return { success: false, error: "Insufficient permissions" };
   }
 
@@ -407,7 +415,7 @@ export async function deleteClockingEdit(
 ): Promise<{ success: boolean; error?: string }> {
   const caller = await getCallerMembership();
   if (!caller) return { success: false, error: "Not authenticated" };
-  if (caller.role !== "owner" && caller.role !== "admin") {
+  if (caller.rank === "employee") {
     return { success: false, error: "Insufficient permissions" };
   }
 
@@ -476,7 +484,7 @@ export async function deleteClocking(
 ): Promise<{ success: boolean; error?: string }> {
   const caller = await getCallerMembership();
   if (!caller) return { success: false, error: "Not authenticated" };
-  if (caller.role !== "owner" && caller.role !== "admin") {
+  if (caller.rank === "employee") {
     return { success: false, error: "Insufficient permissions" };
   }
 
@@ -535,7 +543,7 @@ export async function addClocking(
 ): Promise<{ success: boolean; error?: string }> {
   const caller = await getCallerMembership();
   if (!caller) return { success: false, error: "Not authenticated" };
-  if (caller.role !== "owner" && caller.role !== "admin") {
+  if (caller.rank === "employee") {
     return { success: false, error: "Insufficient permissions" };
   }
 
@@ -606,7 +614,7 @@ export async function getClockingsWithLocation(
 ): Promise<{ clockings: MapClocking[]; error?: string }> {
   const caller = await getCallerMembership();
   if (!caller) return { clockings: [], error: "Unauthenticated" };
-  if (caller.role !== "owner" && caller.role !== "admin") return { clockings: [], error: "Forbidden" };
+  if (caller.rank === "employee") return { clockings: [], error: "Forbidden" };
 
   const supabase = await createServerClient();
 

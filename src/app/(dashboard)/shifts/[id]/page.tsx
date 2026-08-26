@@ -23,7 +23,9 @@ export default async function ShiftDefinitionPage({
     .single();
 
   if (!membership) redirect("/login");
-  if (membership.role !== "owner" && membership.role !== "admin") notFound();
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolvedSI = await getEffectiveRightsForUser(user.id);
+  if (!resolvedSI || resolvedSI.rights.rank === "employee") notFound();
 
   // Fetch org rates for the band rate selector
   const { data: rawRates } = await supabase

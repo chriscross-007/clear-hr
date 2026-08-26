@@ -1,6 +1,16 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
+
+// CLE-196b-5 — Rates CRUD gated by canEditOrgSettings.
+async function callerCanEditOrgSettings(): Promise<boolean> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return false;
+  const resolved = await getEffectiveRightsForUser(user.id);
+  return resolved?.rights.canEditOrgSettings === true;
+}
 
 export interface Rate {
   id: string;
@@ -43,7 +53,7 @@ export async function createRate(
   const supabase = await createClient();
   const member = await getCallerMember(supabase);
   if (!member) return { success: false, error: "Not authenticated" };
-  if (member.role !== "owner") return { success: false, error: "Only the owner can manage rates" };
+  if (!(await callerCanEditOrgSettings())) return { success: false, error: "You don't have permission to manage rates" };
 
   const { data: existing } = await supabase
     .from("rates")
@@ -77,7 +87,7 @@ export async function updateRate(
   const supabase = await createClient();
   const member = await getCallerMember(supabase);
   if (!member) return { success: false, error: "Not authenticated" };
-  if (member.role !== "owner") return { success: false, error: "Only the owner can manage rates" };
+  if (!(await callerCanEditOrgSettings())) return { success: false, error: "You don't have permission to manage rates" };
 
   const { error } = await supabase
     .from("rates")
@@ -95,7 +105,7 @@ export async function deleteRate(
   const supabase = await createClient();
   const member = await getCallerMember(supabase);
   if (!member) return { success: false, error: "Not authenticated" };
-  if (member.role !== "owner") return { success: false, error: "Only the owner can manage rates" };
+  if (!(await callerCanEditOrgSettings())) return { success: false, error: "You don't have permission to manage rates" };
 
   const { error } = await supabase
     .from("rates")
@@ -113,7 +123,7 @@ export async function reorderRates(
   const supabase = await createClient();
   const member = await getCallerMember(supabase);
   if (!member) return { success: false, error: "Not authenticated" };
-  if (member.role !== "owner") return { success: false, error: "Only the owner can manage rates" };
+  if (!(await callerCanEditOrgSettings())) return { success: false, error: "You don't have permission to manage rates" };
 
   await Promise.all(
     ids.map((id, i) =>
