@@ -6,7 +6,7 @@
 // preview. Every save round-trips through the server actions; reads
 // go live via the resolver so changes take effect immediately.
 
-import { useMemo, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Copy, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -50,14 +49,9 @@ import {
 import { TAB_KEYS, type Rank, type TabKey, type CrossUserAccess, type TabAccess } from "@/lib/rights-types";
 import { cn } from "@/lib/utils";
 
-const RANKS = ["admin", "hr", "manager", "employee"] as const satisfies readonly Rank[];
-
-const RANK_LABEL: Record<Rank, string> = {
-  admin: "Admin",
-  hr: "HR",
-  manager: "Manager",
-  employee: "Employee",
-};
+// CLE-197 — RANKS / RANK_LABEL removed with the flat-list refactor.
+// Rank stays in the DB as vestigial metadata (see CLE-201) but has
+// no user-visible role.
 
 const TAB_LABEL: Record<TabKey, string> = {
   planner: "Planner",
@@ -201,12 +195,6 @@ export function RightsProfilesClient({ initialProfiles }: Props) {
   const [rowError, setRowError] = useState<string | null>(null);
   const router = useRouter();
 
-  const grouped = useMemo(() => {
-    const out: Record<Rank, RightsProfileDto[]> = { admin: [], hr: [], manager: [], employee: [] };
-    for (const p of profiles) out[p.rank].push(p);
-    return out;
-  }, [profiles]);
-
   async function refresh() {
     router.refresh();
   }
@@ -267,38 +255,35 @@ export function RightsProfilesClient({ initialProfiles }: Props) {
         </div>
       )}
 
-      {RANKS.map((rank) => {
-        const rows = grouped[rank];
-        return (
-          <section key={rank} className="space-y-3">
-            <div className="flex items-baseline justify-between border-b pb-2">
-              <h2 className="text-lg font-semibold">{RANK_LABEL[rank]}</h2>
-              <Button variant="outline" size="sm" onClick={() => handleNew(rank)}>
-                <Plus className="h-4 w-4 mr-1" />
-                New profile
-              </Button>
-            </div>
-            {rows.length === 0 ? (
-              <p className="py-2 text-sm text-muted-foreground">
-                No profiles at this rank yet.
-              </p>
-            ) : (
-              <ul className="divide-y rounded-md border">
-                {rows.map((p) => (
-                  <ProfileRow
-                    key={p.id}
-                    profile={p}
-                    onEdit={() => handleEdit(p)}
-                    onCopy={() => handleCopy(p)}
-                    onDelete={() => setDeleteTarget(p)}
-                    disabled={pending}
-                  />
-                ))}
-              </ul>
-            )}
-          </section>
-        );
-      })}
+      {/* CLE-197 — Flat sortable list. Rank has no user-visible
+          meaning; profiles are just profiles. The 4 seeded defaults
+          (Admin/HR/Manager/Employee) plus any admin-created extras
+          all share one ordered list. */}
+      <section className="space-y-3">
+        <div className="flex items-baseline justify-between border-b pb-2">
+          <h2 className="text-lg font-semibold">Profiles</h2>
+          <Button variant="outline" size="sm" onClick={() => handleNew("employee")}>
+            <Plus className="h-4 w-4 mr-1" />
+            New profile
+          </Button>
+        </div>
+        {profiles.length === 0 ? (
+          <p className="py-2 text-sm text-muted-foreground">No profiles yet.</p>
+        ) : (
+          <ul className="divide-y rounded-md border">
+            {profiles.map((p) => (
+              <ProfileRow
+                key={p.id}
+                profile={p}
+                onEdit={() => handleEdit(p)}
+                onCopy={() => handleCopy(p)}
+                onDelete={() => setDeleteTarget(p)}
+                disabled={pending}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
 
       {editing && (
         <EditorDialog
@@ -477,18 +462,11 @@ function EditorDialog({
               placeholder="e.g. HR Admin"
             />
 
-            <Label className="text-muted-foreground">Rank</Label>
-            <Select
-              value={payload.rank}
-              onValueChange={(v) => update("rank", v as Rank)}
-            >
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {RANKS.map((r) => (
-                  <SelectItem key={r} value={r}>{RANK_LABEL[r]}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* CLE-197 — Rank picker hidden. Profiles are peer-level
+                from the user's perspective; the rank column stays in
+                the DB for now (see CLE-201) but has no user-visible
+                meaning. New profiles seed with rank='employee'; Copy
+                preserves the source rank. */}
 
             <Label className="text-muted-foreground">Access</Label>
             <RadioGroup
