@@ -1,58 +1,44 @@
 export const dynamic = "force-dynamic";
 
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { ADMIN_RIGHTS, EMPLOYEE_RIGHTS } from "@/lib/rights-config";
-import { getProfiles } from "@/app/(dashboard)/employees/profile-actions";
-import { ProfileExplainer } from "../profile-explainer";
-import { RightsProfilesClient } from "./rights-profiles-client";
 
-// CLE-191 — Rights profiles. Wraps the existing `ProfileManager` for
-// both admin + employee profile types. Internal switch lets the user
-// toggle between the two roles; teams list is supplied so the admin
-// team-access scope picker works.
+// CLE-196a — The legacy Rights Profiles UI (based on admin_profiles /
+// employee_profiles + the members.permissions JSONB blob) has been
+// retired. The new Rights Profiles v2 editor lands in CLE-197 at
+// /settings/rights-profiles. During the transition this route shows a
+// placeholder so no writes hit the old permissions system while the
+// domain-batched read swaps land (CLE-196b).
 
-export default async function RightsProfilesPage() {
+export default async function RightsProfilesRetiredPage() {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: caller } = await supabase
-    .from("members")
-    .select("organisation_id, role")
-    .eq("user_id", user.id)
-    .limit(1)
-    .single();
-  if (!caller) redirect("/organisation-setup");
-  if (caller.role !== "owner") redirect("/settings");
-
-  const [adminProfilesRes, employeeProfilesRes, { data: teams }] = await Promise.all([
-    getProfiles("admin"),
-    getProfiles("employee"),
-    supabase
-      .from("teams")
-      .select("id, name")
-      .eq("organisation_id", caller.organisation_id)
-      .order("name"),
-  ]);
-
   return (
-    <div className="space-y-6">
-      <ProfileExplainer
-        kind="live"
-        note="Assigned permissions update on the next page load after a profile change."
-      />
-      <RightsProfilesClient
-        initialAdminProfiles={adminProfilesRes.success ? (adminProfilesRes.profiles ?? []) : []}
-        initialEmployeeProfiles={employeeProfilesRes.success ? (employeeProfilesRes.profiles ?? []) : []}
-        initialAdminNoProfileCount={adminProfilesRes.success ? (adminProfilesRes.noProfileCount ?? 0) : 0}
-        initialEmployeeNoProfileCount={employeeProfilesRes.success ? (employeeProfilesRes.noProfileCount ?? 0) : 0}
-        teams={(teams ?? []) as { id: string; name: string }[]}
-        adminRights={ADMIN_RIGHTS}
-        employeeRights={EMPLOYEE_RIGHTS}
-      />
+    <div className="mx-auto max-w-2xl space-y-4 rounded-lg border bg-card p-6">
+      <h1 className="text-xl font-semibold">Rights Profiles are being redesigned</h1>
+      <p className="text-sm text-muted-foreground leading-relaxed">
+        We&apos;re rolling out a new Rights Profiles system with four ranks
+        (Admin, HR, Manager, Employee), a per-tab access matrix, and
+        sensitive-field redaction. The new editor arrives shortly.
+      </p>
+      <p className="text-sm text-muted-foreground leading-relaxed">
+        While the migration is in progress, this legacy editor is disabled
+        so profile edits don&apos;t land in the wrong place. Everyone currently
+        keeps the rights they had before. See CLE-195 for the full plan.
+      </p>
+      <div>
+        <Link
+          href="/settings"
+          className="text-sm text-primary underline underline-offset-2"
+        >
+          Back to Settings
+        </Link>
+      </div>
     </div>
   );
 }

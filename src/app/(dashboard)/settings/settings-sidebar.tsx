@@ -13,10 +13,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// CLE-191 — Secondary sidebar for the Settings shell. Mirrors the
-// per-employee EmployeeSidebar pattern. Each item is gated by the same
-// permission rules its page enforces server-side; we hide items the
-// caller can't reach so the menu doesn't lie.
+// CLE-196b-1 — Secondary sidebar for the Settings shell. Item
+// visibility gated by the Rights Profiles v2 resolver flags passed in
+// as props. Custom Fields lives under can_edit_org_settings (see
+// CLE-195 sensitive-field notes); Backups + Profiles under their own
+// dedicated flags. Legacy `role === "owner"` and permissions.can_*
+// paths are gone.
 
 interface NavItem {
   href: string;
@@ -26,64 +28,64 @@ interface NavItem {
 }
 
 interface SettingsSidebarProps {
-  role: string;
-  canEditOrganisation: boolean;
-  canDefineCustomFields: boolean;
-  canAddMembers: boolean;
+  canEditOrgSettings: boolean;
+  canManageTeams: boolean;
+  canEditRightsProfiles: boolean;
+  canManageBilling: boolean;
 }
 
 export function SettingsSidebar({
-  role,
-  canEditOrganisation,
-  canDefineCustomFields,
-  canAddMembers,
+  canEditOrgSettings,
+  canManageTeams,
+  canEditRightsProfiles,
+  canManageBilling,
 }: SettingsSidebarProps) {
   const pathname = usePathname();
-  const isOwner = role === "owner";
 
   const items: NavItem[] = [
     {
       href: "/settings/organisation",
       label: "Organisation",
       icon: Building2,
-      visible: isOwner || canEditOrganisation,
+      visible: canEditOrgSettings,
     },
     {
       href: "/settings/rates",
       label: "Rates",
       icon: PoundSterling,
-      visible: isOwner || canEditOrganisation,
+      visible: canEditOrgSettings,
     },
     {
       href: "/settings/timesheet",
       label: "Timesheet",
       icon: Clock,
-      visible: isOwner || canEditOrganisation,
+      visible: canEditOrgSettings,
     },
     {
       href: "/settings/custom-fields",
       label: "Custom Fields",
       icon: ListChecks,
-      visible: isOwner || canDefineCustomFields,
+      visible: canEditOrgSettings,
     },
     {
       href: "/settings/profiles",
       label: "Profiles",
       icon: IdCard,
-      // Owner only — every profile type touches member-treatment rules.
-      visible: isOwner,
+      // Meta permission — editing Rights Profiles themselves.
+      visible: canEditRightsProfiles,
     },
     {
       href: "/settings/groups",
       label: "Groups",
       icon: LayoutGrid,
-      visible: isOwner || canAddMembers,
+      visible: canManageTeams,
     },
     {
       href: "/settings/backups",
       label: "Backups",
       icon: Database,
-      visible: isOwner,
+      // Backups touch the whole tenant; gate on top-level org settings.
+      visible: canEditOrgSettings || canManageBilling,
     },
   ];
 

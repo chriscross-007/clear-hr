@@ -1,14 +1,12 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { coerceAccess } from "@/lib/rights-config";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { SettingsSidebar } from "./settings-sidebar";
 
-// CLE-191 — Settings shell. Layout-level permission gate ensures the
-// whole section is invisible to anyone who can't touch *any* setting.
-// Individual sub-routes gate further (e.g. /settings/profiles is owner
-// only, /settings/custom-fields lets admins with can_define_custom_fields
-// in, etc.). The sidebar itself uses the same broad gate so the link
-// only appears for viewers with at least one settings-related right.
+// CLE-196b-1 — Settings shell. Rewired onto the Rights Profiles v2
+// resolver. The Settings section is visible to anyone whose profile
+// grants any settings-related right; individual sub-routes gate
+// further via the same resolver flags.
 
 export default async function SettingsLayout({
   children,
@@ -22,34 +20,26 @@ export default async function SettingsLayout({
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: caller } = await supabase
-    .from("members")
-    .select("organisation_id, role, permissions")
-    .eq("user_id", user.id)
-    .limit(1)
-    .single();
-  if (!caller) redirect("/organisation-setup");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved) redirect("/organisation-setup");
+  const { rights } = resolved;
 
-  const perms = (caller.permissions as Record<string, unknown>) ?? {};
-  const canEditOrganisation = perms.can_edit_organisation === true;
-  // Tri-state: "none" | "read" | "write". Any non-none access gates page
-  // visibility; "write" is checked separately in the action layer.
-  const canDefineCustomFields = coerceAccess(perms.can_define_custom_fields) !== "none";
-  const canAddMembers = perms.can_add_members === true;
-
-  const allowed =
-    caller.role === "owner"
-    || (caller.role === "admin"
-      && (canEditOrganisation || canDefineCustomFields || canAddMembers));
-  if (!allowed) redirect("/dashboard");
+  const canManageAny =
+    rights.canEditOrgSettings ||
+    rights.canManageBilling ||
+    rights.canManageTeams ||
+    rights.canEditRightsProfiles ||
+    rights.canCreateUsers ||
+    rights.canInviteUsers;
+  if (!canManageAny) redirect("/dashboard");
 
   return (
     <div className="flex">
       <SettingsSidebar
-        role={caller.role}
-        canEditOrganisation={canEditOrganisation}
-        canDefineCustomFields={canDefineCustomFields}
-        canAddMembers={canAddMembers}
+        canEditOrgSettings={rights.canEditOrgSettings}
+        canManageTeams={rights.canManageTeams}
+        canEditRightsProfiles={rights.canEditRightsProfiles}
+        canManageBilling={rights.canManageBilling}
       />
       <div className="min-w-0 flex-1">{children}</div>
     </div>

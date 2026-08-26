@@ -29,7 +29,9 @@ interface HeaderUserMenuProps {
   fullName: string;
   initials: string;
   avatarUrl: string | null;
-  role: string;
+  // CLE-196b-1 — was `role: string`. Now the rank enum from the
+  // Rights Profiles v2 resolver.
+  rank: "employee" | "manager" | "hr" | "admin";
   memberLabel: string;
   profileName: string | null;
 }
@@ -39,7 +41,7 @@ export function HeaderUserMenu({
   fullName,
   initials,
   avatarUrl,
-  role,
+  rank,
   memberLabel,
   profileName,
 }: HeaderUserMenuProps) {
@@ -83,7 +85,7 @@ export function HeaderUserMenu({
         <span className="hidden text-sm text-muted-foreground sm:block">
           {fullName}{" "}
           <span className="text-xs">
-            ({role === "employee" ? capitalize(memberLabel) : role}
+            ({rank === "employee" ? capitalize(memberLabel) : rank === "hr" ? "HR" : capitalize(rank)}
             {profileName ? ` / ${profileName}` : ""})
           </span>
         </span>

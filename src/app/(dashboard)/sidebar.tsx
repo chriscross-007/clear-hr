@@ -18,18 +18,16 @@ import {
 
 interface SidebarProps {
   userId: string;
-  role: string;
-  accessMembers: string | null;
+  // CLE-196b-1 — Rights Profiles v2 resolver-shaped props.
+  rank: "employee" | "manager" | "hr" | "admin";
+  crossUserAccess: "self" | "team" | "all";
+  canEditOrgSettings: boolean;
+  canManageBilling: boolean;
+  canViewAuditLogs: boolean;
+  canRunReports: boolean;
+  canApproveHolidays: boolean;
   memberLabel: string;
   plan: string;
-  canDefineCustomFields: boolean;
-  canEditOrganisation: boolean;
-  // CLE-194 — the legacy `OrganisationEditDialog` used to receive a long
-  // list of org settings (orgName, requireMfa, currencySymbol, ts*,
-  // holidayYearStart*, bankHoliday*, defaultWorkProfileId, etc.). The
-  // dialog has been deleted; those props are no longer threaded through
-  // the sidebar. Settings sub-routes own the editing surfaces and fetch
-  // their own data.
   initialFavouriteIds?: string[];
   initialCustomReports?: { id: string; name: string }[];
   initialShiftDefs?: { id: string; name: string }[];
@@ -40,12 +38,15 @@ interface SidebarProps {
 
 export function Sidebar({
   userId,
-  role,
-  accessMembers,
+  rank,
+  crossUserAccess,
+  canEditOrgSettings,
+  canManageBilling,
+  canViewAuditLogs,
+  canRunReports,
+  canApproveHolidays,
   memberLabel,
   plan,
-  canDefineCustomFields,
-  canEditOrganisation,
   initialFavouriteIds = [],
   initialCustomReports = [],
   initialShiftDefs = [],
@@ -83,18 +84,18 @@ export function Sidebar({
     .filter((e) => e.memberId !== currentMemberId)
     .slice(0, 3);
 
-  // CLE-192 — Employees link is for owner / admin-with-access only.
-  // The previous `role !== "admin"` check incorrectly let role='employee'
-  // through, which exposed the directory to employees.
-  const showEmployees =
-    role === "owner"
-    || (role === "admin" && (accessMembers === "read" || accessMembers === "write"));
-  const showShifts = role === "owner" || role === "admin";
-  const showOrg = role === "owner" || canDefineCustomFields || canEditOrganisation;
-  const showBilling = role === "owner";
-  const showAudit = role === "owner" || role === "admin";
-  const showReports = hasPlanFeature(plan, "reports");
-  const showCustomReports = hasPlanFeature(plan, "custom_reports");
+  // CLE-196b-1 — visibility gates rewired onto the resolver flags.
+  //   showEmployees: anyone whose scope reaches beyond themselves
+  //   showShifts / adminShellLinks: Manager+ (anyone not on the self-only Employee shell)
+  //   showOrg / showBilling / showAudit: their own resolver flags
+  const isAdminShell = rank !== "employee";
+  const showEmployees = crossUserAccess !== "self";
+  const showShifts = isAdminShell;
+  const showOrg = canEditOrgSettings;
+  const showBilling = canManageBilling;
+  const showAudit = canViewAuditLogs;
+  const showReports = hasPlanFeature(plan, "reports") && canRunReports;
+  const showCustomReports = hasPlanFeature(plan, "custom_reports") && canRunReports;
 
   // Resolve favourite IDs to name + href
   const favouriteItems = initialFavouriteIds
@@ -185,7 +186,7 @@ export function Sidebar({
           </div>
         )}
         <div className="mt-2 flex flex-col gap-0.5 p-2 pt-4">
-          {(role === "owner" || role === "admin") && (
+          {isAdminShell && (
             <Link href="/admin-dashboard" className={linkClass("/admin-dashboard")}>
               <LayoutDashboard className="h-4 w-4 shrink-0" />
               Dashboard
@@ -207,7 +208,7 @@ export function Sidebar({
               {capitalize(pluralize(memberLabel))}
             </Link>
           )}
-          {(role === "owner" || role === "admin") && (
+          {canEditOrgSettings && (
             <Link href="/absence-types" className={linkClass("/absence-types")}>
               <CalendarDays className="h-4 w-4 shrink-0" />
               Absence Types
@@ -215,13 +216,13 @@ export function Sidebar({
           )}
           {/* CLE-194 — Work Profiles link removed; its CRUD now lives at
               Settings → Profiles → Working Patterns. */}
-          {(role === "owner" || role === "admin") && (
+          {showEmployees && (
             <Link href="/availability" className={linkClass("/availability")}>
               <Calendar className="h-4 w-4 shrink-0" />
               Availability
             </Link>
           )}
-          {(role === "owner" || role === "admin") && (
+          {canApproveHolidays && (
             <Link href="/approvals" className={linkClass("/approvals")}>
               <ClipboardCheck className="h-4 w-4 shrink-0" />
               <span className="flex-1">Approvals</span>

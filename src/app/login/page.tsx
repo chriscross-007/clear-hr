@@ -66,18 +66,21 @@ function LoginForm() {
         return;
       }
 
-      // Determine the correct home page based on role
+      // CLE-196b-1 — Determine the correct home page based on the
+      // caller's rank via the joined rights_profile. Employee → own
+      // dashboard, everyone else → the admin shell.
       const { data: { user } } = await supabase.auth.getUser();
       const { data: membership } = user
         ? await supabase
             .from("members")
-            .select("role")
+            .select("rights_profiles(rank)")
             .eq("user_id", user.id)
             .limit(1)
             .single()
         : { data: null };
 
-      const defaultHome = membership?.role === "employee" ? "/dashboard" : "/admin-dashboard";
+      const profile = membership?.rights_profiles as unknown as { rank?: string } | null;
+      const defaultHome = (profile?.rank ?? "employee") === "employee" ? "/dashboard" : "/admin-dashboard";
       router.push(nextPath || defaultHome);
       router.refresh();
     }

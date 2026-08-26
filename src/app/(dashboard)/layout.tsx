@@ -4,9 +4,16 @@ import { createClient } from "@/lib/supabase/server";
 import { MemberLabelProvider } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { hasPlanFeature } from "@/lib/plan-config";
-import { coerceAccess } from "@/lib/rights-config";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { HeaderUserMenu } from "./header-user-menu";
 import { Sidebar } from "./sidebar";
+
+// CLE-196b-1 — Dashboard shell rewired onto the Rights Profiles v2
+// resolver. `members.role` / `members.permissions` reads are gone;
+// everything downstream (sidebar visibility, trial banner audience,
+// sidebar data fetches) now derives from `rights.*` flags. Legacy
+// admin_profiles / employee_profiles joins removed — the profile name
+// shown in the header comes straight from the rights_profile.
 
 export default async function DashboardLayout({
   children,
@@ -22,7 +29,7 @@ export default async function DashboardLayout({
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role, permissions, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees), admin_profiles(name), employee_profiles(name)")
+    .select("organisation_id, first_name, last_name, avatar_url, organisations(name, member_label, plan, subscription_status, trial_ends_at, max_employees)")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -39,26 +46,9 @@ export default async function DashboardLayout({
   };
   const memberLabel = org?.member_label || "member";
 
-  const adminProfile = membership.admin_profiles as unknown as { name: string } | null;
-  const employeeProfile = membership.employee_profiles as unknown as { name: string } | null;
-  const profileName =
-    membership.role === "admin" || membership.role === "owner"
-      ? (adminProfile?.name ?? null)
-      : (employeeProfile?.name ?? null);
-
-  const memberPermissions = (membership.permissions as Record<string, unknown>) ?? {};
-  const accessMembers = membership.role === "admin"
-    ? (memberPermissions.can_manage_members as string | undefined) ?? "none"
-    : null;
-  // can_define_custom_fields is tri-state ("none" | "read" | "write"); the
-  // legacy boolean shape is normalised by coerceAccess in rights-config.
-  const customFieldDefAccess = membership.role === "admin"
-    ? coerceAccess(memberPermissions.can_define_custom_fields)
-    : "none";
-  const canDefineCustomFields = customFieldDefAccess !== "none";
-  const canEditOrganisation = membership.role === "admin"
-    ? (memberPermissions.can_edit_organisation as boolean) === true
-    : false;
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved) redirect("/organisation-setup");
+  const { rights } = resolved;
 
   // Member count for header display (bypasses RLS visibility so all users see the true total)
   const { data: countResult } = await supabase
@@ -70,18 +60,19 @@ export default async function DashboardLayout({
     .map((n) => n!.charAt(0).toUpperCase())
     .join("") || user.email?.charAt(0).toUpperCase() || "U";
 
-  // Fetch sidebar data for owners/admins
-  const isOwnerOrAdmin = membership.role === "owner" || membership.role === "admin";
+  // Sidebar data fetches — Manager+ ranks see the admin shell and need
+  // shifts/reports/approvals data. Employees don't.
+  const isAdminShell = rights.rank !== "employee";
   const showReports = hasPlanFeature(org?.plan ?? "lite", "reports");
   let sidebarFavouriteIds: string[] = [];
   let sidebarCustomReports: { id: string; name: string }[] = [];
   let sidebarShiftDefs: { id: string; name: string }[] = [];
-  // CLE-185 — pending approvals count for the sidebar badge. Only admins/
-  // owners see the Approvals link, so only they need the count.
+  // CLE-185 — pending approvals count for the sidebar badge. Only
+  // people who can approve holidays need the count.
   let sidebarPendingApprovalsCount = 0;
-  if (isOwnerOrAdmin) {
+  if (isAdminShell) {
     const shiftDefsPromise = supabase.from("shift_definitions").select("id, name").eq("organisation_id", membership.organisation_id).eq("active", true).order("sort_order").order("name");
-    if (showReports) {
+    if (showReports && rights.canRunReports) {
       const [{ data: shiftsData }, { data: favData }, { data: customData }] = await Promise.all([
         shiftDefsPromise,
         supabase.from("report_favourites").select("report_id").eq("user_id", user.id),
@@ -94,24 +85,27 @@ export default async function DashboardLayout({
       const { data: shiftsData } = await shiftDefsPromise;
       sidebarShiftDefs = (shiftsData ?? []) as { id: string; name: string }[];
     }
-    const { getPendingApprovalsCount } = await import("./approvals-actions");
-    const countRes = await getPendingApprovalsCount();
-    sidebarPendingApprovalsCount = countRes.success ? countRes.count : 0;
+    if (rights.canApproveHolidays) {
+      const { getPendingApprovalsCount } = await import("./approvals-actions");
+      const countRes = await getPendingApprovalsCount();
+      sidebarPendingApprovalsCount = countRes.success ? countRes.count : 0;
+    }
   }
 
-  // Trial banner logic
+  // Trial banner logic — shown to users with billing rights (the ones
+  // who can act on the reminder). Legacy check was `role === "owner"`.
   const trialEndsAt = org?.trial_ends_at ? new Date(org.trial_ends_at) : null;
   const now = new Date();
   const trialDaysLeft = trialEndsAt
     ? Math.max(0, Math.ceil((trialEndsAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
     : null;
   const showTrialBanner =
-    membership.role === "owner" &&
+    rights.canManageBilling &&
     org?.subscription_status === "trialing" &&
     trialDaysLeft !== null &&
     trialDaysLeft <= 7;
   const showPastDueBanner =
-    membership.role === "owner" &&
+    rights.canManageBilling &&
     org?.subscription_status === "past_due";
 
   // Trial + past-due banners live inside the top-chrome sticky wrapper
@@ -154,10 +148,10 @@ export default async function DashboardLayout({
           <header className="w-full">
             <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
             <div className="flex items-baseline gap-2">
-              <Link href="/employees" className="text-xl font-bold">
+              <Link href={isAdminShell ? "/employees" : "/dashboard"} className="text-xl font-bold">
                 {org?.name}
               </Link>
-              {(membership.role === "owner" || membership.role === "admin") && (
+              {isAdminShell && (
                 <span className="text-sm text-muted-foreground">
                   ({org?.plan} plan
                   {(memberCount ?? 0) >= org?.max_employees ? (
@@ -177,25 +171,25 @@ export default async function DashboardLayout({
               fullName={fullName}
               initials={initials}
               avatarUrl={membership.avatar_url}
-              role={membership.role}
+              rank={rights.rank}
               memberLabel={memberLabel}
-              profileName={profileName}
+              profileName={rights.profileName}
             />
             </div>
           </header>
         </div>
         <div className="flex flex-1">
-          {/* CLE-194 — Sidebar's org-settings props were all consumed by
-              the now-deleted OrganisationEditDialog. The Settings
-              sub-routes fetch what they need themselves. */}
           <Sidebar
             userId={user.id}
-            role={membership.role}
-            accessMembers={accessMembers}
+            rank={rights.rank}
+            crossUserAccess={rights.crossUserAccess}
+            canEditOrgSettings={rights.canEditOrgSettings}
+            canManageBilling={rights.canManageBilling}
+            canViewAuditLogs={rights.canViewAuditLogs}
+            canRunReports={rights.canRunReports}
+            canApproveHolidays={rights.canApproveHolidays}
             memberLabel={memberLabel}
             plan={org?.plan}
-            canDefineCustomFields={canDefineCustomFields}
-            canEditOrganisation={canEditOrganisation}
             initialFavouriteIds={sidebarFavouriteIds}
             initialCustomReports={sidebarCustomReports}
             initialShiftDefs={sidebarShiftDefs}

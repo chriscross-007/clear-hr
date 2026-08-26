@@ -63,9 +63,12 @@ export async function updateSession(request: NextRequest) {
 
   // If user is authenticated and not on a skipped route, check org membership
   if (claims?.sub && !isSkipped) {
+    // CLE-196b-1 — Reads the caller's rank via the rights_profiles join
+    // instead of the legacy `members.role` column. Legacy `role` is
+    // still populated in the DB but is being dropped in CLE-196c.
     const { data: membership } = await supabase
       .from("members")
-      .select("id, role, organisations(require_mfa)")
+      .select("id, rights_profiles(rank), organisations(require_mfa)")
       .eq("user_id", claims.sub)
       .limit(1)
       .maybeSingle();
@@ -93,7 +96,13 @@ export async function updateSession(request: NextRequest) {
       return redirectResponse;
     }
 
-    const isEmployee = membership.role === "employee";
+    // Rank check via joined rights_profile. Employee is the only rank
+    // that lands on /dashboard; Manager/HR/Admin all get the admin
+    // shell (/employees and /admin-dashboard). Members whose profile
+    // is null (should not happen after 1a seed but the guard costs
+    // nothing) are treated as Employee — the safest default.
+    const profile = (membership.rights_profiles as unknown as { rank?: string } | null);
+    const isEmployee = (profile?.rank ?? "employee") === "employee";
 
     // Employees trying to access /employees → redirect to /dashboard
     if (isEmployee && pathname.startsWith("/employees")) {
