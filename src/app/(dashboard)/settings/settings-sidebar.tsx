@@ -70,7 +70,7 @@ export function SettingsSidebar({
     },
     {
       href: "/settings/rights-profiles",
-      label: "Rights Profiles",
+      label: "User Rights",
       icon: ShieldCheck,
       // CLE-197 — Rights Profiles v2 editor.
       visible: canEditRightsProfiles,

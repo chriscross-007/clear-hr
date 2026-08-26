@@ -7,8 +7,10 @@
 // Keys are stable internal identifiers — don't rename them. Labels are
 // the user-facing strings — edit freely.
 
+// CLE-197 — "rights" removed from this list. The Rights Profiles v2
+// editor is now a top-level Settings item at /settings/rights-profiles,
+// not one of the functional-profile tabs.
 export type ProfileTypeKey =
-  | "rights"
   | "workingPattern"
   | "noticePeriod"
   | "approver"
@@ -24,11 +26,6 @@ export interface ProfileTypeMeta {
 }
 
 export const PROFILE_TYPES: Record<ProfileTypeKey, ProfileTypeMeta> = {
-  rights: {
-    key: "rights",
-    href: "/settings/profiles/rights",
-    label: "Rights",
-  },
   workingPattern: {
     key: "workingPattern",
     href: "/settings/profiles/working-pattern",
@@ -53,7 +50,6 @@ export const PROFILE_TYPES: Record<ProfileTypeKey, ProfileTypeMeta> = {
 
 /** Ordered list for the tab nav. Order = display order. */
 export const PROFILE_TYPE_ORDER: ProfileTypeKey[] = [
-  "rights",
   "workingPattern",
   "noticePeriod",
   "approver",

@@ -27,7 +27,7 @@ export default async function RightsProfilesSettingsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
       <div>
-        <h1 className="text-2xl font-bold">Rights Profiles</h1>
+        <h1 className="text-2xl font-bold">User Rights</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
           Four ranks control who can act on whom. Add extra profiles at any rank for
           finer-grained access. Changes apply immediately to every member on the

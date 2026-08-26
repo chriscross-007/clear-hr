@@ -101,7 +101,7 @@ async function requireCanEditRightsProfiles(): Promise<
   const resolved = await getEffectiveRightsForUser(user.id);
   if (!resolved) return { ok: false, error: "No organisation" };
   if (!resolved.rights.canEditRightsProfiles) {
-    return { ok: false, error: "You don't have permission to edit Rights Profiles" };
+    return { ok: false, error: "You don't have permission to edit User Rights" };
   }
   return { ok: true, organisationId: resolved.ctx.organisationId };
 }

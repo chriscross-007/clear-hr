@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
 
-// CLE-191 — /settings/profiles index. Default to Rights as the most-
-// commonly-edited profile type.
+// CLE-197 — /settings/profiles index. Rights Profiles now live at
+// /settings/rights-profiles; the legacy Rights sub-page redirects
+// there. Default this index to Working Patterns instead, which is
+// the next-most-touched profile type.
 export default function ProfilesIndexPage() {
-  redirect("/settings/profiles/rights");
+  redirect("/settings/profiles/working-pattern");
 }

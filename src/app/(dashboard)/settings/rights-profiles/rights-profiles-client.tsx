@@ -118,7 +118,7 @@ const GROUPS: { name: string; items: SwitchDef[] }[] = [
     items: [
       { key: "canManageTeams", label: "Manage teams" },
       { key: "canEditOrgSettings", label: "Edit organisation settings" },
-      { key: "canEditRightsProfiles", label: "Edit Rights Profiles" },
+      { key: "canEditRightsProfiles", label: "Edit User Rights" },
       { key: "canManageBilling", label: "Manage billing" },
       { key: "canViewAuditLogs", label: "View audit logs" },
     ],
@@ -458,7 +458,7 @@ function EditorDialog({
     <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
       <DialogContent className="max-w-4xl">
         <DialogHeader>
-          <DialogTitle>{isEdit ? "Edit Rights Profile" : "New Rights Profile"}</DialogTitle>
+          <DialogTitle>{isEdit ? "Edit User Rights profile" : "New User Rights profile"}</DialogTitle>
           <DialogDescription>
             {isEdit
               ? `${memberCount} member${memberCount === 1 ? "" : "s"} currently assigned. Changes apply live.`
