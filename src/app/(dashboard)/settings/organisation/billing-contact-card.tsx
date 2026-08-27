@@ -75,9 +75,27 @@ export function BillingContactCard({ current, candidates, canManage }: Props) {
           )}
         </div>
         {canManage && (
-          <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-            Transfer
-          </Button>
+          <div className="flex flex-col items-end gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setOpen(true)}
+              disabled={eligible.length === 0}
+              title={
+                eligible.length === 0
+                  ? "No other members have Manage Billing on their profile"
+                  : undefined
+              }
+            >
+              Transfer
+            </Button>
+            {eligible.length === 0 && (
+              <p className="text-xs text-muted-foreground text-right max-w-[16rem]">
+                Grant Manage Billing to another profile first, then a member on
+                that profile becomes eligible.
+              </p>
+            )}
+          </div>
         )}
       </div>
 

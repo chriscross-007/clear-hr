@@ -90,7 +90,7 @@ export function CompareClient({ profiles }: { profiles: RightsProfileDto[] }) {
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <Switch id="diffs-only" checked={differencesOnly} onCheckedChange={setDifferencesOnly} />
-        <Label htmlFor="diffs-only" className="text-sm cursor-pointer">Only show differences</Label>
+        <Label htmlFor="diffs-only" className="text-sm cursor-pointer">Only show rows where Profiles differ</Label>
       </div>
 
       {profiles.length === 0 ? (

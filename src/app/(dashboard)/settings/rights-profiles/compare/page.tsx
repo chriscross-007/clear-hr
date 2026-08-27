@@ -28,8 +28,8 @@ export default async function CompareRightsProfilesPage() {
         <div>
           <h1 className="text-2xl font-bold">Compare profiles</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Every right, every profile, side by side. Toggle &ldquo;Only
-            differences&rdquo; to hide rows where all profiles agree.
+            Every right, every profile, side by side. Toggle &ldquo;Only show
+            rows where Profiles differ&rdquo; to hide rows where all profiles agree.
           </p>
         </div>
       </div>
