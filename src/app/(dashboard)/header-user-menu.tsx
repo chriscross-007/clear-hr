@@ -162,8 +162,8 @@ export function HeaderUserMenu({
                   <span className="font-medium">
                     {m.first_name} {m.last_name}
                   </span>
-                  <span className="ml-4 text-xs capitalize text-muted-foreground">
-                    {m.role}
+                  <span className="ml-4 text-xs text-muted-foreground">
+                    {m.profile_name ?? "—"}
                   </span>
                 </button>
               ))}

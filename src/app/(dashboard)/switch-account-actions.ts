@@ -22,7 +22,10 @@ export type SwitchableMember = {
   first_name: string;
   last_name: string;
   email: string;
-  role: string;
+  // Rights Profiles v2 — display the User Rights profile name
+  // (e.g. "Admin", "HR", "Manager", "Employee" or any custom
+  // profile) rather than the legacy members.role string.
+  profile_name: string | null;
 };
 
 export async function getSwitchableMembers(): Promise<{
@@ -49,14 +52,32 @@ export async function getSwitchableMembers(): Promise<{
     const admin = createAdminClient();
     const { data, error } = await admin
       .from("members")
-      .select("id, first_name, last_name, email, role")
+      .select("id, first_name, last_name, email, rights_profiles(name)")
       .eq("organisation_id", membership.organisation_id)
       .not("user_id", "is", null)
       .order("first_name");
 
     if (error) return { success: false, error: error.message };
 
-    return { success: true, members: data as SwitchableMember[] };
+    // Flatten the joined rights_profiles.name into profile_name so the
+    // client renders the same label the user sees in Settings → User
+    // Rights, not the legacy members.role string.
+    type Row = {
+      id: string;
+      first_name: string;
+      last_name: string;
+      email: string;
+      rights_profiles: { name: string } | null;
+    };
+    const rows = (data ?? []) as unknown as Row[];
+    const members: SwitchableMember[] = rows.map((r) => ({
+      id: r.id,
+      first_name: r.first_name,
+      last_name: r.last_name,
+      email: r.email,
+      profile_name: r.rights_profiles?.name ?? null,
+    }));
+    return { success: true, members };
   } catch (e) {
     return {
       success: false,
