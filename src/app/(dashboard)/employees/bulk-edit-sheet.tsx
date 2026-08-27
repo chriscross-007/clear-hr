@@ -66,7 +66,6 @@ export function BulkEditSheet({
   onBulkUpdate,
 }: BulkEditSheetProps) {
   const [selectedTeamId, setSelectedTeamId] = useState(NO_CHANGE);
-  const [selectedRole, setSelectedRole] = useState(NO_CHANGE);
   const [selectedApprovalProfile, setSelectedApprovalProfile] = useState(NO_CHANGE);
   const [customFieldValues, setCustomFieldValues] = useState<Map<string, unknown>>(new Map());
   const [loading, setLoading] = useState(false);
@@ -75,7 +74,6 @@ export function BulkEditSheet({
   const hasCustomChanges = customFieldValues.size > 0;
   const hasChanges =
     selectedTeamId !== NO_CHANGE ||
-    selectedRole !== NO_CHANGE ||
     selectedApprovalProfile !== NO_CHANGE ||
     hasCustomChanges;
   const canShowApprovalProfile =
@@ -86,9 +84,6 @@ export function BulkEditSheet({
   if (selectedTeamId !== NO_CHANGE) {
     const teamName = teams.find((t) => t.id === selectedTeamId)?.name ?? "Unknown";
     summaryParts.push(`Team → ${teamName}`);
-  }
-  if (selectedRole !== NO_CHANGE) {
-    summaryParts.push(`Role → ${selectedRole === "admin" ? "Admin" : capitalize(memberLabel)}`);
   }
   if (selectedApprovalProfile !== NO_CHANGE) {
     let label = "Any admin";
@@ -132,7 +127,6 @@ export function BulkEditSheet({
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen) {
       setSelectedTeamId(NO_CHANGE);
-      setSelectedRole(NO_CHANGE);
       setSelectedApprovalProfile(NO_CHANGE);
       setCustomFieldValues(new Map());
       setError(null);
@@ -146,7 +140,6 @@ export function BulkEditSheet({
     try {
       const updates: BulkUpdatePayload = {};
       if (selectedTeamId !== NO_CHANGE) updates.team_id = selectedTeamId;
-      if (selectedRole !== NO_CHANGE) updates.role = selectedRole as "admin" | "employee";
       if (selectedApprovalProfile !== NO_CHANGE) {
         updates.approval_profile_id =
           selectedApprovalProfile === APPROVAL_LEGACY ? null : selectedApprovalProfile;
@@ -211,20 +204,12 @@ export function BulkEditSheet({
             </Select>
           </div>
 
-          {/* Role field */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Role</label>
-            <Select value={selectedRole} onValueChange={setSelectedRole}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_CHANGE}>No change</SelectItem>
-                <SelectItem value="admin">Admin</SelectItem>
-                <SelectItem value="employee">{capitalize(memberLabel)}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          {/* CLE-201a — Legacy Role picker removed from bulk edit.
+              User Rights assignment now goes one-at-a-time on the
+              Employment page (dedicated <UserRightsPicker> card). If
+              bulk profile assignment becomes a real need, a proper
+              User Rights bulk picker can be built on top of
+              setMemberRightsProfile. */}
 
           {/* CLE-186 — Approver Profile (Holiday) */}
           {canShowApprovalProfile && (

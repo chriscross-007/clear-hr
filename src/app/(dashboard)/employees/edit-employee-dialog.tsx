@@ -46,8 +46,9 @@ interface EditEmployeeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   teams: Team[];
-  adminProfiles: Profile[];
-  employeeProfiles: Profile[];
+  // CLE-201a — Retained as optional for backwards compat; ignored.
+  adminProfiles?: Profile[];
+  employeeProfiles?: Profile[];
   customFieldDefs: FieldDef[];
   currencySymbol: string;
   onSaved: (updated: {
@@ -68,8 +69,6 @@ export function EditEmployeeDialog({
   open,
   onOpenChange,
   teams,
-  adminProfiles,
-  employeeProfiles,
   customFieldDefs,
   currencySymbol,
   onSaved,
@@ -387,31 +386,9 @@ export function EditEmployeeDialog({
                   </Select>
                 </div>
               )}
-              {member?.role !== "owner" && (() => {
-                const applicableProfiles = role === "admin" ? adminProfiles : employeeProfiles;
-                if (applicableProfiles.length === 0) return null;
-                return (
-                  <div className="space-y-2">
-                    <Label>Rights Profile</Label>
-                    <Select
-                      value={profileId}
-                      onValueChange={setProfileId}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">No profile</SelectItem>
-                        {applicableProfiles.map((p) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                );
-              })()}
+              {/* CLE-201a — Legacy Rights Profile picker retired.
+                  Assign the User Rights profile on the Employment
+                  page instead (dedicated <UserRightsPicker> card). */}
             </TabsContent>
             {customFieldDefs.length > 0 && (
               <TabsContent value="custom-fields" className="space-y-3 mt-0">

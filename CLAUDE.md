@@ -15,20 +15,11 @@
 ## Product Overview
 B2B HR management platform for web and mobile. Organisations sign up, add their employees, and manage day-to-day HR operations.
 
-## User Roles
+## User access model
 
-| Role | Scope | Permissions |
-|------|-------|-------------|
-| **SuperUser** | Platform-wide | Read-only access to metrics across all organisations. Cannot modify any organisation's data. Appointed by the platform owner. |
-| **Owner** | Their organisation | Full control. Created the organisation. Can manage admins, members, billing, and settings. |
-| **Admin** | Their organisation | Managers who control day-to-day operations — approve leave, manage members, configure the app for their org. |
-| **Employee** | Their own data | Employees who can view their own data and request holidays. |
+ClearHR's access model is **Rights Profiles v2** — every access decision resolves through `members.rights_profile_id` → `rights_profiles` → the `EffectiveRights` object returned by `getEffectiveRightsForUser(userId)` in `src/lib/rights-resolver.ts`. See the full section below (**Rights Profiles v2**) for shape, seed defaults, redaction rules, and the guard triggers.
 
-### Role Rules
-- Every user belongs to exactly one organisation (except SuperUsers who operate across all)
-- Owner is assigned automatically to whoever creates the organisation
-- Admins and Employees are scoped to a single organisation
-- RLS policies must enforce role-based access at the database level
+**One-line rule for any new session:** if you're gating a page, an action, or a UI affordance, read the flag from the resolver — never from `members.role` or `members.permissions`. Those columns still exist as vestigial legacy (see the Residual legacy subsection under Rights Profiles v2) but are ignored by the resolver.
 
 ## Tech Stack
 - **Framework:** Next.js 16 (App Router, Turbopack)
@@ -169,11 +160,11 @@ Using the caller's session client for cross-user queries will silently fail due 
 ### Tables
 - **`organisations`** — Fields: `id`, `name`, `slug` (unique), `member_label` (default "member"), timestamps. Holiday year settings: `holiday_year_start_type` (`'fixed' | 'employee_start_date'`), `holiday_year_start_day`, `holiday_year_start_month`. **Default Cascade columns** (CLE-167) seed each new employee's cog at creation: `default_holiday_type`, `default_holiday_units`, `default_holiday_earned_factor`, `default_holiday_allowance`, `default_holiday_toil_hours_per_day`, `default_holiday_max_carry_forward`, `default_holiday_min_carry_forward` — all NOT NULL with hardcoded fallbacks (`fixed` / `days` / `0` / `0` / `0` / `0` / `-999`).
 - **`teams`** — Groups within an org. Fields: `id`, `organisation_id` (FK), `name`, timestamp.
-- **Team membership and Team Access (CLE-185)** — Every member (employee, admin, owner) belongs to **exactly one** team — `members.team_id`. There is no junction table. Admins/owners who need to *view* multiple teams use the Team Access setting on Admin Profiles (`permissions.object_access.teams = { scope: 'own' | 'all' | 'selected', ids: string[] }`, snapshotted onto `members.permissions` at profile assignment). Owners are implicitly all-teams at the application layer — no Team Access value is required for them. The `member_teams` junction table that briefly existed was dropped; the lexically-first team became `team_id` and the full set was seeded onto `permissions.object_access.teams` for any admin who'd been in >1 team. Surfaces that filter by team (currently just the Availability page) read both: members are filtered by `team_id`, and the team dropdown is scoped by the viewer's `object_access.teams`.
+- **Team membership and Team Access** — Every member belongs to **exactly one** team via `members.team_id`. Cross-team visibility is governed by the rights_profile's `cross_user_access`: `self` sees only own record, `team` sees only the caller's own team, `all` sees every team. The Availability page + Employees Directory both use this scoping. The legacy `permissions.object_access.teams` pattern with `scope: 'own'|'all'|'selected'` was replaced by cross_user_access in CLE-196b; see the Rights Profiles v2 section for the resolver call sites.
 - **Open-ended bookings and team cover (CLE-187)** — A booking with `end_date IS NULL` (typically a sick booking with no return logged) is treated as "still on leave indefinitely" by the team-cover check in `getMyTeamCoverContext` / `validateBookingRules`. The Availability `<TeamCalendar>` matches this: open-ended bookings render through to the end of the visible window, with cells past **today** drawn as a diagonal stripe (`repeating-linear-gradient`) on a muted background to flag "ongoing — return date not set". The "Off" summary row counts these post-today cells too, so the calendar and the booking-sheet cover warning always agree about who's off. Stale open-ended bookings (e.g. left behind after a member's Holiday Periods are deleted) are surfaced via the Member Bookings utility (see below).
 - **Member Bookings utility (CLE-188)** — `holiday_bookings` rows are independent of `holiday_periods`, so deleting a member's Holiday Periods does **not** delete their bookings. To find and clean up orphaned bookings, the Employment page renders a `<BookingsCard>` (`members/[memberId]/employment/bookings-card.tsx`) listing every booking on the member with start/end/reason/status/created and a Delete action. Visible to admins with `canEdit` (owner or admin with `can_manage_members='write'`). Delete reuses `adminDeleteBooking` from `holiday-booking-actions.ts` — no separate hard-delete action; that function already removes the row and logs a `booking.deleted` audit entry. New action: `getMemberBookings(memberId)` returns `MemberBookingRow[]`.
 - **Submit-time warning snapshot (CLE-189)** — when an employee submits a holiday request, `validateBookingRules` now computes notice + cover violations *universally* (regardless of `notice_rules_block_requests`) and returns `{ error?, noticeWarning?: boolean, coverWarning?: boolean }`. The `error` is only set when the org's block flag is on AND a violation exists. The submit path writes the warning flags to two new columns on `holiday_bookings` — `notice_violation_at_submit` and `cover_violation_at_submit` (both `boolean NOT NULL DEFAULT false`). Snapshot semantics: the flags freeze the state at submit time and never recompute. The Approvals page reads them to render "Notice" / "Cover" badges next to the Approve/Reject controls and to show a warning panel inside the Approve dialog (Approve button label flips to "Approve anyway"). The badges render outside the `canActOnRow` branch so the warning context is visible to all viewers, not only those who can act — but the decision itself still belongs to the booking's routed approver (no routing override). Rule-overriding requests follow the same approval routing as any other booking; what changes is the surfaced context, not the chain of authority. The per-pending-row inline calendar receives `requiredCover` (the team's `min_cover`), `offendingDates` (working days within the request's range where approving would drop the team below Min Cover — computed server-side against latest team state by `buildCoverContexts` in `approvals-actions.ts`), and `coverMode` so the bottom summary row reads as "members present" (team size minus off) rather than "off". The `TeamCalendar` component renders offending dates in red on both the day-of-month header and the bottom Cover row. **The Availability page uses the same `<TeamCalendar>` in cover mode**: it passes `coverMode` plus the selected team's `requiredCover` and lets the calendar auto-compute offending dates from its own off-counts (any working day where present falls below `requiredCover`). When "All Teams" is selected on Availability, `requiredCover` is omitted and there are no red highlights — there's no single team threshold to compare against.
-- **`members`** — Core access control and member profile data (single source of truth). Fields: `id`, `organisation_id` (FK), `user_id` (FK, **nullable** — NULL until employee accepts invite), `email`, `first_name`, `last_name`, `known_as`, `avatar_url`, `team_id` (FK, nullable), `role` (owner/admin/employee), `permissions` (JSONB), `invite_token` (UUID, unique), `invited_at`, `accepted_at`, `start_date` (date, nullable), timestamps. **Profile FKs** (auto-assigned to the org's Default on insert via triggers): `notice_period_profile_id`, `holiday_profile_id`. Unique on (organisation_id, email). Partial unique on (organisation_id, user_id) WHERE user_id IS NOT NULL.
+- **`members`** — Core member record. Fields: `id`, `organisation_id` (FK), `user_id` (FK, **nullable** — NULL until employee accepts invite), `email`, `first_name`, `last_name`, `known_as`, `avatar_url`, `team_id` (FK, nullable), `invite_token` (UUID, unique), `invited_at`, `accepted_at`, `start_date` (date, nullable), timestamps. **Rights** — `rights_profile_id` (FK to `rights_profiles`, drives every access decision via the resolver) + `is_billing_contact` (boolean, unique partial index one-per-org). **Profile FKs** (auto-assigned to the org's Default on insert via triggers): `notice_period_profile_id`, `holiday_profile_id`. **Legacy vestigial** — `role`, `permissions`, `admin_profile_id`, `employee_profile_id` still exist because the SECURITY DEFINER RLS helpers read them; the resolver ignores them. See Rights Profiles v2 → Residual legacy. Unique on (organisation_id, email). Partial unique on (organisation_id, user_id) WHERE user_id IS NOT NULL.
 - **Holiday Profiles (CLE-194 Phase 2)** — Each org has a `holiday_profiles` row per profile (one `is_default`, undeleteable; others freely created and removed). Each member points at exactly one profile via `members.holiday_profile_id`, auto-seeded on insert by `trigger_assign_holiday_profile`. The 7 holiday values (`holiday_type`, `holiday_units`, `holiday_earned_factor`, `holiday_allowance`, `holiday_toil_hours_per_day`, `holiday_max_carry_forward`, `holiday_min_carry_forward`) live on the profile; `members.holiday_*` columns and `organisations.default_holiday_*` columns were dropped in this phase. **`getNewPeriodDefaults`** (in `holiday-period-actions.ts`) resolves the 7 values via `members.holiday_profile_id` → `holiday_profiles.holiday_*`. **Snapshot semantics** — values copy onto each `holiday_periods` row at creation; editing a profile only affects new periods, never existing ones. **Default starting values** (used by the org-create + member-insert triggers): Fixed / Days / allowance=20 / earned_factor=0 / toil=0 / max_carry=0 / min_carry=0. **Auto-create-first-period (CLE-194 Phase 2)** — `tryAutoCreateFirstPeriod(memberId)` in `holiday-profile-actions.ts` is called from `addEmployee`, `setMemberHolidayProfile`, and `updateMemberStartDate`. Idempotent; fires when the member has a `holiday_profile_id` AND (org is Fixed Day OR member has `start_date`) AND no period rows exist yet. The cog UI on `/members/[memberId]/holiday` was removed in this phase — the picker on Employment is the only assignment surface.
 - **`superusers`** — Platform-level access. Fields: `id`, `user_id` (FK, unique), timestamp.
 - **Earned-period allowance from timesheet (CLE-175)** — Earned-type Holiday Periods derive `allowance` from actual worked hours pulled from the timesheet via `getMemberWorkedHoursInRange` (in `@/lib/timesheet-totals`). Formula: `worked × earnedFactor / 100`. For `units = "hours"` the worked value is hours; for `units = "days"` the helper divides by the Work Profile's average hours-per-working-day (resolved at `period.startDate`, fallback 8). The compute helper looks up worked hours via `ComputeContext.workedHoursByPeriodId`. Page (`members/[memberId]/holiday/page.tsx`) and `setHolidayPeriodLock` populate the map for Earned periods only — Fixed periods skip the timesheet round-trip. The Holiday Periods table renders **Worked** + **Factor %** columns (between Brought Fwd and Allowance) only when at least one period is Earned; Fixed rows show "—" in those cells.
@@ -192,38 +183,28 @@ Using the caller's session client for cross-user queries will silently fail due 
 
 **Note: `absence_profiles` and `holiday_year_records` were dropped in CLE-167.** Holiday Profiles are gone — the model is now profileless. Each employee has zero or more `holiday_periods` directly, with parameters seeded from the cog columns on `members`. The settled spec lives at https://linear.app/clearhr/document/profileless-holiday-management-settled-spec-bae7e878e485.
 
-### Permissions (JSONB on members)
-Granular feature flags per member. No schema change needed to add new permissions.
-```json
-{
-  "can_request_holidays": true,
-  "can_approve_holidays": false,
-  "can_view_team_members": false,
-  "can_view_all_teams": false,
-  "can_manage_members": "none",            // tri-state: "none" | "read" | "write"
-  "can_define_custom_fields": "none",      // tri-state: "none" | "read" | "write"
-  "can_edit_organisation": false,
-  "can_add_members": false,
-  "can_see_currency": false
-}
-```
+### Access decisions
 
-**Tri-state rights** (`can_manage_members`, `can_define_custom_fields`) use the strings `"none" | "read" | "write"`. Some legacy `can_define_custom_fields: true|false` blobs may still exist in the DB; `coerceAccess(value)` in `@/lib/rights-config` normalises both shapes (`true` → `"write"`, `false`/missing → `"none"`). Always read these rights through `coerceAccess()` or the specific helper (e.g. `getCustomFieldDefAccess(role, perms)`) — never compare raw values. **Read** semantics gate page visibility; **write** semantics gate the actual mutation actions. Both layers must enforce: the server action (e.g. `createCustomFieldDef`) calls `requireCustomFieldDefWriteAccess()` as defence in depth, and the UI hides write affordances via a `canEdit` prop.
+Access is resolved through Rights Profiles v2 (see the **Rights Profiles v2** section below). Every page gate, server action, and UI affordance reads flags via `getEffectiveRightsForUser(userId)`. There is no per-member `permissions` blob to check; the profile itself carries the flags and the assignment on `members.rights_profile_id` drives the resolution.
 
-### Visibility Rules
-- **Employees**: See only their own record by default. `can_view_team_members` grants read-only access to teammates. Can never update other members.
-- **Admins**: See their own team by default. `can_view_all_teams` grants visibility across all teams.
-- **Owners**: See and manage all members in their org.
-- **SuperUsers**: Read-only access across all orgs.
+Common decision → flag mappings:
+- "Can this user see the Employees Directory?" → `rights.crossUserAccess !== "self"`
+- "Can this user edit organisation settings?" → `rights.canEditOrgSettings`
+- "Can this user approve holidays?" → `rights.canApproveHolidays`
+- "Can this user see sensitive fields?" → `rights.canViewSensitiveFields`
+- "Can this user edit User Rights?" → `rights.canEditRightsProfiles`
+- "Can this user manage billing?" → `rights.canManageBilling`
+- "Which tabs can this user view/update on member records?" → `rights.tabs[tabKey].view` / `rights.tabs[tabKey].update`
+
+`crossUserAccess` scopes cross-user visibility to `self | team | all`. Rank is stored on `rights_profiles.rank` but has **no user-visible meaning** in the flat-list model (CLE-197) — it's vestigial metadata retained for the seed defaults and the RLS helpers until CLE-201 rewrites them.
 
 ### Helper Functions
-- `is_superuser()` — Returns boolean
-- `get_user_role(org_id)` — Returns role text
-- `get_user_team_id(org_id)` — Returns team UUID
-- `get_user_permission(org_id, permission_key)` — Returns boolean
-- `create_organisation(org_name, org_slug, org_member_label)` — SECURITY DEFINER RPC, creates org + owner membership (populates email/name from auth.users)
-- `get_org_members()` — SECURITY DEFINER RPC, returns members with invite status fields (invited_at, accepted_at), enforces visibility rules
-- `trigger_seed_approval_profile_assignments()` — fires AFTER INSERT on `members`. For an owner-role insert with no existing default Holiday Approval Profile in the org, creates one with the owner as L1 main + delegate. For every member insert, populates `approval_profile_assignments` JSONB with pointers to every is_default profile in the org. Idempotent.
+- `is_superuser()` — Returns boolean.
+- `get_user_role(org_id)` / `get_user_permission(org_id, key)` / `get_user_team_id(org_id)` — **Legacy RLS helpers.** Still read from `members.role` / `members.permissions` for backwards compat with the pre-CLE-196 RLS policies. Do not add new callers. The app resolves access through `getEffectiveRightsForUser` in `src/lib/rights-resolver.ts`. These helpers get rewritten to source from `rights_profiles` in CLE-201.
+- `create_organisation(org_name, org_slug, org_member_label)` — SECURITY DEFINER RPC, creates org + owner membership (populates email/name from auth.users).
+- `get_org_members()` — SECURITY DEFINER RPC. Currently reads `members.role` + `members.permissions` + joins `admin_profiles` / `employee_profiles` for the `profile_name` output. To be rewritten in CLE-201 to source rank + profile name from `rights_profiles`.
+- `ensure_at_least_two_rights_editors_on_member` / `ensure_at_least_two_rights_editors_on_profile` — CLE-197 guard triggers. See the **Rights Profiles v2 → Guard triggers** section for full behaviour.
+- `trigger_seed_approval_profile_assignments()` — fires AFTER INSERT on `members`. For every member insert, populates `approval_profile_assignments` JSONB with pointers to every is_default profile in the org. Idempotent.
 
 ### Triggers
 - `link_user_to_org_member` — Fires on `auth.users` INSERT. Matches new user's email to a pending `members` record (where `user_id IS NULL`) and links them by setting `user_id` and `accepted_at`.
@@ -279,7 +260,7 @@ A full-page Settings shell at `/settings` replaces the old `OrganisationEditDial
 
 **Profiles mental model.** The five profile types share a UI pattern + mental model — "profiles are sets of rules that determine how the software treats a member" — not a schema. Each type CRUDs its own underlying tables; the Phase 3 cascade (Org → Team → Member) is the separate piece that gives them a uniform resolution layer.
 
-**Profile list ordering (CLE-194).** Each profile table (`admin_profiles`, `employee_profiles`, `work_profiles`, `notice_period_profiles`, `approval_profiles`) carries a `sort_order int NOT NULL DEFAULT 0` that admins control by drag-reordering the row. Read queries order by `(is_default desc,)? sort_order asc, name asc` — Default profiles where present are pinned at sort_order 0 by convention and non-default rows occupy 1+. Each `create…` action assigns `sort_order = max + 1` so new profiles append. Each profile list has a matching `reorder…(orderedIds)` action that the list client calls after a drag; the shared `useListReorder` hook (`settings/profiles/use-list-reorder.ts`) holds the optimistic state + revert-on-failure logic. Reorder skips Default profiles (`canDrag: (p) => !p.isDefault`).
+**Profile list ordering.** Each profile table (`work_profiles`, `notice_period_profiles`, `approval_profiles`, `rights_profiles`, and the vestigial `admin_profiles` / `employee_profiles`) carries a `sort_order int NOT NULL DEFAULT 0` that admins control by drag-reordering the row. Read queries order by `(is_default desc,)? sort_order asc, name asc` — Default profiles where present are pinned at sort_order 0 by convention and non-default rows occupy 1+. Each `create…` action assigns `sort_order = max + 1` so new profiles append. Each profile list has a matching `reorder…(orderedIds)` action that the list client calls after a drag; the shared `useListReorder` hook (`settings/profiles/use-list-reorder.ts`) holds the optimistic state + revert-on-failure logic. Reorder skips Default profiles (`canDrag: (p) => !p.isDefault`).
 
 **Profile copy.** Every Profile list row has a Copy icon that opens the New-profile editor in template mode: existing values pre-populated, name suffixed with " (Copy)", save creates a fresh row. Implementation: each list client carries a `copyFrom` state alongside `editing`; the editor accepts an optional `template` prop and its seed `useEffect` prefers `editing → template → defaults`. The Copy never marks the new profile as Default (the source's `is_default` is ignored).
 
@@ -303,49 +284,100 @@ A full-page Settings shell at `/settings` replaces the old `OrganisationEditDial
 - **Tabs in the sticky header:** when a page uses `<Tabs>`, place the `<Tabs>` wrapper around both `<StickyPageHeader>` and the `<TabsContent>`s, then put the `<TabsList>` inside `<StickyPageHeader>`. The Tabs context spans both so triggers stay sticky while content scrolls.
 - **Sticky table-header on `DataGrid` pages:** when a page uses `<DataGrid>` AND has `<StickyPageHeader>`, also pass `stickyHeader` to `DataGrid` so its toolbar, column-header row and filter row stack into the same sticky group. `<StickyPageHeader>` measures itself via `ResizeObserver` and publishes its height on the root as the `--page-header-height` CSS variable; `<DataGrid stickyHeader />` reads that var to auto-pin its toolbar directly beneath — no gap, no overlap, regardless of what the caller puts inside the band. Downstream offsets: toolbar height is 56 (`pt-2` + `h-8` button + `pb-4`), column header pins at `toolbarTop + 56`, filter row at `toolbarTop + 95` (column header `h-10 = 40` more, minus 1 to overlap the tr border-b hairline). Pages that don't use `<StickyPageHeader>` (or need to override) can pass a numeric `stickyHeaderTop` prop — that pins the toolbar at that exact px distance from the viewport top, with the same +56/+95 offsets for the two rows below. The two reports pages that currently pass explicit `stickyHeaderTop={160|240}` predate the auto-measure path; they can safely be migrated to bare `stickyHeader` once verified.
 
-## Rights Profiles v2 (CLE-195/196)
+## Rights Profiles v2 (CLE-195 → CLE-199)
 
-Every access decision reads through `src/lib/rights-resolver.ts`, which
-resolves the caller's `members.rights_profile_id` into an
-`EffectiveRights` object. Ranks are `admin > hr > manager > employee`;
-`cross_user_access` is one of `self | team | all`; per-tab access lives
-in a `tab_matrix` JSONB keyed by the ten employee-form tabs. Two
-governance flags (`can_view_sensitive_fields` / `can_edit_sensitive_fields`)
-sit orthogonally to tab access. See `src/lib/rights-resolver.ts` for
-the full shape.
+Every access decision reads through `src/lib/rights-resolver.ts`, which resolves the caller's `members.rights_profile_id` into an `EffectiveRights` object. Types + runtime constants live separately in `src/lib/rights-types.ts` so client bundles can import them without pulling in the server-only resolver dependencies (the `next/headers` / service-role client chain).
 
-**Never read `members.role` or `members.permissions.can_*` for security
-decisions.** Both columns still exist for backwards compatibility with
-the RLS helpers (`get_user_role`, `get_user_permission`, `get_org_members`)
-and are populated on legacy write paths — but they're advisory only.
-Use the resolver.
+### Model shape
 
-### Residual legacy (to clean up in a follow-up issue)
+- **`rights_profiles`** — one row per named profile per org. Carries:
+  - `name`, `sort_order`, `is_default` (seeded rows only)
+  - `cross_user_access` — `self | team | all`
+  - Fourteen non-tab action booleans (`can_create_users`, `can_invite_users`, `can_delete_users`, `can_approve_holidays`, `can_override_holiday_rules`, `can_run_reports`, `can_run_admin_reports`, `can_manage_teams`, `can_edit_org_settings`, `can_edit_rights_profiles`, `can_manage_billing`, `can_view_audit_logs`, `can_view_sensitive_fields`, `can_edit_sensitive_fields`)
+  - `tab_matrix jsonb` — per-tab `{ view, update }` for the ten tabs enumerated in `TAB_KEYS` (planner, timesheet, dashboard, holiday, employment, personal, contacts, documents, expenses, history)
+  - `rank` — vestigial metadata (CLE-197 flattened the UI; users never see rank). Retained because the seed defaults + guard triggers + a few `rank !== "employee"` display checks still key on it. CLE-201 will remove it.
+- **`members.rights_profile_id`** — the pointer. Every member has exactly one profile. `NULL` is an error state (the app treats it as read-only-only-self as a defensive fallback).
+- **`members.is_billing_contact`** — one member per org holds this flag (partial unique index enforces exactly-one). Freely transferable via Settings → Organisation → Billing contact card.
 
-The full CLE-196 cutover intentionally stopped short of dropping the
-old plumbing so we didn't need to rewrite every RLS helper in one go.
-Known residual pieces:
+### Resolver API
 
-- `members.role`, `members.permissions`, `members.admin_profile_id`,
-  `members.employee_profile_id` — columns kept because the SECURITY
-  DEFINER RLS helpers still read them.
-- `admin_profiles` / `employee_profiles` tables — kept for the same
-  reason plus because the Edit Employee / Employment form / Bulk Edit
-  sheet still surface Admin/Employee Profile pickers backed by them.
-  Picks have **no security effect** (the resolver ignores them) but
-  the UI still lets users set them.
-- `src/lib/rights-config.ts` and
-  `src/app/(dashboard)/employees/profile-actions.ts` — kept because
-  the pickers above still import them.
-- `src/app/(dashboard)/settings/profiles/rights/rights-profiles-client.tsx`
-  is stubbed to `export {}` and unreachable (the route was replaced
-  with a placeholder in CLE-196a). Chris to delete the file from
-  Windows Explorer when convenient — the sandbox can't unlink it.
+- `getEffectiveRightsForUser(userId): Promise<{ rights, ctx } | null>` — the primary read. Used by every server component and server action for gating.
+- `getEffectiveRights(memberId): Promise<EffectiveRights | null>` — for cross-user checks (e.g. resolving another member's profile to render their rights summary).
+- `getRightsEditorCount(orgId): Promise<number>` — drives the warning banner (CLE-199). Counts members whose profile has `can_edit_rights_profiles = true`.
+- `canActOn(actor, actorCtx, target)` — rank + scope check for cross-user actions; returns `{ view, update, delete, assignProfile }`.
+- `resolveTab(rights, tabKey)` — safe accessor for the tab matrix with `{ view: false, update: false }` fallback for missing keys.
 
-Follow-up work: rewrite `get_user_role` / `get_user_permission` /
-`get_org_members` to source from `rights_profiles`, remove the
-Admin/Employee Profile pickers from the client UI, then drop the
-legacy columns/tables. Track under CLE-201 (to be created).
+### Seed defaults
+
+Each new org gets four profiles seeded by the CLE-196a migration:
+- **Admin** — everything on, scope=all
+- **HR** — everything except billing/rights-profile-editing/admin-only reports, scope=all
+- **Manager** — approve holidays + run reports + team view+update on Holiday/Employment/Personal, scope=team
+- **Employee** — self-scope; can view+update their own Personal/Contacts/Holiday/Documents
+
+These aren't hierarchical any more (post-CLE-197). All four are peer-level profiles from the user's perspective; the `is_default = true` flag prevents deletion of any of the four but doesn't grant them special semantics.
+
+### Guard triggers
+
+Two DB triggers enforce bus-factor invariants at the row level:
+- **`ensure_at_least_two_rights_editors_on_member`** (BEFORE UPDATE/DELETE on `members`) — blocks any operation that would drop the count of `can_edit_rights_profiles = true` members from ≥2 to <2. Deliberately doesn't block operations when the count is already below 2 (so Chris on his 1-editor tenant isn't frozen). The invariant activates once he promotes a second.
+- **`ensure_at_least_two_rights_editors_on_profile`** (BEFORE UPDATE on `rights_profiles`) — mirrors the above for the case where an admin turns off `can_edit_rights_profiles` on a profile that has assigned members.
+
+Both raise `check_violation` with a friendly message the app surfaces via the `<UserRightsPicker>` inline error.
+
+### Warning banner (CLE-199)
+
+`(dashboard)/layout.tsx` computes `getRightsEditorCount(orgId)` on every render for viewers whose profile grants `can_edit_rights_profiles`. Red banner when count ≤ 1, amber when > 5. Uses the same `--top-chrome-extra` CSS variable pattern as the trial banner so downstream sticky elements shift correctly.
+
+### Sensitive fields
+
+See the **Sensitive fields (CLE-198)** section below.
+
+### UI surfaces
+
+- **Settings → User Rights** (`/settings/rights-profiles`) — profile list + editor. Rank is hidden from the UI; drag-reorder via the `useListReorder` hook; Copy duplicates a profile with " (Copy)" suffix.
+- **Settings → User Rights → Compare** (`/settings/rights-profiles/compare`) — all profiles as columns, all rights as rows, sticky first column, "Only show rows where Profiles differ" toggle.
+- **Settings → User Rights → Per-member lookup** (`/settings/rights-profiles/lookup`) — member picker + plain-English rights summary generated in-browser, copyable for support tickets.
+- **Employment page → User Rights card** — per-member profile picker at the bottom of `/members/[memberId]/employment`. Read-only for viewers without `canEditRightsProfiles`; select-with-live-update for those with it.
+- **Header** — the `HeaderUserMenu` shows the profile name (falling back to the memberLabel-based rank name for unassigned members).
+- **Employees Directory** — the `user_rights` column shows each member's profile name.
+
+### Residual legacy (CLE-201 will remove)
+
+The CLE-196 cutover intentionally stopped short of dropping the old plumbing so we didn't need to rewrite every RLS helper in one go. Known residual pieces:
+
+- `members.role`, `members.permissions`, `members.admin_profile_id`, `members.employee_profile_id` — columns kept because the SECURITY DEFINER RLS helpers (`get_user_role`, `get_user_permission`, `get_org_members`) still read them.
+- `admin_profiles` / `employee_profiles` tables — kept because the Edit Employee / Employment form / Bulk Edit sheet still surface Admin/Employee Profile pickers backed by them. Picks have **no security effect** (the resolver ignores them) but the UI still lets users set them.
+- `src/lib/rights-config.ts` and `src/app/(dashboard)/employees/profile-actions.ts` — kept because the pickers above still import them.
+- `src/app/(dashboard)/settings/profiles/rights/rights-profiles-client.tsx` — stubbed to `export {}` and unreachable. Chris to delete from Windows Explorer when convenient.
+- A handful of `rank !== "employee"` display checks in the proxy, sidebar and dashboard shell — see the follow-up work list in CLE-201.
+
+Under path B (chosen in CLE-196c), the resolver is authoritative for every security decision; the legacy columns exist but are ignored. Removing them requires rewriting the RLS helpers to source from `rights_profiles`, which is CLE-201's scope.
+
+### File map
+
+- `src/lib/rights-types.ts` — types + TAB_KEYS + rank helpers (client-safe)
+- `src/lib/rights-resolver.ts` — resolver + guard + count helpers (server-only)
+- `src/lib/sensitive-fields.ts` — sensitive-field enumeration + redaction helpers
+- `src/app/(dashboard)/settings/rights-profiles/actions.ts` — profile CRUD + assignment actions
+- `src/app/(dashboard)/settings/rights-profiles/rights-profiles-client.tsx` — profile list + editor UI
+- `src/app/(dashboard)/settings/rights-profiles/compare/` — Compare view
+- `src/app/(dashboard)/settings/rights-profiles/lookup/` — Per-member lookup
+- `src/app/(dashboard)/settings/organisation/billing-contact-actions.ts` — billing contact transfer
+- `src/app/(dashboard)/settings/organisation/billing-contact-card.tsx` — billing contact UI
+- `src/app/(dashboard)/members/[memberId]/employment/user-rights-picker.tsx` — per-member profile picker
+- `supabase/migrations/20260826000001_rights_profiles_v2_foundation.sql` — schema + seed
+- `supabase/migrations/20260826000002_rights_editors_guard.sql` — bus-factor triggers
+
+### Recovery process (out-of-band)
+
+If an org is locked out (no rights-editor available), ClearHR support intervenes manually:
+1. Verified inbound request from the org's official domain
+2. Support verifies identity through the emergency-successor contact if set, or via existing billing records
+3. Support uses service-role to reassign a member to the Admin default profile
+4. Recovery is logged in the audit trail with `action = "support.rights_recovery"`
+
+The "Emergency successor" Settings field (name + email) is a proposed but not-yet-built follow-up — see CLE-200 out-of-scope notes.
 
 ## Sensitive fields (CLE-198)
 

@@ -82,8 +82,12 @@ interface EmploymentFormProps {
   canEdit: boolean;
   canDelete: boolean;
   teams: { id: string; name: string }[];
-  adminProfiles: { id: string; name: string }[];
-  employeeProfiles: { id: string; name: string }[];
+  // CLE-201a — legacy Admin/Employee Profile pickers removed. Props
+  // kept for backwards compat but ignored; safe to delete once every
+  // caller stops threading them (page.tsx, edit-employee-dialog, etc.
+  // update in the same slice).
+  adminProfiles?: { id: string; name: string }[];
+  employeeProfiles?: { id: string; name: string }[];
   customFieldDefs: FieldDef[];
   currencySymbol: string;
   workProfileAssignments: WorkProfileAssignmentRow[];
@@ -105,8 +109,6 @@ export function EmploymentForm({
   canEdit,
   canDelete,
   teams,
-  adminProfiles,
-  employeeProfiles,
   customFieldDefs,
   currencySymbol,
   workProfileAssignments,
@@ -122,9 +124,11 @@ export function EmploymentForm({
   const [firstName, setFirstName] = useState(member.first_name);
   const [lastName, setLastName] = useState(member.last_name);
   const [payrollNumber, setPayrollNumber] = useState(member.payroll_number ?? "");
-  const [role, setRole] = useState(member.role);
+  // CLE-201a — role state kept for the header display badge below and
+  // for the (legacy) updateEmployee call payload until the action's
+  // signature is trimmed in CLE-201c. Not user-editable.
+  const [role] = useState(member.role);
   const [teamId, setTeamId] = useState<string | null>(member.team_id);
-  const [profileId, setProfileId] = useState<string>(member.current_profile_id ?? "__none__");
   const [startDate, setStartDate] = useState(member.start_date ?? "");
   const [avatarUrl, setAvatarUrl] = useState(member.avatar_url);
   const [invitedAt, setInvitedAt] = useState(member.invited_at);
@@ -164,7 +168,8 @@ export function EmploymentForm({
       role,
       payrollNumber: payrollNumber.trim() || null,
       teamId,
-      profileId,
+      // CLE-201a — legacy profileId omitted; the action ignores an
+      // undefined value.
       updatedAt: member.updated_at,
       startDate: startDate || null,
     });
@@ -370,23 +375,15 @@ export function EmploymentForm({
 
               <div className="space-y-2">
                 <Label>Role</Label>
-                {isOwner ? (
-                  <Input value="Owner" disabled className="bg-muted" />
-                ) : (
-                  <Select
-                    value={role}
-                    disabled={!canEdit}
-                    onValueChange={(v) => { setRole(v); setProfileId("__none__"); }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="admin">Admin</SelectItem>
-                      <SelectItem value="employee">{capitalize(memberLabel)}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
+                {/* CLE-201a — Legacy role picker retired. Role
+                    assignment now flows through the User Rights card
+                    at the bottom of the page (which sets rights_profile_id).
+                    Displayed as read-only for reference. */}
+                <Input
+                  value={role === "owner" ? "Owner" : role === "admin" ? "Admin" : capitalize(memberLabel)}
+                  disabled
+                  className="bg-muted"
+                />
               </div>
 
               {teams.length > 0 && (
@@ -438,28 +435,9 @@ export function EmploymentForm({
                 canEdit={canEdit}
               />
 
-              {!isOwner && (() => {
-                const applicable = role === "admin" ? adminProfiles : employeeProfiles;
-                if (applicable.length === 0) return null;
-                return (
-                  <div className="space-y-2">
-                    <Label>Rights Profile</Label>
-                    <Select value={profileId} disabled={!canEdit} onValueChange={setProfileId}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">No profile</SelectItem>
-                        {applicable.map((p) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                );
-              })()}
+              {/* CLE-201a — Legacy Admin/Employee Profile picker
+                  retired. User Rights assignment now lives in the
+                  standalone <UserRightsPicker> card below this form. */}
             </CardContent>
           </Card>
         </TabsContent>
