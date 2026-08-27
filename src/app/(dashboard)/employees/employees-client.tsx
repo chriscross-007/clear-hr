@@ -78,6 +78,9 @@ interface EmployeesClientProps {
   /** CLE-186 — Holiday (Annual Leave) approval profiles for the Bulk Edit
    *  sheet's Approval Profile picker. */
   holidayApprovalProfiles: { id: string; name: string; isDefault: boolean }[];
+  /** CLE-201 — User Rights profiles for the Bulk Edit sheet's picker.
+   *  Empty when the caller lacks canEditRightsProfiles. */
+  rightsProfilesForBulk: { id: string; name: string }[];
 }
 
 export function EmployeesClient({
@@ -103,6 +106,7 @@ export function EmployeesClient({
   userId,
   holidayAbsenceTypeId,
   holidayApprovalProfiles,
+  rightsProfilesForBulk,
 }: EmployeesClientProps) {
   const { memberLabel } = useMemberLabel();
   const router = useRouter();
@@ -122,6 +126,15 @@ export function EmployeesClient({
   );
 
   const [members, setMembers] = useState(initialMembers);
+  // CLE-201 follow-up — Re-sync local state whenever the server
+  // component re-renders (after router.refresh() following a bulk
+  // update, employee edit, etc.). Without this, local `members` stays
+  // frozen at the initial mount value even after the DB updates and
+  // enriched fields (user_rights_profile_name, holiday_profile_name,
+  // etc.) never surface until a full page reload.
+  useEffect(() => {
+    setMembers(initialMembers);
+  }, [initialMembers]);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [deletingMember, setDeletingMember] = useState<Member | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -387,17 +400,26 @@ export function EmployeesClient({
     }
   }
 
+  // CLE-201 follow-up — Count only actual member rows, not any
+  // synthetic ids the DataGrid might parkinsons into selectedIds
+  // (e.g. group-header keys). `members` is the authoritative row
+  // list; the intersection is the truthy count.
+  const trueSelectedMemberIds = members
+    .filter((m) => selectedIds.has(m.member_id))
+    .map((m) => m.member_id);
+  const trueSelectedCount = trueSelectedMemberIds.length;
+
   // Toolbar slot: view toggle + add button + selection count
   const toolbar = (
     <div className="flex items-center gap-3">
-      {selectedIds.size > 0 && (
+      {trueSelectedCount > 0 && (
         <Button
           variant="outline"
           size="sm"
           onClick={() => setBulkEditOpen(true)}
         >
           <Pencil className="h-4 w-4 mr-2" />
-          Bulk Edit ({selectedIds.size})
+          Bulk Edit ({trueSelectedCount})
         </Button>
       )}
       <div className="flex overflow-hidden rounded-md border border-input text-sm">
@@ -654,14 +676,15 @@ export function EmployeesClient({
       <BulkEditSheet
         open={bulkEditOpen}
         onOpenChange={setBulkEditOpen}
-        selectedCount={selectedIds.size}
-        selectedIds={selectedIds}
+        selectedCount={trueSelectedCount}
+        selectedIds={new Set(trueSelectedMemberIds)}
         teams={teams}
         memberLabel={memberLabel}
         customFieldDefs={customFieldDefs}
         currencySymbol={currencySymbol}
         holidayAbsenceTypeId={holidayAbsenceTypeId}
         holidayApprovalProfiles={holidayApprovalProfiles}
+        rightsProfiles={rightsProfilesForBulk}
         onBulkUpdate={(updatedIds, updates) => {
           // Optimistic update — apply changes to local state immediately
           setMembers((prev) =>
@@ -684,6 +707,12 @@ export function EmployeesClient({
                   const found = holidayApprovalProfiles.find((p) => p.id === updates.approval_profile_id);
                   updated.approval_profile_name = found?.name ?? null;
                 }
+              }
+              // CLE-201 — update the User Rights column so the grid
+              // reflects the change before router.refresh() completes.
+              if (updates.rights_profile_id !== undefined) {
+                const found = rightsProfilesForBulk.find((p) => p.id === updates.rights_profile_id);
+                updated.user_rights_profile_name = found?.name ?? null;
               }
               return updated;
             })

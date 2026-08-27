@@ -843,12 +843,26 @@ export type BulkUpdatePayload = {
    *  selected member. `null` clears the assignment (falls back to legacy
    *  "any admin"). `undefined` = no change. */
   approval_profile_id?: string | null;
+  /** CLE-201 — bulk-assign the User Rights profile for the selected
+   *  members. Applied sequentially so the rights-editors-≥2 DB guard
+   *  can block individual rows without rolling back the whole batch;
+   *  `bulkUpdateMembers` returns a per-member error list when any
+   *  row's trigger fires. `undefined` = no change. */
+  rights_profile_id?: string;
 };
+
+export interface BulkUpdateResult {
+  success: boolean;
+  error?: string;
+  /** Per-member failures from the User Rights assignment leg. Empty
+   *  when everything succeeded or no rights_profile_id was requested. */
+  rightsProfileErrors?: { memberId: string; memberName: string; error: string }[];
+}
 
 export async function bulkUpdateMembers(
   memberIds: string[],
   updates: BulkUpdatePayload
-): Promise<{ success: boolean; error?: string }> {
+): Promise<BulkUpdateResult> {
   try {
     if (!memberIds.length) return { success: false, error: "No members selected" };
 
@@ -868,12 +882,27 @@ export async function bulkUpdateMembers(
 
     if (!membership) return { success: false, error: "No organisation" };
 
-    // CLE-196b-2 — Bulk-edit gated by Personal tab update rights (bulk
-    // edit currently only touches team_id, role and custom_fields —
-    // all of which live under the Personal tab).
+    // CLE-196b-2 / CLE-201 — Split gate:
+    //   • Personal-tab writes (team_id, role, custom_fields, approval) need
+    //     Personal.update.
+    //   • User Rights writes (rights_profile_id) need canEditRightsProfiles
+    //     — the resolver-level equivalent of the User Rights picker on
+    //     the Employment page.
+    // A payload can request either or both; the caller must have the
+    // right gate for each field it's touching.
     const resolved = await getEffectiveRightsForUser(user.id);
-    const canEdit = resolved?.rights.tabs.personal?.update === true;
-    if (!canEdit) return { success: false, error: "Insufficient permissions" };
+    const needsPersonal =
+      updates.team_id !== undefined ||
+      updates.role !== undefined ||
+      updates.custom_fields !== undefined ||
+      updates.approval_profile_id !== undefined;
+    const needsRightsEdit = updates.rights_profile_id !== undefined;
+    if (needsPersonal && resolved?.rights.tabs.personal?.update !== true) {
+      return { success: false, error: "Insufficient permissions" };
+    }
+    if (needsRightsEdit && !resolved?.rights.canEditRightsProfiles) {
+      return { success: false, error: "You don't have permission to edit User Rights" };
+    }
 
     // Validate role if provided
     if (updates.role && !["admin", "employee"].includes(updates.role)) {
@@ -954,12 +983,57 @@ export async function bulkUpdateMembers(
       }
     }
 
+    // CLE-201 — Bulk User Rights assignment. Runs sequential updates
+    // so the rights-editors-≥2 DB guard trigger can block individual
+    // rows without rolling back the whole batch. Rows that fail are
+    // reported back to the client per-member so the admin knows which
+    // ones need attention.
+    const rightsProfileErrors: { memberId: string; memberName: string; error: string }[] = [];
+    if (updates.rights_profile_id !== undefined) {
+      // Verify the profile belongs to the caller's org before touching
+      // anything.
+      const { data: prof } = await admin
+        .from("rights_profiles")
+        .select("id, organisation_id")
+        .eq("id", updates.rights_profile_id)
+        .single();
+      if (!prof || prof.organisation_id !== membership.organisation_id) {
+        return { success: false, error: "User Rights profile not found" };
+      }
+      // Pull the current member rows so per-failure messages can name
+      // the affected member (avoids a per-error round-trip).
+      const { data: nameRows } = await admin
+        .from("members")
+        .select("id, first_name, last_name")
+        .in("id", memberIds)
+        .eq("organisation_id", membership.organisation_id);
+      const nameById = new Map<string, string>();
+      for (const r of ((nameRows ?? []) as Array<{ id: string; first_name: string; last_name: string }>)) {
+        nameById.set(r.id, `${r.first_name} ${r.last_name}`);
+      }
+      for (const id of memberIds) {
+        const { error: updErr } = await admin
+          .from("members")
+          .update({ rights_profile_id: updates.rights_profile_id })
+          .eq("id", id)
+          .eq("organisation_id", membership.organisation_id);
+        if (updErr) {
+          rightsProfileErrors.push({
+            memberId: id,
+            memberName: nameById.get(id) ?? id,
+            error: updErr.message,
+          });
+        }
+      }
+    }
+
     // Audit log
     const changedParts: string[] = [];
     if (updates.team_id) changedParts.push("team");
     if (updates.role) changedParts.push("role");
     if (updates.custom_fields) changedParts.push("custom fields");
     if (updates.approval_profile_id !== undefined) changedParts.push("approver profile");
+    if (updates.rights_profile_id !== undefined) changedParts.push("User Rights");
 
     logAudit({
       organisationId: membership.organisation_id,
@@ -971,7 +1045,14 @@ export async function bulkUpdateMembers(
       targetLabel: `${memberIds.length} members (${changedParts.join(", ")})`,
     });
 
-    return { success: true };
+    return {
+      success: rightsProfileErrors.length === 0,
+      error:
+        rightsProfileErrors.length > 0
+          ? `${rightsProfileErrors.length} member${rightsProfileErrors.length === 1 ? "" : "s"} couldn't be updated (see details)`
+          : undefined,
+      rightsProfileErrors: rightsProfileErrors.length > 0 ? rightsProfileErrors : undefined,
+    };
   } catch (e) {
     return {
       success: false,

@@ -41,6 +41,9 @@ interface BulkEditSheetProps {
   holidayAbsenceTypeId: string | null;
   /** CLE-186 — Holiday (Annual Leave) approval profiles to choose from. */
   holidayApprovalProfiles: { id: string; name: string; isDefault: boolean }[];
+  /** CLE-201 — User Rights profiles the caller can assign. Empty when
+   *  the caller lacks canEditRightsProfiles or the picker should be hidden. */
+  rightsProfiles?: { id: string; name: string }[];
   onBulkUpdate: (updatedIds: string[], updates: BulkUpdatePayload) => void;
 }
 
@@ -63,18 +66,22 @@ export function BulkEditSheet({
   currencySymbol,
   holidayAbsenceTypeId,
   holidayApprovalProfiles,
+  rightsProfiles = [],
   onBulkUpdate,
 }: BulkEditSheetProps) {
   const [selectedTeamId, setSelectedTeamId] = useState(NO_CHANGE);
   const [selectedApprovalProfile, setSelectedApprovalProfile] = useState(NO_CHANGE);
+  const [selectedRightsProfile, setSelectedRightsProfile] = useState(NO_CHANGE);
   const [customFieldValues, setCustomFieldValues] = useState<Map<string, unknown>>(new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rightsProfileErrors, setRightsProfileErrors] = useState<{ memberId: string; memberName: string; error: string }[] | null>(null);
 
   const hasCustomChanges = customFieldValues.size > 0;
   const hasChanges =
     selectedTeamId !== NO_CHANGE ||
     selectedApprovalProfile !== NO_CHANGE ||
+    selectedRightsProfile !== NO_CHANGE ||
     hasCustomChanges;
   const canShowApprovalProfile =
     holidayAbsenceTypeId !== null && holidayApprovalProfiles.length > 0;
@@ -92,6 +99,10 @@ export function BulkEditSheet({
       label = found?.name ?? "Unknown";
     }
     summaryParts.push(`Approver Profile → ${label}`);
+  }
+  if (selectedRightsProfile !== NO_CHANGE) {
+    const found = rightsProfiles.find((p) => p.id === selectedRightsProfile);
+    summaryParts.push(`User Rights → ${found?.name ?? "Unknown"}`);
   }
   for (const [fieldKey, value] of customFieldValues) {
     const def = customFieldDefs.find((d) => d.field_key === fieldKey);
@@ -128,6 +139,8 @@ export function BulkEditSheet({
     if (!nextOpen) {
       setSelectedTeamId(NO_CHANGE);
       setSelectedApprovalProfile(NO_CHANGE);
+      setSelectedRightsProfile(NO_CHANGE);
+      setRightsProfileErrors(null);
       setCustomFieldValues(new Map());
       setError(null);
     }
@@ -144,6 +157,9 @@ export function BulkEditSheet({
         updates.approval_profile_id =
           selectedApprovalProfile === APPROVAL_LEGACY ? null : selectedApprovalProfile;
       }
+      if (selectedRightsProfile !== NO_CHANGE) {
+        updates.rights_profile_id = selectedRightsProfile;
+      }
 
       if (hasCustomChanges) {
         const cfUpdates: Record<string, unknown> = {};
@@ -155,13 +171,27 @@ export function BulkEditSheet({
 
       const memberIdArray = Array.from(selectedIds);
       const result = await bulkUpdateMembers(memberIdArray, updates);
+      setRightsProfileErrors(result.rightsProfileErrors ?? null);
+
+      // CLE-201 follow-up — Partial-success handling. When only the
+      // rights_profile leg failed on some rows, the team/custom/
+      // approval writes already went through server-side, so apply
+      // the optimistic update for the members that WEREN'T blocked
+      // and keep the sheet open showing the per-member errors.
+      const failedIds = new Set(
+        (result.rightsProfileErrors ?? []).map((r) => r.memberId),
+      );
+      const succeededIds = memberIdArray.filter((id) => !failedIds.has(id));
+      if (succeededIds.length > 0) {
+        onBulkUpdate(succeededIds, updates);
+      }
+
       if (result.success) {
-        // Optimistic update — instant UI feedback, then background refresh
-        onBulkUpdate(memberIdArray, updates);
-        // Close sheet and show success (selection preserved)
+        // Everything worked — close the sheet.
         handleOpenChange(false);
       } else {
-        // Sheet stays open, selection preserved
+        // Sheet stays open, selection preserved. Show top-level error
+        // plus the per-member error list (rendered below).
         setError(result.error ?? "An error occurred");
       }
     } catch (e) {
@@ -204,12 +234,32 @@ export function BulkEditSheet({
             </Select>
           </div>
 
-          {/* CLE-201a — Legacy Role picker removed from bulk edit.
-              User Rights assignment now goes one-at-a-time on the
-              Employment page (dedicated <UserRightsPicker> card). If
-              bulk profile assignment becomes a real need, a proper
-              User Rights bulk picker can be built on top of
-              setMemberRightsProfile. */}
+          {/* CLE-201 — Bulk User Rights picker. Empty rightsProfiles
+              means the caller doesn't have canEditRightsProfiles or the
+              list hasn't been fetched — either way, hide. */}
+          {rightsProfiles.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">User Rights</label>
+              <Select value={selectedRightsProfile} onValueChange={setSelectedRightsProfile}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_CHANGE}>No change</SelectItem>
+                  {rightsProfiles.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Assigns each selected {memberLabel.toLowerCase()} to this profile.
+                Members that would drop the rights-editor count below 2 will be
+                skipped and reported.
+              </p>
+            </div>
+          )}
 
           {/* CLE-186 — Approver Profile (Holiday) */}
           {canShowApprovalProfile && (
@@ -267,6 +317,20 @@ export function BulkEditSheet({
           {/* Error */}
           {error && (
             <p className="text-sm text-destructive">{error}</p>
+          )}
+          {rightsProfileErrors && rightsProfileErrors.length > 0 && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/5 px-3 py-2 text-xs">
+              <div className="font-medium text-destructive mb-1">
+                User Rights update skipped {rightsProfileErrors.length} member{rightsProfileErrors.length === 1 ? "" : "s"}:
+              </div>
+              <ul className="list-disc pl-4 space-y-0.5 text-destructive/90">
+                {rightsProfileErrors.map((r) => (
+                  <li key={r.memberId}>
+                    <span className="font-medium">{r.memberName}:</span> {r.error}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
 

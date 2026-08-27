@@ -87,9 +87,14 @@ export default async function EmployeesPage({
   // rights_profiles, (2) member id → rights_profile_id for the
   // directory rows.
   const [{ data: rightsProfileRows }, { data: memberRightsRows }] = await Promise.all([
-    supabase.from("rights_profiles").select("id, name").eq("organisation_id", membership!.organisation_id),
+    supabase.from("rights_profiles").select("id, name, sort_order").eq("organisation_id", membership!.organisation_id).order("sort_order").order("name"),
     supabase.from("members").select("id, rights_profile_id").eq("organisation_id", membership!.organisation_id),
   ]);
+  // CLE-201 — Bulk Edit's User Rights picker uses the same list.
+  // Show only when the caller can actually assign profiles.
+  const rightsProfilesForBulk = rights.canEditRightsProfiles
+    ? ((rightsProfileRows ?? []) as Array<{ id: string; name: string }>).map((r) => ({ id: r.id, name: r.name }))
+    : [];
   const rightsProfileNameById = new Map<string, string>();
   for (const rp of (rightsProfileRows ?? []) as Array<{ id: string; name: string }>) {
     rightsProfileNameById.set(rp.id, rp.name);
@@ -189,6 +194,7 @@ export default async function EmployeesPage({
       userId={user.id}
       holidayAbsenceTypeId={holidayAbsenceTypeId}
       holidayApprovalProfiles={holidayApprovalProfiles}
+      rightsProfilesForBulk={rightsProfilesForBulk}
     />
   );
 }
