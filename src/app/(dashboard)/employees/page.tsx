@@ -65,7 +65,7 @@ export default async function EmployeesPage({
       supabase.from("admin_profiles").select("id, name, rights").eq("organisation_id", membership!.organisation_id).order("name"),
       supabase.from("employee_profiles").select("id, name, rights").eq("organisation_id", membership!.organisation_id).order("name"),
       supabase.from("user_grid_preferences").select("prefs").eq("user_id", user.id).eq("grid_id", "employees").maybeSingle(),
-      supabase.from("custom_field_definitions").select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places").eq("organisation_id", membership!.organisation_id).eq("object_type", "member").order("sort_order"),
+      supabase.from("custom_field_definitions").select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places, is_sensitive").eq("organisation_id", membership!.organisation_id).eq("object_type", "member").order("sort_order"),
       // CLE-167 — read holiday_periods for the current period name per member,
       // replacing the old absence_profiles + holiday_year_records lookup. The
       // directory column "Holiday Profile" now shows the current Period name
@@ -80,6 +80,24 @@ export default async function EmployeesPage({
       supabase.from("members").select("id, approval_profile_assignments").eq("organisation_id", membership!.organisation_id),
       supabase.from("absence_types").select("id").eq("organisation_id", membership!.organisation_id).eq("is_default", true).eq("name", "Annual Leave").maybeSingle(),
     ]);
+
+  // CLE-198 follow-up — Build user_rights profile name map so the
+  // Employees Directory can show which User Rights profile each member
+  // is currently on. Two queries: (1) profile id → name for the org's
+  // rights_profiles, (2) member id → rights_profile_id for the
+  // directory rows.
+  const [{ data: rightsProfileRows }, { data: memberRightsRows }] = await Promise.all([
+    supabase.from("rights_profiles").select("id, name").eq("organisation_id", membership!.organisation_id),
+    supabase.from("members").select("id, rights_profile_id").eq("organisation_id", membership!.organisation_id),
+  ]);
+  const rightsProfileNameById = new Map<string, string>();
+  for (const rp of (rightsProfileRows ?? []) as Array<{ id: string; name: string }>) {
+    rightsProfileNameById.set(rp.id, rp.name);
+  }
+  const rightsProfileByMemberId = new Map<string, string | null>();
+  for (const m of (memberRightsRows ?? []) as Array<{ id: string; rights_profile_id: string | null }>) {
+    rightsProfileByMemberId.set(m.id, m.rights_profile_id);
+  }
 
   // Build current Holiday Period name map: member_id → period name
   const holidayProfileMap = new Map<string, string>();
@@ -137,11 +155,13 @@ export default async function EmployeesPage({
         approvalProfileName = profileNameById.get(profileId) ?? null;
       }
     }
+    const rightsProfileId = rightsProfileByMemberId.get(memberIdStr) ?? null;
     return {
       ...m,
       holiday_profile_name: holidayProfileMap.get(memberIdStr) ?? null,
       work_pattern_name: workPatternMap.get(memberIdStr) ?? null,
       approval_profile_name: approvalProfileName,
+      user_rights_profile_name: rightsProfileId ? (rightsProfileNameById.get(rightsProfileId) ?? null) : null,
     };
   });
 

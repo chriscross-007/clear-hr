@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { ArrowUp, ArrowDown, ArrowUpDown, Check, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -69,6 +70,12 @@ export type Member = {
    *  NULL = member has no per-employee pointer for Annual Leave, i.e.
    *  falls back to the legacy "any admin can approve" feed. */
   approval_profile_name: string | null;
+  /** CLE-198 follow-up — The Rights Profile v2 (User Rights) name
+   *  assigned to this member. Sourced from rights_profiles.name via
+   *  the enrichment step in `employees/page.tsx`. Optional so that
+   *  callers still using MemberResult (e.g. onAdded from
+   *  add-employee-dialog) don't have to synthesise it. */
+  user_rights_profile_name?: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -192,12 +199,12 @@ export const DATE_PRESET_LABELS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 export const ALL_EMPLOYEE_COLS = [
-  "avatar", "payroll_number", "first_name", "last_name", "email", "role", "profile",
+  "avatar", "payroll_number", "first_name", "last_name", "email", "role", "user_rights", "profile",
   "team", "holiday_profile", "approval_profile", "work_pattern", "status", "last_log_in",
 ];
 
 export const DEFAULT_EMPLOYEE_COLS = [
-  "avatar", "payroll_number", "first_name", "last_name", "email", "role", "profile",
+  "avatar", "payroll_number", "first_name", "last_name", "email", "user_rights", "profile",
   "team", "holiday_profile", "approval_profile", "work_pattern", "status",
 ];
 
@@ -208,6 +215,7 @@ export const EMPLOYEE_COL_LABELS: Record<string, string> = {
   payroll_number: "Payroll #",
   email: "Email",
   role: "Role",
+  user_rights: "User Rights",
   profile: "Rights",
   team: "Team",
   holiday_profile: "Holiday Profile",
@@ -489,8 +497,13 @@ export function buildEmployeeColumns(opts: {
   /** CLE-186 — Distinct Approver Profile names for the Approver Profile
    *  column's filter dropdown. */
   approvalProfileNames?: string[];
+  /** CLE-198 — When false, cells for sensitive custom fields render
+   *  as `•••` instead of the value; the choice filter still lists the
+   *  option strings so filtering by a sensitive category (rather than
+   *  a specific number/name) remains possible. */
+  canViewSensitiveFields?: boolean;
 }): ColumnDef<Member>[] {
-  const { teams, adminProfiles, employeeProfiles, memberLabel, currencySymbol, customFieldDefs, holidayProfileNames = [], workPatternNames = [], approvalProfileNames = [] } = opts;
+  const { teams, adminProfiles, employeeProfiles, memberLabel, currencySymbol, customFieldDefs, holidayProfileNames = [], workPatternNames = [], approvalProfileNames = [], canViewSensitiveFields = true } = opts;
   const teamMap = Object.fromEntries(teams.map((t) => [t.id, t.name]));
 
   return [
@@ -558,6 +571,27 @@ export function buildEmployeeColumns(opts: {
             <option value="Admin">Admin</option>
             <option value={capitalize(memberLabel)}>{capitalize(memberLabel)}</option>
           </select>
+        ),
+      },
+    },
+    {
+      // CLE-198 follow-up — User Rights profile assignment. Sourced
+      // from members.rights_profiles.name via the enrichment step in
+      // employees/page.tsx.
+      id: "user_rights",
+      accessorFn: (row) => row.user_rights_profile_name ?? "—",
+      header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label="User Rights" />,
+      cell: ({ row }) => (
+        <span className="text-sm">{row.original.user_rights_profile_name ?? "—"}</span>
+      ),
+      meta: {
+        filterElement: (column) => (
+          <Input
+            placeholder="Filter..."
+            className="h-8 text-sm"
+            value={(column.getFilterValue() as string) ?? ""}
+            onChange={(e) => column.setFilterValue(e.target.value || undefined)}
+          />
         ),
       },
     },
@@ -768,6 +802,13 @@ export function buildEmployeeColumns(opts: {
       },
     },
     ...customFieldDefs.map((def): ColumnDef<Member> => {
+      // CLE-198 — Sensitive-field redaction. When the viewer lacks
+      // canViewSensitiveFields, cells for sensitive columns show `•••`.
+      // Sort + filter still work on the underlying data (so the choice
+      // filter can offer categorical picks); it's only the DISPLAY
+      // that redacts.
+      const isRedactedForViewer = def.is_sensitive === true && !canViewSensitiveFields;
+
       // Choice-mode columns (single or multi) render as pills, filter
       // via a checkbox list of the field's options, and (for
       // multi-choice) sort by the first alphabetically-sorted option.
@@ -789,12 +830,16 @@ export function buildEmployeeColumns(opts: {
           accessorFn: (row) => readValues(row),
           header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label={def.label} />,
           cell: ({ row }) => (
-            <CustomFieldPillCell
-              values={readValues(row.original)}
-              fieldType={def.field_type}
-              currencySymbol={currencySymbol}
-              maxDecimalPlaces={def.max_decimal_places}
-            />
+            isRedactedForViewer ? (
+              <span className="text-muted-foreground">•••</span>
+            ) : (
+              <CustomFieldPillCell
+                values={readValues(row.original)}
+                fieldType={def.field_type}
+                currencySymbol={currencySymbol}
+                maxDecimalPlaces={def.max_decimal_places}
+              />
+            )
           ),
           // ANY-match: row is included if it holds at least one of the
           // ticked filter options. Empty / undefined filter = all rows.
@@ -852,6 +897,9 @@ export function buildEmployeeColumns(opts: {
         return String(val);
       },
       header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label={def.label} />,
+      // CLE-198 — Redact the displayed cell without breaking sort or
+      // filter (the accessor still returns the underlying value).
+      ...(isRedactedForViewer ? { cell: () => <span className="text-muted-foreground">•••</span> } : {}),
       ...(def.field_type === "number" || def.field_type === "currency"
         ? {
             filterFn: (row: { original: Member }, _columnId: string, filterValue: { op?: string; val?: string; val2?: string }) => {

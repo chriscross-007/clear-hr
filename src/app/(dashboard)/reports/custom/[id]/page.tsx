@@ -71,7 +71,7 @@ export default async function CustomReportViewPage({
     supabase.from("teams").select("id, name").eq("organisation_id", membership.organisation_id).order("name"),
     supabase.from("admin_profiles").select("id, name, rights").eq("organisation_id", membership.organisation_id).order("name"),
     supabase.from("employee_profiles").select("id, name, rights").eq("organisation_id", membership.organisation_id).order("name"),
-    supabase.from("custom_field_definitions").select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places").eq("organisation_id", membership.organisation_id).eq("object_type", "member").order("sort_order"),
+    supabase.from("custom_field_definitions").select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places, is_sensitive").eq("organisation_id", membership.organisation_id).eq("object_type", "member").order("sort_order"),
     supabase.from("report_favourites").select("report_id").eq("user_id", user.id).eq("report_id", id).maybeSingle(),
   ]);
 

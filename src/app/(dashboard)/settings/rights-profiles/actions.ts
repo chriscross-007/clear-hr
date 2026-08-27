@@ -408,6 +408,87 @@ export async function copyRightsProfile(
 // Utility exposed to the editor for the "create fresh" button
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Assignment (picker on the Employment page)
+// ---------------------------------------------------------------------------
+
+/**
+ * List of profiles usable for the picker on an individual member's
+ * Employment page. Read is more permissive than the editor's own list
+ * — anyone who can view the member's Personal tab can see which
+ * profile they're on and swap them to any other org profile they can
+ * see. The actual write is gated by canEditRightsProfiles.
+ */
+export async function getAssignableProfiles(): Promise<
+  { id: string; name: string; rank: Rank }[]
+> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved) return [];
+
+  const admin = getAdmin();
+  const { data } = await admin
+    .from("rights_profiles")
+    .select("id, name, rank, sort_order")
+    .eq("organisation_id", resolved.ctx.organisationId)
+    .order("sort_order", { ascending: true })
+    .order("name", { ascending: true });
+  return (
+    (data ?? []) as Array<{ id: string; name: string; rank: Rank; sort_order: number }>
+  ).map((r) => ({ id: r.id, name: r.name, rank: r.rank }));
+}
+
+/**
+ * Assign a member to a specific rights_profile. Gated by
+ * canEditRightsProfiles on the caller. The DB-level triggers (last-
+ * Admin guard, rights-editors-≥2 guard) still enforce bus-factor
+ * invariants — a caller with the right can't demote the last rights-
+ * editor.
+ */
+export async function setMemberRightsProfile(
+  memberId: string,
+  profileId: string,
+): Promise<{ success: boolean; error?: string }> {
+  const guard = await requireCanEditRightsProfiles();
+  if (!guard.ok) return { success: false, error: guard.error };
+  const admin = getAdmin();
+
+  // Verify the profile belongs to the caller's org.
+  const { data: profile } = await admin
+    .from("rights_profiles")
+    .select("id")
+    .eq("id", profileId)
+    .eq("organisation_id", guard.organisationId)
+    .single();
+  if (!profile) return { success: false, error: "Profile not found" };
+
+  // Verify the target member is in the caller's org.
+  const { data: target } = await admin
+    .from("members")
+    .select("id")
+    .eq("id", memberId)
+    .eq("organisation_id", guard.organisationId)
+    .single();
+  if (!target) return { success: false, error: "Member not found" };
+
+  const { error } = await admin
+    .from("members")
+    .update({ rights_profile_id: profileId })
+    .eq("id", memberId)
+    .eq("organisation_id", guard.organisationId);
+  if (error) return { success: false, error: error.message };
+
+  revalidatePath(`/members/${memberId}/employment`);
+  revalidatePath("/employees");
+  revalidatePath("/settings/rights-profiles");
+  return { success: true };
+}
+
 export async function getBlankProfilePayload(rank: Rank): Promise<RightsProfileWritePayload> {
   return {
     name: "",

@@ -135,7 +135,7 @@ export async function createBackup(
     const { data: fieldDefs } = await admin
       .from("custom_field_definitions")
       .select(
-        "label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places, object_type"
+        "label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places, is_sensitive, object_type"
       )
       .eq("organisation_id", orgId)
       .order("sort_order");
@@ -372,7 +372,7 @@ export async function previewRestore(
       const { data: currentDefs } = await admin
         .from("custom_field_definitions")
         .select(
-          "field_key, label, field_type, input_mode, options, required, sort_order, max_decimal_places"
+          "field_key, label, field_type, input_mode, options, required, sort_order, max_decimal_places, is_sensitive"
         )
         .eq("organisation_id", orgId);
       const currentDefsMap = new Map(

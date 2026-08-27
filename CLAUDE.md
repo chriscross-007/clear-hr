@@ -347,6 +347,25 @@ Follow-up work: rewrite `get_user_role` / `get_user_permission` /
 Admin/Employee Profile pickers from the client UI, then drop the
 legacy columns/tables. Track under CLE-201 (to be created).
 
+## Sensitive fields (CLE-198)
+
+Two sources feed "is this field sensitive?":
+
+1. **`SENSITIVE_MEMBER_FIELDS`** in `src/lib/sensitive-fields.ts` — a hardcoded set of built-in `members` column names classed as GDPR-sensitive (`date_of_birth`, `ni_number`, `bank_account_number`, `bank_sort_code`, `home_address_*`, `home_phone`, `mobile_phone`, `next_of_kin*`, `pay_rate`, `salary`, `passport_number`, `driving_licence_number`). None of these columns exist on `members` yet — the enumeration is forward-looking, so redaction kicks in automatically when they land.
+2. **`custom_field_definitions.is_sensitive`** — per-field opt-in admins toggle in Settings → Custom Fields via the "Sensitive" switch. Sensitive custom-field rows display a shield icon in the Custom Fields manager.
+
+**Two profile switches** on `rights_profiles` (already added in CLE-196a):
+- `can_view_sensitive_fields` — when false, sensitive-field values render as `•••`.
+- `can_edit_sensitive_fields` — when false, sensitive-field inputs are read-only (or hidden entirely when `can_view_sensitive_fields` is also false).
+
+**Redaction is applied at every render site:**
+- Employees Directory grid — `employee-columns.tsx` `buildEmployeeColumns` takes `canViewSensitiveFields`; sensitive cells render `•••` while sort/filter continue to work on the underlying values.
+- Card view — `renderEmployeeCard` in `employees-client.tsx` uses `formatMemberForPdf`, which redacts when `canViewSensitiveFields = false`.
+- PDF/CSV export — same `formatMemberForPdf` path; sensitive columns emit `•••` in the row and blank the `_raw_cf_*` scalar so aggregate footers don't leak underlying numbers.
+- Employment form — `employment-form.tsx` renders sensitive inputs disabled when `canEditSensitiveFields = false`, hidden with a `•••` placeholder when `canViewSensitiveFields = false`. Labels show a `(sensitive)` badge.
+
+**Audit is always-on for sensitive writes.** `saveCustomFieldValues` diffs the incoming values against the existing JSONB and writes an audit_log row with `action = "member.sensitive_fields.updated"`, `metadata.is_sensitive = true`, and `changes` populated with the sensitive-only diff. This happens regardless of `can_edit_sensitive_fields` — the profile flag gates *whether* the write is permitted; when it happens, it's always recorded.
+
 ## Data Security — Non-Negotiable Rules
 
 ClearHR handles sensitive personal and employment data. Security is not optional. **When in doubt about any security decision, stop and ask the user before proceeding.**

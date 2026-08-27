@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getEffectiveRightsForUser, resolveTab } from "@/lib/rights-resolver";
 import { EmploymentForm } from "./employment-form";
 import { BookingsCard } from "./bookings-card";
+import { UserRightsPicker } from "./user-rights-picker";
+import { getAssignableProfiles } from "@/app/(dashboard)/settings/rights-profiles/actions";
 import type { WorkProfileAssignmentRow } from "./work-profile-section";
 import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
 
@@ -35,17 +37,21 @@ export default async function EmploymentPage({
 
   const canEdit = resolveTab(rights, "employment").update;
   const canSeeCurrency = rights.canViewSensitiveFields;
+  const canEditSensitiveFields = rights.canEditSensitiveFields;
   const canAddMembers = rights.canDeleteUsers; // delete-user right gates the delete button
   const currencySymbol = (caller.organisations as unknown as { currency_symbol: string } | null)?.currency_symbol ?? "£";
 
   // Target member
   const { data: member } = await supabase
     .from("members")
-    .select("id, first_name, last_name, email, role, team_id, payroll_number, avatar_url, invited_at, accepted_at, user_id, custom_fields, start_date, updated_at, admin_profile_id, employee_profile_id")
+    .select("id, first_name, last_name, email, role, team_id, payroll_number, avatar_url, invited_at, accepted_at, user_id, custom_fields, start_date, updated_at, admin_profile_id, employee_profile_id, rights_profile_id")
     .eq("id", memberId)
     .eq("organisation_id", caller.organisation_id)
     .single();
   if (!member) redirect("/employees");
+
+  // CLE-198 follow-up — Assignable User Rights profiles for the picker.
+  const rightsProfilesList = await getAssignableProfiles();
 
   // Supporting data (mirrors the main Employees page) — plus the
   // Work Profile assignment surface relocated from the Holiday page (CLE-170).
@@ -61,7 +67,7 @@ export default async function EmploymentPage({
     supabase.from("teams").select("id, name").eq("organisation_id", caller.organisation_id).order("name"),
     supabase.from("admin_profiles").select("id, name").eq("organisation_id", caller.organisation_id).order("name"),
     supabase.from("employee_profiles").select("id, name").eq("organisation_id", caller.organisation_id).order("name"),
-    supabase.from("custom_field_definitions").select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places").eq("organisation_id", caller.organisation_id).eq("object_type", "member").order("sort_order"),
+    supabase.from("custom_field_definitions").select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places, is_sensitive").eq("organisation_id", caller.organisation_id).eq("object_type", "member").order("sort_order"),
     supabase.from("employee_work_profiles").select("id, work_profile_id, effective_from, work_profiles(name)").eq("member_id", memberId).order("effective_from", { ascending: false }),
     supabase.from("work_profiles").select("id, name").eq("organisation_id", caller.organisation_id).is("member_id", null).order("name"),
     supabase.from("organisations").select("default_work_profile_id").eq("id", caller.organisation_id).single(),
@@ -125,6 +131,16 @@ export default async function EmploymentPage({
         workProfileAssignments={workProfileAssignments}
         orgWorkProfiles={(orgWorkProfiles ?? []) as { id: string; name: string }[]}
         orgDefaultWorkProfileId={orgDefaultWorkProfileId}
+        canViewSensitiveFields={canSeeCurrency}
+        canEditSensitiveFields={canEditSensitiveFields}
+      />
+
+      <UserRightsPicker
+        memberId={member.id}
+        memberName={`${member.first_name} ${member.last_name}`}
+        currentProfileId={(member as { rights_profile_id: string | null }).rights_profile_id}
+        profiles={rightsProfilesList.map((p) => ({ id: p.id, name: p.name }))}
+        canEdit={rights.canEditRightsProfiles}
       />
 
       {/* CLE-188 — Member Bookings utility. Admin/owner with manage-members

@@ -85,8 +85,11 @@ export function HeaderUserMenu({
         <span className="hidden text-sm text-muted-foreground sm:block">
           {fullName}{" "}
           <span className="text-xs">
-            ({rank === "employee" ? capitalize(memberLabel) : rank === "hr" ? "HR" : capitalize(rank)}
-            {profileName ? ` / ${profileName}` : ""})
+            {/* CLE-198 follow-up — Show the profile name (which is
+                what the user actually sees in Settings → User Rights).
+                Falls back to a rank-derived label for the default
+                Employee rank (which uses the org's memberLabel). */}
+            ({profileName ?? (rank === "employee" ? capitalize(memberLabel) : rank === "hr" ? "HR" : capitalize(rank))})
           </span>
         </span>
         <DropdownMenu>

@@ -17,7 +17,7 @@
 // harmless — an admin can just avoid it). See CLAUDE.md for the schema.
 
 import { useState, useRef } from "react";
-import { GripVertical, Trash2, Plus, X, Check } from "lucide-react";
+import { GripVertical, Shield, Trash2, Plus, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -210,6 +210,9 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys, currencySymbol }: AddFie
   const [fieldType, setFieldType] = useState<FieldTypeValue>("text");
   const [inputMode, setInputMode] = useState<InputMode>("freeform");
   const [required, setRequired] = useState(false);
+  // CLE-198 — When true, values in this field are redacted for viewers
+  // without `can_view_sensitive_fields` and every write always audits.
+  const [isSensitive, setIsSensitive] = useState(false);
   const [options, setOptions] = useState<string[]>([]);
   const [maxDecimalPlaces, setMaxDecimalPlaces] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
@@ -239,6 +242,7 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys, currencySymbol }: AddFie
         required,
         sort_order: nextOrder,
         max_decimal_places: parsedDecimalPlaces,
+        is_sensitive: isSensitive,
       },
       nextOrder
     );
@@ -248,6 +252,7 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys, currencySymbol }: AddFie
       setFieldType("text");
       setInputMode("freeform");
       setRequired(false);
+      setIsSensitive(false);
       setOptions([]);
       setMaxDecimalPlaces("");
     } else {
@@ -335,6 +340,15 @@ function AddFieldForm({ onAdd, nextOrder, existingKeys, currencySymbol }: AddFie
         <Switch id="add-required" checked={required} onCheckedChange={setRequired} />
         <Label htmlFor="add-required" className="text-sm cursor-pointer">Required</Label>
       </div>
+      <div className="flex items-center gap-2">
+        <Switch id="add-sensitive" checked={isSensitive} onCheckedChange={setIsSensitive} />
+        <Label htmlFor="add-sensitive" className="text-sm cursor-pointer">
+          Sensitive
+          <span className="text-xs text-muted-foreground ml-1">
+            (redact for users without &ldquo;View sensitive fields&rdquo;; all changes audited)
+          </span>
+        </Label>
+      </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
       <Button size="sm" onClick={handleAdd} disabled={saving}>
         {saving ? "Adding…" : "Add field"}
@@ -367,6 +381,8 @@ export function CustomFieldsManager({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState("");
   const [editRequired, setEditRequired] = useState(false);
+  // CLE-198 — is_sensitive toggle in the row-edit form.
+  const [editIsSensitive, setEditIsSensitive] = useState(false);
   const [editInputMode, setEditInputMode] = useState<InputMode>("freeform");
   const [editOptions, setEditOptions] = useState<string[]>([]);
   const [editMaxDecimalPlaces, setEditMaxDecimalPlaces] = useState<string>("");
@@ -385,6 +401,7 @@ export function CustomFieldsManager({
     setEditingId(def.id);
     setEditLabel(def.label);
     setEditRequired(def.required);
+    setEditIsSensitive(def.is_sensitive ?? false);
     setEditInputMode(def.input_mode ?? "freeform");
     setEditOptions(def.options ?? []);
     setEditMaxDecimalPlaces(def.max_decimal_places !== null && def.max_decimal_places !== undefined ? String(def.max_decimal_places) : "");
@@ -412,6 +429,7 @@ export function CustomFieldsManager({
       input_mode: editInputMode,
       options: usesOptions(editInputMode) ? editOptions : null,
       max_decimal_places: def.field_type === "number" ? parsedDecimalPlaces : undefined,
+      is_sensitive: editIsSensitive,
     });
     setSaving(false);
     if (!result.success) { setEditError(result.error ?? "Failed to save"); return; }
@@ -419,6 +437,7 @@ export function CustomFieldsManager({
       ...d,
       label: editLabel.trim(),
       required: editRequired,
+      is_sensitive: editIsSensitive,
       input_mode: editInputMode,
       options: usesOptions(editInputMode) ? editOptions : null,
       max_decimal_places: def.field_type === "number" ? parsedDecimalPlaces : d.max_decimal_places,
@@ -573,6 +592,15 @@ export function CustomFieldsManager({
                 <Switch id={`edit-req-${def.id}`} checked={editRequired} onCheckedChange={setEditRequired} />
                 <Label htmlFor={`edit-req-${def.id}`} className="text-sm cursor-pointer">Required</Label>
               </div>
+              <div className="flex items-center gap-2">
+                <Switch id={`edit-sens-${def.id}`} checked={editIsSensitive} onCheckedChange={setEditIsSensitive} />
+                <Label htmlFor={`edit-sens-${def.id}`} className="text-sm cursor-pointer">
+                  Sensitive
+                  <span className="text-xs text-muted-foreground ml-1">
+                    (redact for users without &ldquo;View sensitive fields&rdquo;; all changes audited)
+                  </span>
+                </Label>
+              </div>
               {editError && <p className="text-xs text-destructive">{editError}</p>}
               <div className="flex gap-2">
                 <Button size="sm" onClick={() => saveEdit(def)} disabled={saving}>
@@ -597,7 +625,15 @@ export function CustomFieldsManager({
                   onClick={(e) => e.stopPropagation()}
                 />
               )}
-              <span className="flex-1 text-sm font-medium">{def.label}</span>
+              <span className="flex-1 text-sm font-medium flex items-center gap-1.5">
+                {def.label}
+                {def.is_sensitive && (
+                  <Shield
+                    className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400"
+                    aria-label="Sensitive field"
+                  />
+                )}
+              </span>
               <div className="flex items-center gap-1 shrink-0">
                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
                   {fieldTypeLabel(def.field_type)}

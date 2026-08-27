@@ -89,6 +89,15 @@ interface EmploymentFormProps {
   workProfileAssignments: WorkProfileAssignmentRow[];
   orgWorkProfiles: { id: string; name: string }[];
   orgDefaultWorkProfileId: string | null;
+  /** CLE-198 — When false, sensitive-field inputs render as a `•••`
+   *  read-only cell instead of the editable input, and the field is
+   *  omitted from the values submitted on Save. Defaults to true so
+   *  legacy callers that haven't wired the resolver don't accidentally
+   *  under-redact. */
+  canViewSensitiveFields?: boolean;
+  /** CLE-198 — When false, sensitive-field inputs render read-only
+   *  even if the viewer can see the value. Defaults to true. */
+  canEditSensitiveFields?: boolean;
 }
 
 export function EmploymentForm({
@@ -103,6 +112,8 @@ export function EmploymentForm({
   workProfileAssignments,
   orgWorkProfiles,
   orgDefaultWorkProfileId,
+  canViewSensitiveFields = true,
+  canEditSensitiveFields = true,
 }: EmploymentFormProps) {
   const { memberLabel } = useMemberLabel();
   const router = useRouter();
@@ -457,24 +468,42 @@ export function EmploymentForm({
           <TabsContent value="custom-fields" className="mt-4">
             <Card>
               <CardContent className="space-y-4 pt-6">
-                {customFieldDefs.map((def) => (
+                {customFieldDefs.map((def) => {
+                  // CLE-198 — Resolve sensitive-field rendering.
+                  //   • !view    → show a `•••` placeholder, no input
+                  //   • view+!edit → render input disabled+readOnly
+                  //   • view+edit → normal (canEdit still applies)
+                  const isSensitive = def.is_sensitive === true;
+                  const hideValue = isSensitive && !canViewSensitiveFields;
+                  const lockValue = isSensitive && !canEditSensitiveFields;
+                  const inputDisabled = !canEdit || lockValue;
+
+                  return (
                   <div key={def.field_key} className="space-y-1">
                     <Label htmlFor={`cf-${def.field_key}`}>
                       {def.label}
                       {def.required && <span className="ml-0.5 text-destructive">*</span>}
+                      {isSensitive && (
+                        <span className="ml-1.5 text-xs text-amber-600 dark:text-amber-400" title="Sensitive field">
+                          (sensitive)
+                        </span>
+                      )}
                     </Label>
-                    {/* Input-mode preflight (multi/single choice) takes
-                        precedence over the free-form type chain below.
-                        Options-driven inputs render their value through
-                        the shared MultiSelect / SingleSelect, which
-                        apply the base-type formatter to each option. */}
-                    {def.input_mode === "multi_choice" ? (
+                    {hideValue ? (
+                      <div className="text-sm text-muted-foreground py-2">•••</div>
+                    ) : (
+                    // Input-mode preflight (multi/single choice) takes
+                    // precedence over the free-form type chain below.
+                    // Options-driven inputs render their value through
+                    // the shared MultiSelect / SingleSelect, which
+                    // apply the base-type formatter to each option.
+                    def.input_mode === "multi_choice" ? (
                       <CustomFieldMultiSelect
                         id={`cf-${def.field_key}`}
                         options={def.options ?? []}
                         value={normaliseMultiselectValue(customValues[def.field_key])}
                         onChange={(next) => setCustomValues((prev) => ({ ...prev, [def.field_key]: next }))}
-                        disabled={!canEdit}
+                        disabled={inputDisabled}
                         fieldType={def.field_type}
                         currencySymbol={currencySymbol}
                         maxDecimalPlaces={def.max_decimal_places}
@@ -485,7 +514,7 @@ export function EmploymentForm({
                         options={def.options ?? []}
                         value={String(customValues[def.field_key] ?? "")}
                         onChange={(next) => setCustomValues((prev) => ({ ...prev, [def.field_key]: next }))}
-                        disabled={!canEdit}
+                        disabled={inputDisabled}
                         fieldType={def.field_type}
                         currencySymbol={currencySymbol}
                         maxDecimalPlaces={def.max_decimal_places}
@@ -495,7 +524,7 @@ export function EmploymentForm({
                       <div>
                         <Switch
                           id={`cf-${def.field_key}`}
-                          disabled={!canEdit}
+                          disabled={inputDisabled}
                           checked={customValues[def.field_key] === true}
                           onCheckedChange={(v) => setCustomValues((prev) => ({ ...prev, [def.field_key]: v }))}
                         />
@@ -503,7 +532,7 @@ export function EmploymentForm({
                     ) : def.field_type === "multiline" ? (
                       <Textarea
                         id={`cf-${def.field_key}`}
-                        disabled={!canEdit}
+                        disabled={inputDisabled}
                         rows={3}
                         value={String(customValues[def.field_key] ?? "")}
                         onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
@@ -515,7 +544,7 @@ export function EmploymentForm({
                           id={`cf-${def.field_key}`}
                           type="number"
                           step="0.01"
-                          disabled={!canEdit}
+                          disabled={inputDisabled}
                           value={String(customValues[def.field_key] ?? "")}
                           onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
                           className="flex-1"
@@ -526,13 +555,14 @@ export function EmploymentForm({
                         id={`cf-${def.field_key}`}
                         type={def.field_type === "number" ? "number" : def.field_type === "date" ? "date" : def.field_type === "email" ? "email" : def.field_type === "url" ? "url" : def.field_type === "phone" ? "tel" : "text"}
                         step={def.field_type === "number" ? (def.max_decimal_places === null || def.max_decimal_places === undefined ? "any" : def.max_decimal_places === 0 ? "1" : String(Math.pow(10, -def.max_decimal_places))) : undefined}
-                        disabled={!canEdit}
+                        disabled={inputDisabled}
                         value={String(customValues[def.field_key] ?? "")}
                         onChange={(e) => setCustomValues((prev) => ({ ...prev, [def.field_key]: e.target.value }))}
                       />
-                    )}
+                    ))}
                   </div>
-                ))}
+                  );
+                })}
               </CardContent>
             </Card>
           </TabsContent>

@@ -99,6 +99,7 @@ export function EmployeesClient({
   initialSorting,
   customFieldDefs,
   currencySymbol,
+  canSeeCurrency,
   userId,
   holidayAbsenceTypeId,
   holidayApprovalProfiles,
@@ -201,6 +202,8 @@ export function EmployeesClient({
     holidayProfileNames,
     workPatternNames,
     approvalProfileNames,
+    // CLE-198 — Redact sensitive columns for viewers without the flag.
+    canViewSensitiveFields: canSeeCurrency,
   });
 
   const selectColumn: ColumnDef<Member> = useMemo(() => ({
@@ -285,6 +288,18 @@ export function EmployeesClient({
         ...Object.fromEntries(
           customFieldDefs.flatMap((def) => {
             const val = m.custom_fields?.[def.field_key];
+
+            // CLE-198 — Sensitive-field redaction, mirroring the
+            // format-member-pdf-row.ts logic. See that file for the
+            // canonical implementation.
+            if (def.is_sensitive === true && !canSeeCurrency) {
+              const pairs: [string, string][] = [[`cf_${def.field_key}`, "•••"]];
+              if (def.field_type === "currency" || def.field_type === "number") {
+                pairs.push([`_raw_cf_${def.field_key}`, ""]);
+              }
+              return pairs;
+            }
+
             let display: string;
             if (def.input_mode === "multi_choice") {
               const arr = Array.isArray(val) ? val.filter((v): v is string => typeof v === "string") : [];
@@ -439,6 +454,10 @@ export function EmployeesClient({
       customFieldDefs,
       currencySymbol,
       memberLabel,
+      // CLE-198 — canSeeCurrency was already sourced from
+      // rights.canViewSensitiveFields at the page level, so we reuse
+      // it here as the sensitive-fields redaction gate.
+      canViewSensitiveFields: canSeeCurrency,
     });
 
     return (

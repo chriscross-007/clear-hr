@@ -77,7 +77,7 @@ export default async function StandardReportPage({
     supabase.from("admin_profiles").select("id, name, rights").eq("organisation_id", membership.organisation_id).order("name"),
     supabase.from("employee_profiles").select("id, name, rights").eq("organisation_id", membership.organisation_id).order("name"),
     supabase.from("user_grid_preferences").select("prefs").eq("user_id", user.id).eq("grid_id", gridId).maybeSingle(),
-    supabase.from("custom_field_definitions").select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places").eq("organisation_id", membership.organisation_id).eq("object_type", "member").order("sort_order"),
+    supabase.from("custom_field_definitions").select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places, is_sensitive").eq("organisation_id", membership.organisation_id).eq("object_type", "member").order("sort_order"),
     supabase.from("report_favourites").select("report_id").eq("user_id", user.id),
     supabase.from("custom_reports").select("id, name, based_on, shared, created_by").eq("organisation_id", membership.organisation_id).order("name"),
   ]);
