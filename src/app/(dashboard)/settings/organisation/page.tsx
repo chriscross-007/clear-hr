@@ -3,6 +3,8 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { OrganisationSettingsForm } from "./organisation-form";
+import { BillingContactCard } from "./billing-contact-card";
+import { getBillingContactContext } from "./billing-contact-actions";
 
 // CLE-191 — /settings/organisation. Holds the org-identity fields that
 // used to live across the dialog's General + Holiday Year tabs:
@@ -55,6 +57,20 @@ export default async function OrganisationSettingsPage() {
           Identity, holiday year start, and bank-holiday handling.
         </p>
       </div>
+
+      {/* CLE-199 — Billing contact card. Read is public to any viewer
+          who can reach this Settings page; write is gated on
+          canManageBilling. */}
+      {await (async () => {
+        const ctx = await getBillingContactContext();
+        return (
+          <BillingContactCard
+            current={ctx.current}
+            candidates={ctx.candidates}
+            canManage={resolved.rights.canManageBilling}
+          />
+        );
+      })()}
 
       <OrganisationSettingsForm
         initialName={org.name}

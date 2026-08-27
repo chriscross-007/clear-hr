@@ -257,7 +257,9 @@ export async function getMemberRank(memberId: string): Promise<Rank | null> {
   return profile?.rank ?? null;
 }
 
-/** Admin count for a given org — drives the warning banner (Phase 4). */
+/** Admin count for a given org — legacy helper kept for backwards
+ *  compat. Prefer `getRightsEditorCount` for the CLE-199 warning
+ *  banner (see CLE-197 flat-list refactor). */
 export async function getAdminCount(organisationId: string): Promise<number> {
   const admin = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -268,5 +270,25 @@ export async function getAdminCount(organisationId: string): Promise<number> {
     .select("id, rights_profiles!inner(rank)", { count: "exact", head: true })
     .eq("organisation_id", organisationId)
     .eq("rights_profiles.rank", "admin");
+  return count ?? 0;
+}
+
+/**
+ * CLE-199 — Count of members whose profile grants `can_edit_rights_profiles`.
+ * This is the ONLY count that drives the ≥2 bus-factor guard trigger
+ * and the warning banner. Rank is vestigial in the flat model
+ * (CLE-197); a member's ability to edit User Rights (and by extension,
+ * their peers') is governed by the profile flag alone.
+ */
+export async function getRightsEditorCount(organisationId: string): Promise<number> {
+  const admin = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+  const { count } = await admin
+    .from("members")
+    .select("id, rights_profiles!inner(can_edit_rights_profiles)", { count: "exact", head: true })
+    .eq("organisation_id", organisationId)
+    .eq("rights_profiles.can_edit_rights_profiles", true);
   return count ?? 0;
 }

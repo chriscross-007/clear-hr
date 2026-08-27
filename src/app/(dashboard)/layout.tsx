@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { MemberLabelProvider } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { hasPlanFeature } from "@/lib/plan-config";
-import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
+import { getEffectiveRightsForUser, getRightsEditorCount } from "@/lib/rights-resolver";
 import { HeaderUserMenu } from "./header-user-menu";
 import { Sidebar } from "./sidebar";
 
@@ -108,15 +108,30 @@ export default async function DashboardLayout({
     rights.canManageBilling &&
     org?.subscription_status === "past_due";
 
-  // Trial + past-due banners live inside the top-chrome sticky wrapper
-  // so they stay visible on scroll. `--top-chrome-extra` records the
-  // extra pixels either banner adds above the header, so downstream
-  // sticky elements (StickyPageHeader, DataGrid rows) can shift down
-  // by the same amount via calc(var(--top-chrome-extra, 0px) + …).
-  // The banner div is `py-2 text-sm` → roughly 36px tall; use 36 for
-  // one banner, 72 for both.
+  // CLE-199 — Rights-editor bus-factor banner. Shown to viewers who
+  // can act on the warning (i.e. those whose profile grants Edit User
+  // Rights, and who can therefore promote a second person). Red at
+  // ≤1, amber above 5.
+  let rightsEditorBanner: "danger" | "warning" | null = null;
+  let rightsEditorCount = 0;
+  if (rights.canEditRightsProfiles) {
+    rightsEditorCount = await getRightsEditorCount(membership.organisation_id);
+    if (rightsEditorCount <= 1) rightsEditorBanner = "danger";
+    else if (rightsEditorCount > 5) rightsEditorBanner = "warning";
+  }
+  const showRightsEditorBanner = rightsEditorBanner !== null;
+
+  // Trial + past-due + rights-editor banners live inside the
+  // top-chrome sticky wrapper so they stay visible on scroll.
+  // `--top-chrome-extra` records the extra pixels the banners add
+  // above the header; downstream sticky elements (StickyPageHeader,
+  // DataGrid rows) shift down by that amount via
+  // calc(var(--top-chrome-extra, 0px) + …). Each banner div is
+  // `py-2 text-sm` → roughly 36px tall.
   const topChromeExtra =
-    (showTrialBanner ? 36 : 0) + (showPastDueBanner ? 36 : 0);
+    (showTrialBanner ? 36 : 0) +
+    (showPastDueBanner ? 36 : 0) +
+    (showRightsEditorBanner ? 36 : 0);
 
   return (
     <MemberLabelProvider memberLabel={memberLabel}>
@@ -143,6 +158,26 @@ export default async function DashboardLayout({
                 update your billing
               </Link>{" "}
               to avoid service interruption.
+            </div>
+          )}
+          {showRightsEditorBanner && rightsEditorBanner === "danger" && (
+            <div className="bg-destructive px-4 py-2 text-center text-sm font-medium text-white">
+              {rightsEditorCount === 0
+                ? "No members can edit User Rights — this shouldn't happen. "
+                : "Only 1 member can edit User Rights. "}
+              <Link href="/settings/rights-profiles" className="underline">
+                Promote another Admin
+              </Link>{" "}
+              so nobody gets locked out.
+            </div>
+          )}
+          {showRightsEditorBanner && rightsEditorBanner === "warning" && (
+            <div className="bg-amber-500 px-4 py-2 text-center text-sm font-medium text-white">
+              {rightsEditorCount} members can edit User Rights.{" "}
+              <Link href="/settings/rights-profiles" className="underline">
+                Consider trimming administrative access
+              </Link>
+              .
             </div>
           )}
           <header className="w-full">
