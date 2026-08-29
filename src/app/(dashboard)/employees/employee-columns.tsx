@@ -14,7 +14,6 @@ import {
 import { cn } from "@/lib/utils";
 import { capitalize } from "@/lib/label-utils";
 import { formatOptionForDisplay } from "@/components/custom-field-multiselect";
-import type { Profile } from "./profile-actions";
 import type { FieldDef } from "./custom-field-actions";
 
 // ---------------------------------------------------------------------------
@@ -486,14 +485,16 @@ function CustomFieldPillCell({
 
 export function buildEmployeeColumns(opts: {
   teams: Team[];
-  adminProfiles: Profile[];
-  employeeProfiles: Profile[];
   memberLabel: string;
   canAdd: boolean;
   currencySymbol: string;
   customFieldDefs: FieldDef[];
   holidayProfileNames?: string[];
   workPatternNames?: string[];
+  /** CLE-201c — Distinct profile names present on the current rows,
+   *  used by the legacy "Rights" column's filter dropdown. Sourced
+   *  from the enriched members list, not the legacy profile tables. */
+  profileNames?: string[];
   /** CLE-186 — Distinct Approver Profile names for the Approver Profile
    *  column's filter dropdown. */
   approvalProfileNames?: string[];
@@ -503,7 +504,7 @@ export function buildEmployeeColumns(opts: {
    *  a specific number/name) remains possible. */
   canViewSensitiveFields?: boolean;
 }): ColumnDef<Member>[] {
-  const { teams, adminProfiles, employeeProfiles, memberLabel, currencySymbol, customFieldDefs, holidayProfileNames = [], workPatternNames = [], approvalProfileNames = [], canViewSensitiveFields = true } = opts;
+  const { teams, memberLabel, currencySymbol, customFieldDefs, holidayProfileNames = [], workPatternNames = [], profileNames = [], approvalProfileNames = [], canViewSensitiveFields = true } = opts;
   const teamMap = Object.fromEntries(teams.map((t) => [t.id, t.name]));
 
   return [
@@ -606,24 +607,18 @@ export function buildEmployeeColumns(opts: {
       header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label="Rights" />,
       cell: ({ row }) => row.original.profile_name ?? "—",
       meta: {
-        filterElement: (column) => {
-          const allProfiles = [...adminProfiles, ...employeeProfiles]
-            .map((p) => p.name)
-            .filter((name, i, arr) => arr.indexOf(name) === i)
-            .sort();
-          return (
-            <select
-              className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
-              value={(column.getFilterValue() as string) ?? ""}
-              onChange={(e) => column.setFilterValue(e.target.value || undefined)}
-            >
-              <option value="">All</option>
-              {allProfiles.map((name) => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </select>
-          );
-        },
+        filterElement: (column) => (
+          <select
+            className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+            value={(column.getFilterValue() as string) ?? ""}
+            onChange={(e) => column.setFilterValue(e.target.value || undefined)}
+          >
+            <option value="">All</option>
+            {profileNames.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        ),
       },
     },
     {

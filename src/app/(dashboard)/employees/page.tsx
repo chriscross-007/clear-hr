@@ -6,7 +6,6 @@ import { parseGridPrefs } from "@/lib/grid-prefs";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { EmployeesClient } from "./employees-client";
 import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
-import type { Profile } from "@/app/(dashboard)/employees/profile-actions";
 
 export default async function EmployeesPage({
   searchParams,
@@ -58,12 +57,10 @@ export default async function EmployeesPage({
   const canSeeCurrency = rights.canViewSensitiveFields;
 
   const today = new Date().toISOString().slice(0, 10);
-  const [{ data: members }, { data: teams }, { data: adminProfiles }, { data: employeeProfiles }, { data: columnPrefsRow }, { data: customFieldDefs }, { data: currentHolidayPeriods }, { data: empWorkProfiles }, { data: approvalProfilesRaw }, { data: memberAssignmentsRaw }, { data: holidayAbsenceTypeRow }] =
+  const [{ data: members }, { data: teams }, { data: columnPrefsRow }, { data: customFieldDefs }, { data: currentHolidayPeriods }, { data: empWorkProfiles }, { data: approvalProfilesRaw }, { data: memberAssignmentsRaw }, { data: holidayAbsenceTypeRow }] =
     await Promise.all([
       supabase.rpc("get_org_members"),
       supabase.from("teams").select("id, name").eq("organisation_id", membership!.organisation_id).order("name"),
-      supabase.from("admin_profiles").select("id, name, rights").eq("organisation_id", membership!.organisation_id).order("name"),
-      supabase.from("employee_profiles").select("id, name, rights").eq("organisation_id", membership!.organisation_id).order("name"),
       supabase.from("user_grid_preferences").select("prefs").eq("user_id", user.id).eq("grid_id", "employees").maybeSingle(),
       supabase.from("custom_field_definitions").select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places, is_sensitive").eq("organisation_id", membership!.organisation_id).eq("object_type", "member").order("sort_order"),
       // CLE-167 — read holiday_periods for the current period name per member,
@@ -178,8 +175,6 @@ export default async function EmployeesPage({
       isOwner={rights.rank === "admin"}
       orgName={orgName}
       teams={teams ?? []}
-      adminProfiles={(adminProfiles ?? []) as Profile[]}
-      employeeProfiles={(employeeProfiles ?? []) as Profile[]}
       initialMemberId={memberId}
       initialColumnPrefs={gridPrefs.columns}
       initialGroupBy={gridPrefs.groupBy}

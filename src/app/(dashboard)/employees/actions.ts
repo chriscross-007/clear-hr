@@ -360,10 +360,12 @@ export async function updateEmployee(formData: {
 
     const trimmedPayroll = formData.payrollNumber?.trim() || null;
 
-    // Fetch before-state for audit diff (include team_id and profile FKs)
+    // Fetch before-state for audit diff (include team_id).
+    // CLE-201c — profile FKs dropped from SELECT alongside the dead
+    // profileId-handling branch below.
     const { data: beforeState } = await admin
       .from("members")
-      .select("first_name, last_name, role, payroll_number, team_id, admin_profile_id, employee_profile_id")
+      .select("first_name, last_name, role, payroll_number, team_id")
       .eq("id", formData.memberId)
       .eq("organisation_id", membership.organisation_id)
       .single();
@@ -419,50 +421,11 @@ export async function updateEmployee(formData: {
       updateData.role = formData.role;
     }
 
-    // Resolve profile assignment — included in the same DB update
-    let profileChanges: Record<string, { old: unknown; new: unknown }> | undefined;
-    if (formData.profileId !== undefined && beforeState) {
-      const newRole = (updateData.role as string | undefined) ?? beforeState.role;
-      const isAdmin = newRole === "admin";
-      const profileFk = isAdmin ? "admin_profile_id" : "employee_profile_id";
-      const profileTable = isAdmin ? "admin_profiles" : "employee_profiles";
-      const oldProfileId = isAdmin ? beforeState.admin_profile_id : beforeState.employee_profile_id;
-
-      let oldProfileName: string | null = null;
-      if (oldProfileId) {
-        const { data: oldP } = await admin
-          .from(profileTable)
-          .select("name")
-          .eq("id", oldProfileId)
-          .single();
-        oldProfileName = oldP?.name ?? null;
-      }
-
-      let newProfileName: string | null = null;
-      if (formData.profileId !== "__none__") {
-        const { data: newP } = await admin
-          .from(profileTable)
-          .select("name, rights")
-          .eq("id", formData.profileId)
-          .eq("organisation_id", membership.organisation_id)
-          .single();
-        if (!newP) return { success: false, error: "Profile not found" };
-        updateData[profileFk] = formData.profileId;
-        updateData.permissions = newP.rights;
-        newProfileName = newP.name;
-      } else {
-        updateData[profileFk] = null;
-      }
-
-      if (oldProfileName !== newProfileName) {
-        profileChanges = {
-          [`${isAdmin ? "admin" : "employee"}_profile`]: {
-            old: oldProfileName,
-            new: newProfileName,
-          },
-        };
-      }
-    }
+    // CLE-201c — Legacy profile-assignment branch removed. The User
+    // Rights profile is set via the dedicated <UserRightsPicker> on
+    // the Employment page, which writes members.rights_profile_id
+    // directly. No client sends formData.profileId any more.
+    const profileChanges: Record<string, { old: unknown; new: unknown }> | undefined = undefined;
 
     const query = admin
       .from("members")
@@ -527,7 +490,7 @@ export async function updateEmployee(formData: {
         }
       }
 
-      const allChanges = { ...fieldChanges, ...teamChanges, ...profileChanges };
+      const allChanges = { ...fieldChanges, ...teamChanges, ...(profileChanges ?? {}) };
       if (Object.keys(allChanges).length > 0) {
         logAudit({
           organisationId: membership.organisation_id,
@@ -655,7 +618,10 @@ export async function deleteEmployee(
         email: member.email,
         first_name: member.first_name,
         last_name: member.last_name,
-        role: member.role,
+        // CLE-201c — legacy `role` field dropped from the audit
+        // metadata; the User Rights profile id/name is what future
+        // audits care about (captured elsewhere in the profile
+        // assignment audit trail).
         payroll_number: member.payroll_number,
         team_id: member.team_id,
         member_count: delCount ?? 0,

@@ -7,7 +7,6 @@ import { parseGridPrefs } from "@/lib/grid-prefs";
 import { ALL_STANDARD_REPORTS } from "../definitions";
 import { ReportClient } from "./report-client";
 import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
-import type { Profile } from "@/app/(dashboard)/employees/profile-actions";
 
 export default async function StandardReportPage({
   params,
@@ -65,8 +64,6 @@ export default async function StandardReportPage({
   const [
     { data: members },
     { data: teams },
-    { data: adminProfiles },
-    { data: employeeProfiles },
     { data: columnPrefsRow },
     { data: rawCustomFieldDefs },
     { data: favouritesData },
@@ -74,8 +71,6 @@ export default async function StandardReportPage({
   ] = await Promise.all([
     supabase.rpc("get_org_members"),
     supabase.from("teams").select("id, name").eq("organisation_id", membership.organisation_id).order("name"),
-    supabase.from("admin_profiles").select("id, name, rights").eq("organisation_id", membership.organisation_id).order("name"),
-    supabase.from("employee_profiles").select("id, name, rights").eq("organisation_id", membership.organisation_id).order("name"),
     supabase.from("user_grid_preferences").select("prefs").eq("user_id", user.id).eq("grid_id", gridId).maybeSingle(),
     supabase.from("custom_field_definitions").select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places, is_sensitive").eq("organisation_id", membership.organisation_id).eq("object_type", "member").order("sort_order"),
     supabase.from("report_favourites").select("report_id").eq("user_id", user.id),
@@ -102,8 +97,6 @@ export default async function StandardReportPage({
       report={report}
       members={members ?? []}
       teams={teams ?? []}
-      adminProfiles={(adminProfiles ?? []) as Profile[]}
-      employeeProfiles={(employeeProfiles ?? []) as Profile[]}
       customFieldDefs={visibleDefs}
       currencySymbol={currencySymbol}
       canSeeCurrency={canSeeCurrency}

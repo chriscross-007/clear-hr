@@ -6,7 +6,6 @@ import { hasPlanFeature } from "@/lib/plan-config";
 import { ALL_STANDARD_REPORTS } from "../../definitions";
 import { CustomReportViewClient } from "./custom-report-view-client";
 import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
-import type { Profile } from "@/app/(dashboard)/employees/profile-actions";
 
 export default async function CustomReportViewPage({
   params,
@@ -62,15 +61,11 @@ export default async function CustomReportViewPage({
   const [
     { data: members },
     { data: teams },
-    { data: adminProfiles },
-    { data: employeeProfiles },
     { data: rawCustomFieldDefs },
     { data: favouriteRow },
   ] = await Promise.all([
     supabase.rpc("get_org_members"),
     supabase.from("teams").select("id, name").eq("organisation_id", membership.organisation_id).order("name"),
-    supabase.from("admin_profiles").select("id, name, rights").eq("organisation_id", membership.organisation_id).order("name"),
-    supabase.from("employee_profiles").select("id, name, rights").eq("organisation_id", membership.organisation_id).order("name"),
     supabase.from("custom_field_definitions").select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places, is_sensitive").eq("organisation_id", membership.organisation_id).eq("object_type", "member").order("sort_order"),
     supabase.from("report_favourites").select("report_id").eq("user_id", user.id).eq("report_id", id).maybeSingle(),
   ]);
@@ -98,8 +93,6 @@ export default async function CustomReportViewPage({
       baseReport={report}
       members={members ?? []}
       teams={teams ?? []}
-      adminProfiles={(adminProfiles ?? []) as Profile[]}
-      employeeProfiles={(employeeProfiles ?? []) as Profile[]}
       customFieldDefs={visibleDefs}
       currencySymbol={currencySymbol}
       userId={user.id}

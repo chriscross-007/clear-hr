@@ -14,7 +14,6 @@ import {
 } from "@/app/(dashboard)/employees/employee-columns";
 import type { ColPref } from "@/lib/grid-prefs-actions";
 import type { GridPrefs } from "@/lib/grid-prefs";
-import type { Profile } from "@/app/(dashboard)/employees/profile-actions";
 import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
 import type { StandardReport } from "../../definitions";
 import { updateCustomReport, deleteCustomReport, toggleFavourite, createCustomReport } from "../../actions";
@@ -62,8 +61,6 @@ interface CustomReportViewClientProps {
   baseReport: StandardReport;
   members: Member[];
   teams: Team[];
-  adminProfiles: Profile[];
-  employeeProfiles: Profile[];
   customFieldDefs: FieldDef[];
   currencySymbol: string;
   userId: string;
@@ -77,8 +74,6 @@ export function CustomReportViewClient({
   baseReport,
   members,
   teams,
-  adminProfiles,
-  employeeProfiles,
   customFieldDefs,
   currencySymbol,
   userId,
@@ -121,12 +116,13 @@ export function CustomReportViewClient({
 
   const columns = buildEmployeeColumns({
     teams,
-    adminProfiles,
-    employeeProfiles,
     memberLabel,
     canAdd: false,
     currencySymbol,
     customFieldDefs,
+    // CLE-201c — profile names for the legacy "Rights" column filter,
+    // sourced from row data rather than the legacy profile tables.
+    profileNames: ([...new Set(members.map((m: Member) => m.profile_name).filter(Boolean))] as string[]).sort(),
   });
 
   async function handleExportPdf(

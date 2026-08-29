@@ -9,8 +9,6 @@ import {
 } from "@/components/custom-field-multiselect";
 import { capitalize } from "@/lib/label-utils";
 import { addEmployee } from "./actions";
-import { assignProfile } from "./profile-actions";
-import type { Profile } from "./profile-actions";
 import type { FieldDef } from "./custom-field-actions";
 import { saveCustomFieldValues } from "./custom-field-actions";
 import { Button } from "@/components/ui/button";
@@ -38,7 +36,6 @@ interface AddEmployeeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   teams: Team[];
-  employeeProfiles: Profile[];
   customFieldDefs: FieldDef[];
   currencySymbol: string;
   onAdded: (member: Member) => void;
@@ -48,7 +45,6 @@ export function AddEmployeeDialog({
   open,
   onOpenChange,
   teams,
-  employeeProfiles,
   customFieldDefs,
   currencySymbol,
   onAdded,
@@ -59,7 +55,6 @@ export function AddEmployeeDialog({
   const [lastName, setLastName] = useState("");
   const [payrollNumber, setPayrollNumber] = useState("");
   const [teamId, setTeamId] = useState<string | null>(null);
-  const [profileId, setProfileId] = useState<string | null>(null);
   const [startDate, setStartDate] = useState("");
   const [customValues, setCustomValues] = useState<Record<string, unknown>>({});
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +66,6 @@ export function AddEmployeeDialog({
     setLastName("");
     setPayrollNumber("");
     setTeamId(null);
-    setProfileId(null);
     setStartDate("");
     setCustomValues({});
     setError(null);
@@ -109,10 +103,10 @@ export function AddEmployeeDialog({
       }
     }
 
-    // Assign employee profile if selected
-    if (profileId && result.member) {
-      await assignProfile(result.member.member_id, "employee", profileId);
-    }
+    // CLE-201c — Legacy assignProfile call retired. New employees
+    // inherit the tenant's Employee default User Rights profile via
+    // the members insert trigger; admins change it via the User
+    // Rights picker on the Employment page.
 
     // Save custom field values if any
     if (result.member && customFieldDefs.length > 0 && Object.keys(customValues).length > 0) {
@@ -220,27 +214,9 @@ export function AddEmployeeDialog({
               </Select>
             </div>
           )}
-          {employeeProfiles.length > 0 && (
-            <div className="space-y-2">
-              <Label>Rights Profile</Label>
-              <Select
-                value={profileId ?? "__none__"}
-                onValueChange={(v) => setProfileId(v === "__none__" ? null : v)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">No profile</SelectItem>
-                  {employeeProfiles.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          {/* CLE-201c — Legacy Rights Profile picker retired.
+              User Rights profile is set via the dedicated picker on
+              the Employment page after creation. */}
           {customFieldDefs.length > 0 && (
             <div className="space-y-3 rounded-md border p-3">
               <p className="text-sm font-medium">Custom Fields</p>

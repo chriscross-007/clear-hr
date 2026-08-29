@@ -45,7 +45,6 @@ import { EditEmployeeDialog } from "./edit-employee-dialog";
 import { BulkEditSheet } from "./bulk-edit-sheet";
 import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 import { AddEmployeeDialog } from "./add-employee-dialog";
-import type { Profile } from "./profile-actions";
 import type { FieldDef } from "./custom-field-actions";
 import { formatMemberForPdf } from "@/lib/format-member-pdf-row";
 import { cn } from "@/lib/utils";
@@ -59,8 +58,9 @@ interface EmployeesClientProps {
   isOwner: boolean;
   orgName: string;
   teams: Team[];
-  adminProfiles: Profile[];
-  employeeProfiles: Profile[];
+  // CLE-201c — legacy admin_profiles / employee_profiles props
+  // removed. User Rights profiles are set via the dedicated
+  // <UserRightsPicker> card on the Employment page.
   initialMemberId?: string;
   initialColumnPrefs: ColPref[];
   initialGroupBy?: string;
@@ -90,8 +90,6 @@ export function EmployeesClient({
   isOwner,
   orgName,
   teams,
-  adminProfiles,
-  employeeProfiles,
   initialMemberId,
   initialColumnPrefs,
   initialGroupBy,
@@ -203,17 +201,20 @@ export function EmployeesClient({
   const holidayProfileNames = [...new Set(members.map((m) => m.holiday_profile_name).filter(Boolean))] as string[];
   const workPatternNames = [...new Set(members.map((m) => m.work_pattern_name).filter(Boolean))] as string[];
   const approvalProfileNames = [...new Set(members.map((m) => m.approval_profile_name).filter(Boolean))] as string[];
+  // CLE-201c — profile names for the legacy "Rights" column filter,
+  // sourced from the enriched members list rather than the legacy
+  // admin_profiles / employee_profiles tables.
+  const profileNames = ([...new Set(members.map((m) => m.profile_name).filter(Boolean))] as string[]).sort();
 
   const baseColumns = buildEmployeeColumns({
     teams,
-    adminProfiles,
-    employeeProfiles,
     memberLabel,
     canAdd,
     currencySymbol,
     customFieldDefs,
     holidayProfileNames,
     workPatternNames,
+    profileNames,
     approvalProfileNames,
     // CLE-198 — Redact sensitive columns for viewers without the flag.
     canViewSensitiveFields: canSeeCurrency,
@@ -604,8 +605,6 @@ export function EmployeesClient({
         open={!!editingMember}
         onOpenChange={(open) => !open && setEditingMember(null)}
         teams={teams}
-        adminProfiles={adminProfiles}
-        employeeProfiles={employeeProfiles}
         customFieldDefs={customFieldDefs}
         currencySymbol={currencySymbol}
         onSaved={(updated) => {
@@ -639,7 +638,6 @@ export function EmployeesClient({
         open={showAddDialog}
         onOpenChange={setShowAddDialog}
         teams={teams}
-        employeeProfiles={employeeProfiles}
         customFieldDefs={customFieldDefs}
         currencySymbol={currencySymbol}
         onAdded={(newMember) => {

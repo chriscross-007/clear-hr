@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarDays, ChevronDown, ChevronRight, Filter, Search, X } from "lucide-react";
-import { ADMIN_RIGHTS, EMPLOYEE_RIGHTS } from "@/lib/rights-config";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -93,10 +92,20 @@ const FILTER_ACTIONS = [
   "sick_details.updated",
 ];
 
-// Lookup from right key → human-readable label
-const RIGHT_LABELS: Record<string, string> = Object.fromEntries(
-  [...ADMIN_RIGHTS, ...EMPLOYEE_RIGHTS].map((r) => [r.key, r.label])
-);
+// CLE-201c — inlined legacy right-key → label lookup so we can drop
+// `rights-config.ts`. These keys appear in historical audit rows
+// written under the pre-Rights-Profiles-v2 model. New audit rows use
+// the `<entity>.<verb>` action convention from the Audit spec.
+const RIGHT_LABELS: Record<string, string> = {
+  can_edit_organisation: "Edit Organisation",
+  can_add_members: "Add Members",
+  can_manage_members: "Manage Members",
+  can_approve_holidays: "Approve Holidays",
+  can_define_custom_fields: "Custom Field Definitions",
+  can_see_currency: "See Currency Values",
+  can_request_holidays: "Request Holidays",
+  can_view_team_members: "View Team Members",
+};
 
 const FIELD_LABELS: Record<string, string> = {
   first_name: "First Name",

@@ -10,8 +10,6 @@ import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize } from "@/lib/label-utils";
 import { updateEmployee, sendInvite, uploadMemberAvatar, getMemberHolidayFields } from "./actions";
 import { updateMemberTeam } from "./team-actions";
-import type { Profile } from "./profile-actions";
-import { getMemberProfile } from "./profile-actions";
 import type { FieldDef } from "./custom-field-actions";
 import { saveCustomFieldValues } from "./custom-field-actions";
 import { Button } from "@/components/ui/button";
@@ -46,9 +44,6 @@ interface EditEmployeeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   teams: Team[];
-  // CLE-201a — Retained as optional for backwards compat; ignored.
-  adminProfiles?: Profile[];
-  employeeProfiles?: Profile[];
   customFieldDefs: FieldDef[];
   currencySymbol: string;
   onSaved: (updated: {
@@ -88,7 +83,6 @@ export function EditEmployeeDialog({
   const [loading, setLoading] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [inviteSuccess, setInviteSuccess] = useState(false);
-  const [profileId, setProfileId] = useState<string>("__none__");
   const [startDate, setStartDate] = useState("");
   const [customValues, setCustomValues] = useState<Record<string, unknown>>({});
 
@@ -101,7 +95,6 @@ export function EditEmployeeDialog({
       setTeamId(member.team_id);
       setError(null);
       setInviteSuccess(false);
-      setProfileId("__none__");
       setStartDate("");
       setCustomValues(member.custom_fields ?? {});
       // Load start_date
@@ -110,14 +103,9 @@ export function EditEmployeeDialog({
           setStartDate(result.startDate ?? "");
         }
       });
-      // Load the member's current profile assignment
-      getMemberProfile(member.member_id).then((result) => {
-        if (result.success) {
-          const isAdmin = member.role === "admin" || member.role === "owner";
-          const currentId = isAdmin ? result.adminProfileId : result.employeeProfileId;
-          setProfileId(currentId ?? "__none__");
-        }
-      });
+      // CLE-201c — Legacy getMemberProfile call retired. User Rights
+      // profile is loaded + edited via the dedicated picker on the
+      // Employment page, not here.
     }
   }, [member]);
 
@@ -135,7 +123,8 @@ export function EditEmployeeDialog({
       role,
       payrollNumber: payrollNumber.trim() || null,
       teamId,
-      profileId,
+      // CLE-201c — profileId no longer sent from this dialog; User
+      // Rights is set via the Employment page picker.
       updatedAt: member.updated_at,
       startDate: startDate || null,
     });
@@ -349,22 +338,12 @@ export function EditEmployeeDialog({
                   onChange={(e) => setStartDate(e.target.value)}
                 />
               </div>
-              <div className="space-y-2">
-                <Label>Role</Label>
-                {member?.role === "owner" ? (
-                  <Input value="Owner" disabled className="bg-muted" />
-                ) : (
-                  <Select value={role} onValueChange={(v) => { setRole(v); setProfileId("__none__"); }}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="admin">Admin</SelectItem>
-                      <SelectItem value="employee">{capitalize(memberLabel)}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
+              {/* CLE-201c — Legacy Role picker retired. The User
+                  Rights profile picker on the Employment page is
+                  now the single surface for changing a Member's
+                  rights. The `role` value passed to updateEmployee
+                  is unchanged (read from the current record) until
+                  the DB column is dropped in a follow-up. */}
               {teams.length > 0 && (
                 <div className="space-y-2">
                   <Label>Team</Label>

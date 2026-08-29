@@ -44,7 +44,7 @@ export default async function EmploymentPage({
   // Target member
   const { data: member } = await supabase
     .from("members")
-    .select("id, first_name, last_name, email, role, team_id, payroll_number, avatar_url, invited_at, accepted_at, user_id, custom_fields, start_date, updated_at, admin_profile_id, employee_profile_id, rights_profile_id")
+    .select("id, first_name, last_name, email, role, team_id, payroll_number, avatar_url, invited_at, accepted_at, user_id, custom_fields, start_date, updated_at, rights_profile_id")
     .eq("id", memberId)
     .eq("organisation_id", caller.organisation_id)
     .single();
@@ -57,16 +57,12 @@ export default async function EmploymentPage({
   // Work Profile assignment surface relocated from the Holiday page (CLE-170).
   const [
     { data: teams },
-    { data: adminProfiles },
-    { data: employeeProfiles },
     { data: customFieldDefs },
     { data: empWorkProfiles },
     { data: orgWorkProfiles },
     { data: orgRow },
   ] = await Promise.all([
     supabase.from("teams").select("id, name").eq("organisation_id", caller.organisation_id).order("name"),
-    supabase.from("admin_profiles").select("id, name").eq("organisation_id", caller.organisation_id).order("name"),
-    supabase.from("employee_profiles").select("id, name").eq("organisation_id", caller.organisation_id).order("name"),
     supabase.from("custom_field_definitions").select("id, label, field_key, field_type, input_mode, options, required, sort_order, max_decimal_places, is_sensitive").eq("organisation_id", caller.organisation_id).eq("object_type", "member").order("sort_order"),
     supabase.from("employee_work_profiles").select("id, work_profile_id, effective_from, work_profiles(name)").eq("member_id", memberId).order("effective_from", { ascending: false }),
     supabase.from("work_profiles").select("id, name").eq("organisation_id", caller.organisation_id).is("member_id", null).order("name"),
@@ -90,9 +86,9 @@ export default async function EmploymentPage({
   const allDefs = (customFieldDefs ?? []) as FieldDef[];
   const visibleDefs = canSeeCurrency ? allDefs : allDefs.filter((d) => d.field_type !== "currency");
 
-  const currentProfileId = member.role === "admin" || member.role === "owner"
-    ? (member.admin_profile_id as string | null)
-    : (member.employee_profile_id as string | null);
+  // CLE-201c — legacy admin/employee profile assignment resolved via
+  // the User Rights profile id now.
+  const currentProfileId = (member.rights_profile_id as string | null) ?? null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
@@ -124,8 +120,6 @@ export default async function EmploymentPage({
         canEdit={canEdit}
         canDelete={canAddMembers}
         teams={(teams ?? []) as { id: string; name: string }[]}
-        adminProfiles={(adminProfiles ?? []) as { id: string; name: string }[]}
-        employeeProfiles={(employeeProfiles ?? []) as { id: string; name: string }[]}
         customFieldDefs={visibleDefs}
         currencySymbol={currencySymbol}
         workProfileAssignments={workProfileAssignments}

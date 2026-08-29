@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar, Clock, Sun, BarChart2 } from "lucide-react";
@@ -16,15 +17,20 @@ export default async function DashboardPage() {
 
   const { data: member } = await supabase
     .from("members")
-    .select("first_name, last_name, avatar_url, role")
+    .select("first_name, last_name, avatar_url")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!member) redirect("/organisation-setup");
 
-  // Owners and admins don't belong here
-  if (member.role !== "employee") redirect("/admin-dashboard");
+  // CLE-201c — anyone whose profile grants cross-user visibility
+  // (team or all) belongs on the admin dashboard, not the self-scoped
+  // one. Replaces the legacy `member.role !== "employee"` check.
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (resolved && resolved.rights.crossUserAccess !== "self") {
+    redirect("/admin-dashboard");
+  }
 
   const initials = [member.first_name, member.last_name]
     .filter(Boolean)
