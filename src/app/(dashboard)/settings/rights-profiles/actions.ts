@@ -15,7 +15,7 @@ import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 // imports of RightsProfileWritePayload don't drag in `next/headers`.
 import { TAB_KEYS, type Rank, type CrossUserAccess, type TabKey, type TabAccess } from "@/lib/rights-types";
 import { revalidatePath } from "next/cache";
-import { logAudit } from "@/lib/audit";
+import { logAudit, diffChanges } from "@/lib/audit";
 
 // ---------------------------------------------------------------------------
 // DTO shape returned to the client
@@ -189,6 +189,51 @@ const SELECT_COLUMNS =
   "can_manage_billing, can_view_audit_logs, " +
   "can_view_sensitive_fields, can_edit_sensitive_fields, tab_matrix";
 
+/**
+ * Convert a TabAccess bag ({view, update}) into the three-level label
+ * the User Rights editor shows the user, so the audit diff reads
+ * "None → Edit" rather than raw JSON.
+ */
+function tabAccessLabel(t: unknown): "None" | "View" | "Edit" {
+  const v = t as { view?: boolean; update?: boolean } | null | undefined;
+  if (v?.update) return "Edit";
+  if (v?.view) return "View";
+  return "None";
+}
+
+/**
+ * Explode a tab_matrix diff into per-tab entries (`tab_timesheet`,
+ * `tab_holiday`, …) with the human-readable "None"/"View"/"Edit"
+ * values. Returned entries are merged onto the caller's changes bag.
+ */
+function tabMatrixDiff(
+  before: Record<string, unknown> | null | undefined,
+  after: Record<string, unknown> | null | undefined,
+): Record<string, { old: unknown; new: unknown }> {
+  const out: Record<string, { old: unknown; new: unknown }> = {};
+  for (const key of TAB_KEYS) {
+    const oldLabel = tabAccessLabel(before?.[key]);
+    const newLabel = tabAccessLabel(after?.[key]);
+    if (oldLabel !== newLabel) {
+      out[`tab_${key}`] = { old: oldLabel, new: newLabel };
+    }
+  }
+  return out;
+}
+
+/**
+ * Fetch the caller's display name for audit_log.actor_name. Guard has
+ * already resolved the member id, so this is one cheap lookup.
+ */
+async function callerDisplayName(callerMemberId: string): Promise<string> {
+  const { data } = await getAdmin()
+    .from("members")
+    .select("first_name, last_name")
+    .eq("id", callerMemberId)
+    .single();
+  return `${data?.first_name ?? ""} ${data?.last_name ?? ""}`.trim() || "Unknown";
+}
+
 function payloadToRow(p: RightsProfileWritePayload): Record<string, unknown> {
   return {
     name: p.name.trim(),
@@ -285,6 +330,32 @@ export async function createRightsProfile(
     if (error.code === "23505") return { success: false, error: "A profile with that name already exists" };
     return { success: false, error: error.message };
   }
+
+  // Audit — capture the seed values against `null` so the diff view
+  // shows the full initial config the profile was created with. The
+  // tab_matrix bag is exploded into per-tab entries (tab_timesheet,
+  // tab_holiday, …) with the None/View/Edit label the user sees.
+  const rowValues = payloadToRow(payload);
+  const changes: Record<string, { old: unknown; new: unknown }> = {};
+  for (const [k, v] of Object.entries(rowValues)) {
+    if (k === "tab_matrix") continue;
+    changes[k] = { old: null, new: v };
+  }
+  Object.assign(
+    changes,
+    tabMatrixDiff({}, rowValues.tab_matrix as Record<string, unknown>),
+  );
+  await logAudit({
+    organisationId: guard.organisationId,
+    actorId: guard.callerMemberId,
+    actorName: await callerDisplayName(guard.callerMemberId),
+    action: "rights_profile.created",
+    targetType: "rights_profile",
+    targetId: data?.id as string | undefined,
+    targetLabel: payload.name.trim(),
+    changes,
+  });
+
   revalidatePath("/settings/rights-profiles");
   return { success: true, id: data?.id as string | undefined };
 }
@@ -298,6 +369,15 @@ export async function updateRightsProfile(
   if (!payload.name.trim()) return { success: false, error: "Name is required" };
   const admin = getAdmin();
 
+  // Fetch the row's before-state so the audit diff can show old→new
+  // for each flag / tab that actually changed.
+  const { data: beforeRow } = await admin
+    .from("rights_profiles")
+    .select(SELECT_COLUMNS)
+    .eq("id", id)
+    .eq("organisation_id", guard.organisationId)
+    .single();
+
   const { error } = await admin
     .from("rights_profiles")
     .update(payloadToRow(payload))
@@ -308,6 +388,58 @@ export async function updateRightsProfile(
     if (error.code === "23505") return { success: false, error: "A profile with that name already exists" };
     return { success: false, error: error.message };
   }
+
+  // Audit — diff the row's before-values against the payload's row
+  // shape. Only real changes end up in the audit entry.
+  if (beforeRow) {
+    const b = beforeRow as unknown as DbRow;
+    const beforeValues: Record<string, unknown> = {
+      name: b.name,
+      rank: b.rank,
+      is_default: b.is_default,
+      cross_user_access: b.cross_user_access,
+      can_create_users: b.can_create_users,
+      can_invite_users: b.can_invite_users,
+      can_delete_users: b.can_delete_users,
+      can_approve_holidays: b.can_approve_holidays,
+      can_override_holiday_rules: b.can_override_holiday_rules,
+      can_run_reports: b.can_run_reports,
+      can_run_admin_reports: b.can_run_admin_reports,
+      can_manage_teams: b.can_manage_teams,
+      can_edit_org_settings: b.can_edit_org_settings,
+      can_edit_rights_profiles: b.can_edit_rights_profiles,
+      can_manage_billing: b.can_manage_billing,
+      can_view_audit_logs: b.can_view_audit_logs,
+      can_view_sensitive_fields: b.can_view_sensitive_fields,
+      can_edit_sensitive_fields: b.can_edit_sensitive_fields,
+      tab_matrix: b.tab_matrix,
+    };
+    const afterValues = payloadToRow(payload);
+    // Diff everything *except* tab_matrix as flat scalars, then merge
+    // in the per-tab labelled diff so the audit UI shows
+    // "Timesheet: None → Edit" rather than a raw JSON blob.
+    const { tab_matrix: beforeTabs, ...beforeScalars } = beforeValues;
+    const { tab_matrix: afterTabs, ...afterScalars } = afterValues;
+    const scalarChanges = diffChanges(beforeScalars, afterScalars) ?? {};
+    const tabChanges = tabMatrixDiff(
+      beforeTabs as Record<string, unknown> | null,
+      afterTabs as Record<string, unknown> | null,
+    );
+    const changes = { ...scalarChanges, ...tabChanges };
+    if (Object.keys(changes).length > 0) {
+      await logAudit({
+        organisationId: guard.organisationId,
+        actorId: guard.callerMemberId,
+        actorName: await callerDisplayName(guard.callerMemberId),
+        action: "rights_profile.updated",
+        targetType: "rights_profile",
+        targetId: id,
+        targetLabel: payload.name.trim(),
+        changes,
+      });
+    }
+  }
+
   revalidatePath("/settings/rights-profiles");
   return { success: true };
 }
@@ -321,7 +453,7 @@ export async function deleteRightsProfile(
 
   const { data: profile } = await admin
     .from("rights_profiles")
-    .select("is_default")
+    .select("id, name, is_default")
     .eq("id", id)
     .eq("organisation_id", guard.organisationId)
     .single();
@@ -342,6 +474,18 @@ export async function deleteRightsProfile(
     .eq("id", id)
     .eq("organisation_id", guard.organisationId);
   if (error) return { success: false, error: error.message };
+
+  await logAudit({
+    organisationId: guard.organisationId,
+    actorId: guard.callerMemberId,
+    actorName: await callerDisplayName(guard.callerMemberId),
+    action: "rights_profile.deleted",
+    targetType: "rights_profile",
+    targetId: id,
+    targetLabel: (profile.name as string) ?? id,
+    changes: { name: { old: profile.name, new: null } },
+  });
+
   revalidatePath("/settings/rights-profiles");
   return { success: true };
 }
@@ -356,6 +500,20 @@ export async function reorderRightsProfiles(
   // CLE-197 — Flat-list reorder. Every profile in the org gets a
   // sort_order matching its index in the supplied list. rank + is_default
   // are ignored — the user sees one list, we persist one order.
+  // Capture the current order so the audit entry shows the reorder as
+  // a proper before → after diff of profile names, not just a bag of
+  // ids the reader has to cross-reference.
+  const { data: beforeRows } = await admin
+    .from("rights_profiles")
+    .select("id, name, sort_order")
+    .eq("organisation_id", guard.organisationId)
+    .order("sort_order", { ascending: true });
+  const nameById = new Map<string, string>(
+    (beforeRows ?? []).map((r) => [r.id as string, r.name as string]),
+  );
+  const before = (beforeRows ?? []).map((r) => nameById.get(r.id as string) ?? (r.id as string));
+  const after = orderedIds.map((id) => nameById.get(id) ?? id);
+
   await Promise.all(
     orderedIds.map((id, i) =>
       admin
@@ -365,6 +523,19 @@ export async function reorderRightsProfiles(
         .eq("organisation_id", guard.organisationId)
     )
   );
+
+  if (JSON.stringify(before) !== JSON.stringify(after)) {
+    await logAudit({
+      organisationId: guard.organisationId,
+      actorId: guard.callerMemberId,
+      actorName: await callerDisplayName(guard.callerMemberId),
+      action: "rights_profile.reordered",
+      targetType: "rights_profile",
+      targetLabel: "User Rights list",
+      changes: { order: { old: before, new: after } },
+    });
+  }
+
   revalidatePath("/settings/rights-profiles");
   return { success: true };
 }
