@@ -501,6 +501,12 @@ function EditorDialog({
 
   const diff = isEdit ? diffPayloads(dtoToPayload(state.original), payload) : { granted: 0, revoked: 0 };
   const hasImpact = isEdit && memberCount > 0 && (diff.granted + diff.revoked) > 0;
+  // Enable Save only when there are actual changes. Serialise-and-compare
+  // is fine — payload is small (a handful of primitives + tab_matrix).
+  // New-profile mode always allows save (any inputs count as a change).
+  const hasChanges = isEdit
+    ? JSON.stringify(payload) !== JSON.stringify(dtoToPayload(state.original))
+    : true;
 
   function update<K extends keyof RightsProfileWritePayload>(k: K, v: RightsProfileWritePayload[K]) {
     onChange({ ...payload, [k]: v });
@@ -661,7 +667,7 @@ function EditorDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={onCancel} disabled={saving}>Cancel</Button>
-          <Button onClick={onSave} disabled={saving || !payload.name.trim()}>
+          <Button onClick={onSave} disabled={saving || !payload.name.trim() || !hasChanges}>
             {saving ? "Saving…" : "Save changes"}
           </Button>
         </DialogFooter>

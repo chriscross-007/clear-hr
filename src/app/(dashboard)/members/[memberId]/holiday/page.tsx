@@ -145,10 +145,18 @@ export default async function EmployeeHolidayPage({
   };
   const computedMap = computeAllHolidayPeriodValues(periods, bookings, ctx, todayISO);
 
+  // CLE-201c-13 — Gate edit affordances on the holiday tab_matrix.update
+  // flag rather than the legacy admin check. View-only callers see the
+  // Holiday Periods table but no Add/Edit/Delete/Unlock affordances.
+  const canEdit = resolved.rights.tabs.holiday?.update ?? false;
+
   // Pre-compute defaults for the "Add Period" sheet so it pops open with
-  // sensible values. If the helper fails (e.g. employee has no Start Date
-  // set), pass null and the client surfaces the error in the sheet.
-  const defaultsResult = await getNewPeriodDefaults(memberId);
+  // sensible values. Only fetch when the caller can actually add — the
+  // underlying action requires canApproveHolidays and would surface
+  // "Insufficient permissions" for view-only callers otherwise.
+  const defaultsResult = canEdit
+    ? await getNewPeriodDefaults(memberId)
+    : { success: true as const, defaults: null };
   const newPeriodDefaults: NewPeriodDefaults | null =
     defaultsResult.success && defaultsResult.defaults ? defaultsResult.defaults : null;
   const newPeriodDefaultsError =
@@ -173,6 +181,7 @@ export default async function EmployeeHolidayPage({
         computed={computedRecord}
         newPeriodDefaults={newPeriodDefaults}
         newPeriodDefaultsError={newPeriodDefaultsError}
+        canEdit={canEdit}
       />
     </div>
   );

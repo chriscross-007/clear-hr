@@ -433,6 +433,9 @@ interface EmployeeHolidayClientProps {
   computed: Record<string, ComputedPeriodValues>;
   newPeriodDefaults: NewPeriodDefaults | null;
   newPeriodDefaultsError: string | null;
+  /** CLE-201c-13 — sourced from resolver's tabs.holiday.update.
+   *  When false, all edit affordances hide. */
+  canEdit: boolean;
 }
 
 export function EmployeeHolidayClient({
@@ -443,6 +446,7 @@ export function EmployeeHolidayClient({
   computed,
   newPeriodDefaults,
   newPeriodDefaultsError,
+  canEdit,
 }: EmployeeHolidayClientProps) {
   const router = useRouter();
 
@@ -540,7 +544,7 @@ export function EmployeeHolidayClient({
   // -------------------------------------------------------------------------
 
   function startEdit(p: HolidayPeriod, field: EditableField) {
-    if (p.locked || cellSaving) return;
+    if (!canEdit || p.locked || cellSaving) return;
     // Allowance is only meaningful for fixed periods; Earned Factor for earned.
     if (field === "allowance" && p.type !== "fixed") return;
     if (field === "earnedFactor" && p.type !== "earned") return;
@@ -684,7 +688,7 @@ export function EmployeeHolidayClient({
             <h1 className="text-2xl font-bold">{memberName}</h1>
             <p className="text-sm text-muted-foreground">Holiday Periods</p>
           </div>
-          <Button
+          {canEdit && <Button
             onClick={handleAdd}
             disabled={!newPeriodDefaults || adding}
             title={newPeriodDefaultsError ?? undefined}
@@ -695,7 +699,7 @@ export function EmployeeHolidayClient({
               <Plus className="h-4 w-4 mr-1.5" />
             )}
             Add Period
-          </Button>
+          </Button>}
         </div>
       </StickyPageHeader>
 
@@ -713,8 +717,8 @@ export function EmployeeHolidayClient({
         </div>
       )}
 
-      {/* Inline Start Date entry / defaults error banner */}
-      {!memberStartDate ? (
+      {/* Inline Start Date entry / defaults error banner — only when caller can edit */}
+      {canEdit && !memberStartDate ? (
         <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
           <p className="mb-2">
             This employee has no Start Date set. Add it here to enable Holiday Period creation.
