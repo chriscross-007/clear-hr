@@ -86,6 +86,49 @@ type PayloadFlagKey =
 
 interface SwitchDef { key: PayloadFlagKey; label: string }
 
+// CLE-201c — Tri-state segmented control for tab access. The three
+// legal states are None (view=false, update=false), View (view=true,
+// update=false) and Edit (view=true, update=true). Modelling access
+// as three levels rather than two independent booleans makes the
+// invariant `update ⇒ view` impossible to violate by construction.
+// `value = null` renders unselected — used by the "Set all" row.
+function TabAccessSegmented({
+  value,
+  onChange,
+}: {
+  value: "none" | "view" | "edit" | null;
+  onChange: (v: "none" | "view" | "edit") => void;
+}) {
+  const options: { key: "none" | "view" | "edit"; label: string }[] = [
+    { key: "none", label: "None" },
+    { key: "view", label: "View" },
+    { key: "edit", label: "Edit" },
+  ];
+  return (
+    <div className="inline-flex overflow-hidden rounded-md border text-[11px] leading-none">
+      {options.map((o, i) => {
+        const selected = value === o.key;
+        return (
+          <button
+            key={o.key}
+            type="button"
+            onClick={() => onChange(o.key)}
+            className={cn(
+              "px-2 py-1 transition-colors",
+              i > 0 && "border-l",
+              selected
+                ? "bg-primary text-primary-foreground"
+                : "bg-background hover:bg-accent"
+            )}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 const GROUPS: { name: string; items: SwitchDef[] }[] = [
   {
     name: "User management",
@@ -462,20 +505,31 @@ function EditorDialog({
   function update<K extends keyof RightsProfileWritePayload>(k: K, v: RightsProfileWritePayload[K]) {
     onChange({ ...payload, [k]: v });
   }
-  function updateTab(t: TabKey, patch: Partial<TabAccess>) {
+  // CLE-201c — Tab access is a tri-state, not two independent
+  // booleans. The invariant `update ⇒ view` is enforced by
+  // construction: only three levels exist, and each maps to exactly
+  // one (view, update) pair.
+  type TabLevel = "none" | "view" | "edit";
+  function levelFromTab(t: TabAccess): TabLevel {
+    if (t.update) return "edit";
+    if (t.view) return "view";
+    return "none";
+  }
+  function tabFromLevel(l: TabLevel): TabAccess {
+    return { view: l !== "none", update: l === "edit" };
+  }
+  function setTabLevel(t: TabKey, level: TabLevel) {
     onChange({
       ...payload,
-      tabs: { ...payload.tabs, [t]: { ...payload.tabs[t], ...patch } },
+      tabs: { ...payload.tabs, [t]: tabFromLevel(level) },
     });
   }
-  function toggleColumnAll(field: keyof TabAccess) {
-    const allOn = TAB_KEYS.every((k) => payload.tabs[k][field]);
-    const next = { ...payload.tabs };
-    for (const k of TAB_KEYS) next[k] = { ...next[k], [field]: !allOn };
+  function setAllTabsLevel(level: TabLevel) {
+    const value = tabFromLevel(level);
+    const next = {} as Record<TabKey, TabAccess>;
+    for (const k of TAB_KEYS) next[k] = { ...value };
     onChange({ ...payload, tabs: next });
   }
-  const allView = TAB_KEYS.every((k) => payload.tabs[k].view);
-  const allUpdate = TAB_KEYS.every((k) => payload.tabs[k].update);
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
@@ -489,7 +543,7 @@ function EditorDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="overflow-y-auto max-h-[65vh] px-1 space-y-6">
+        <div className="overflow-y-auto max-h-[65vh] pl-1 pr-4 space-y-6">
           {/* Identity */}
           <div className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-3 items-center text-sm">
             <Label htmlFor="rp-name" className="text-muted-foreground">Name</Label>
@@ -547,7 +601,7 @@ function EditorDialog({
               ))}
             </div>
 
-            {/* Tab matrix */}
+            {/* Tab matrix — tri-state control per tab */}
             <div>
               <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
                 Employee tabs
@@ -556,41 +610,30 @@ function EditorDialog({
                 <thead>
                   <tr className="border-b">
                     <th className="text-left py-2 font-medium text-xs text-muted-foreground">Tab</th>
-                    <th className="text-center py-2 font-medium text-xs text-muted-foreground w-16">View</th>
-                    <th className="text-center py-2 font-medium text-xs text-muted-foreground w-16">Update</th>
+                    <th className="text-center py-2 font-medium text-xs text-muted-foreground">Access</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {TAB_KEYS.map((t) => (
-                    <tr key={t}>
-                      <td className="py-1.5">{TAB_LABEL[t]}</td>
-                      <td className="text-center">
-                        <Checkbox
-                          checked={payload.tabs[t].view}
-                          onCheckedChange={(v) => updateTab(t, { view: v === true })}
-                        />
-                      </td>
-                      <td className="text-center">
-                        <Checkbox
-                          checked={payload.tabs[t].update}
-                          onCheckedChange={(v) => updateTab(t, { update: v === true })}
-                        />
-                      </td>
-                    </tr>
-                  ))}
+                  {TAB_KEYS.map((t) => {
+                    const current = levelFromTab(payload.tabs[t]);
+                    return (
+                      <tr key={t}>
+                        <td className="py-1.5">{TAB_LABEL[t]}</td>
+                        <td className="text-center py-1.5">
+                          <TabAccessSegmented
+                            value={current}
+                            onChange={(v) => setTabLevel(t, v)}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
                   <tr className="border-t bg-muted/40">
-                    <td className="py-1.5 text-xs font-medium text-muted-foreground">All</td>
-                    <td className="text-center">
-                      <Checkbox
-                        checked={allView}
-                        onCheckedChange={() => toggleColumnAll("view")}
-                        aria-label="Toggle View for all tabs"
-                      />
-                    </td>
-                    <td className="text-center">
-                      <Checkbox
-                        checked={allUpdate}
-                        onCheckedChange={() => toggleColumnAll("update")}
+                    <td className="py-1.5 text-xs font-medium text-muted-foreground">Set all</td>
+                    <td className="text-center py-1.5">
+                      <TabAccessSegmented
+                        value={null}
+                        onChange={(v) => setAllTabsLevel(v)}
                         aria-label="Toggle Update for all tabs"
                       />
                     </td>
