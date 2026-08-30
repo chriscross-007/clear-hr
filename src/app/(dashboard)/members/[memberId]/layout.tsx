@@ -31,11 +31,14 @@ export default async function EmployeeMemberLayout({
   if (!resolved || resolved.rights.crossUserAccess === "self") redirect("/dashboard");
   const { data: member } = await supabase
     .from("members")
-    .select("id, first_name, last_name, avatar_url, role")
+    .select("id, first_name, last_name, avatar_url, role, rights_profiles(name)")
     .eq("id", memberId)
     .eq("organisation_id", caller.organisation_id)
     .single();
   if (!member) notFound();
+
+  const profileName =
+    (member.rights_profiles as unknown as { name?: string } | null)?.name ?? null;
 
   // CLE-201c-11 — compute per-tab visibility from the resolver so the
   // sidebar only lists tabs the Caller's profile grants view on.
@@ -55,6 +58,7 @@ export default async function EmployeeMemberLayout({
           last_name: member.last_name,
           avatar_url: member.avatar_url ?? null,
           role: member.role,
+          rights_profile_name: profileName,
         }}
       />
       <div className="min-w-0 flex-1">{children}</div>

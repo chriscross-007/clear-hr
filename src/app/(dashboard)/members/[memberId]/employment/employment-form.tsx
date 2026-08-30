@@ -18,6 +18,7 @@ import {
 } from "@/app/(dashboard)/employees/actions";
 import { updateMemberTeam } from "@/app/(dashboard)/employees/team-actions";
 import { saveCustomFieldValues } from "@/app/(dashboard)/employees/custom-field-actions";
+import { setMemberRightsProfile } from "@/app/(dashboard)/settings/rights-profiles/actions";
 import { WorkProfileSection, type WorkProfileAssignmentRow } from "./work-profile-section";
 import { ApprovalProfileSection } from "./approval-profile-section";
 import { NoticePeriodSection } from "./notice-period-section";
@@ -102,6 +103,11 @@ interface EmploymentFormProps {
   /** CLE-198 — When false, sensitive-field inputs render read-only
    *  even if the viewer can see the value. Defaults to true. */
   canEditSensitiveFields?: boolean;
+  /** User Rights profiles assignable to this member (org-scoped list). */
+  rightsProfiles?: { id: string; name: string }[];
+  /** Whether the Caller can change the assigned User Rights profile.
+   *  When false the Select renders read-only. */
+  canEditRightsProfiles?: boolean;
 }
 
 export function EmploymentForm({
@@ -116,6 +122,8 @@ export function EmploymentForm({
   orgDefaultWorkProfileId,
   canViewSensitiveFields = true,
   canEditSensitiveFields = true,
+  rightsProfiles = [],
+  canEditRightsProfiles = false,
 }: EmploymentFormProps) {
   const { memberLabel } = useMemberLabel();
   const router = useRouter();
@@ -129,6 +137,7 @@ export function EmploymentForm({
   // signature is trimmed in CLE-201c. Not user-editable.
   const [role] = useState(member.role);
   const [teamId, setTeamId] = useState<string | null>(member.team_id);
+  const [rightsProfileId, setRightsProfileId] = useState<string | null>(member.current_profile_id);
   const [startDate, setStartDate] = useState(member.start_date ?? "");
   const [avatarUrl, setAvatarUrl] = useState(member.avatar_url);
   const [invitedAt, setInvitedAt] = useState(member.invited_at);
@@ -146,6 +155,20 @@ export function EmploymentForm({
   const isAccepted = !!member.accepted_at;
   const isInvited = !!invitedAt;
 
+  // Dirty check — enables the Save button only when the form contains
+  // an actual change vs. the row initially loaded. JSON.stringify keeps
+  // the check compact and covers the multi-key custom fields blob.
+  const initialCustomJson = JSON.stringify(member.custom_fields ?? {});
+  const currentCustomJson = JSON.stringify(customValues ?? {});
+  const hasChanges =
+    firstName !== member.first_name ||
+    lastName !== member.last_name ||
+    (payrollNumber.trim() || null) !== (member.payroll_number ?? null) ||
+    teamId !== member.team_id ||
+    (startDate || null) !== (member.start_date ?? null) ||
+    rightsProfileId !== member.current_profile_id ||
+    currentCustomJson !== initialCustomJson;
+
   const inviteLabel = isAccepted
     ? "Accepted"
     : inviting
@@ -154,55 +177,95 @@ export function EmploymentForm({
     ? "Resend Invite"
     : "Invite";
 
+  const rightsProfileChanged =
+    canEditRightsProfiles &&
+    rightsProfileId !== null &&
+    rightsProfileId !== member.current_profile_id;
+
+  // Split "did the employee-record fields (name/team/payroll/start/CF)
+  // change?" from "did User Rights change?" so a Rights-only save
+  // doesn't need to route through updateEmployee (which requires its
+  // own permission checks) — and vice versa.
+  const employmentFieldsChanged =
+    firstName !== member.first_name ||
+    lastName !== member.last_name ||
+    (payrollNumber.trim() || null) !== (member.payroll_number ?? null) ||
+    teamId !== member.team_id ||
+    (startDate || null) !== (member.start_date ?? null) ||
+    currentCustomJson !== initialCustomJson;
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    if (!canEdit) return;
+    // Allow save if either the caller can edit the tab, or only User
+    // Rights changed and the caller can edit those. Prevents a Rights
+    // editor without employment.update from being blocked from saving
+    // the one field they are allowed to change.
+    if (!canEdit && !rightsProfileChanged) return;
     setLoading(true);
     setError(null);
     setSuccess(null);
 
-    const result = await updateEmployee({
-      memberId: member.member_id,
-      firstName,
-      lastName,
-      role,
-      payrollNumber: payrollNumber.trim() || null,
-      teamId,
-      // CLE-201a — legacy profileId omitted; the action ignores an
-      // undefined value.
-      updatedAt: member.updated_at,
-      startDate: startDate || null,
-    });
-    if (!result.success) {
-      setError(result.error ?? "Failed to update");
-      setLoading(false);
-      return;
-    }
+    // Only touch the employment-record path when at least one of those
+    // fields actually changed. This decouples a User Rights save from
+    // updateEmployee's separate permission checks (getCallerMembership
+    // needs canCreateUsers/canInviteUsers).
+    if (canEdit && employmentFieldsChanged) {
+      const result = await updateEmployee({
+        memberId: member.member_id,
+        firstName,
+        lastName,
+        role,
+        payrollNumber: payrollNumber.trim() || null,
+        teamId,
+        // CLE-201a — legacy profileId omitted; the action ignores an
+        // undefined value.
+        updatedAt: member.updated_at,
+        startDate: startDate || null,
+      });
+      if (!result.success) {
+        setError(result.error ?? "Failed to update");
+        setLoading(false);
+        return;
+      }
 
-    // CLE-185 — single team per member. Update separately so audit captures
-    // the team change cleanly even when other fields are unchanged.
-    const res = await updateMemberTeam(member.member_id, teamId, true);
-    if (!res.success) {
-      setError(res.error ?? "Failed to update team");
-      setLoading(false);
-      return;
-    }
+      // CLE-185 — single team per member. Update separately so audit captures
+      // the team change cleanly even when other fields are unchanged.
+      const res = await updateMemberTeam(member.member_id, teamId, true);
+      if (!res.success) {
+        setError(res.error ?? "Failed to update team");
+        setLoading(false);
+        return;
+      }
 
-    // Required custom fields
-    for (const def of customFieldDefs) {
-      if (def.required) {
-        const val = customValues[def.field_key];
-        if (val === undefined || val === null || val === "") {
-          setError(`${def.label} is required`);
+      // Required custom fields
+      for (const def of customFieldDefs) {
+        if (def.required) {
+          const val = customValues[def.field_key];
+          if (val === undefined || val === null || val === "") {
+            setError(`${def.label} is required`);
+            setLoading(false);
+            return;
+          }
+        }
+      }
+      if (customFieldDefs.length > 0) {
+        const res = await saveCustomFieldValues(member.member_id, customValues);
+        if (!res.success) {
+          setError(res.error ?? "Failed to save custom fields");
           setLoading(false);
           return;
         }
       }
     }
-    if (customFieldDefs.length > 0) {
-      const res = await saveCustomFieldValues(member.member_id, customValues);
-      if (!res.success) {
-        setError(res.error ?? "Failed to save custom fields");
+
+    // User Rights profile — always attempt when the picker changed,
+    // independent of the employment-field save above. The server
+    // action re-checks canEditRightsProfiles and writes an audit_log
+    // row on real change.
+    if (rightsProfileChanged && rightsProfileId) {
+      const rpRes = await setMemberRightsProfile(member.member_id, rightsProfileId);
+      if (!rpRes.success) {
+        setError(rpRes.error ?? "Failed to update User Rights");
         setLoading(false);
         return;
       }
@@ -373,17 +436,38 @@ export function EmploymentForm({
                 </div>
               </div>
 
+              {/* User Rights — replaces the legacy Role selector. Change
+                  is queued in local state and committed via Save (goes
+                  through setMemberRightsProfile, which audits). */}
               <div className="space-y-2">
-                <Label>Role</Label>
-                {/* CLE-201a — Legacy role picker retired. Role
-                    assignment now flows through the User Rights card
-                    at the bottom of the page (which sets rights_profile_id).
-                    Displayed as read-only for reference. */}
-                <Input
-                  value={role === "owner" ? "Owner" : role === "admin" ? "Admin" : capitalize(memberLabel)}
-                  disabled
-                  className="bg-muted"
-                />
+                <Label>User Rights</Label>
+                {canEditRightsProfiles && rightsProfiles.length > 0 ? (
+                  <Select
+                    value={rightsProfileId ?? ""}
+                    onValueChange={(v) => setRightsProfileId(v || null)}
+                    disabled={!canEditRightsProfiles}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a profile" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {rightsProfiles.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    value={
+                      rightsProfiles.find((p) => p.id === rightsProfileId)?.name ??
+                      "Unassigned"
+                    }
+                    disabled
+                    className="bg-muted"
+                  />
+                )}
               </div>
 
               {teams.length > 0 && (
@@ -554,7 +638,14 @@ export function EmploymentForm({
             {inviteLabel}
           </Button>
         )}
-        <Button type="submit" disabled={loading || !canEdit}>
+        <Button
+          type="submit"
+          disabled={
+            loading ||
+            !hasChanges ||
+            (!canEdit && !rightsProfileChanged)
+          }
+        >
           {loading ? "Saving..." : "Save"}
         </Button>
       </div>

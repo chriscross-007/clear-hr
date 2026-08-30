@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { Settings as SettingsIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { MemberLabelProvider } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
@@ -201,15 +202,27 @@ export default async function DashboardLayout({
               )}
             </div>
 
-            <HeaderUserMenu
-              email={user.email ?? ""}
-              fullName={fullName}
-              initials={initials}
-              avatarUrl={membership.avatar_url}
-              rank={rights.rank}
-              memberLabel={memberLabel}
-              profileName={rights.profileName}
-            />
+            <div className="flex items-center gap-2">
+              {rights.canEditOrgSettings && (
+                <Link
+                  href="/settings"
+                  aria-label="Settings"
+                  title="Settings"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <SettingsIcon className="h-5 w-5" />
+                </Link>
+              )}
+              <HeaderUserMenu
+                email={user.email ?? ""}
+                fullName={fullName}
+                initials={initials}
+                avatarUrl={membership.avatar_url}
+                rank={rights.rank}
+                memberLabel={memberLabel}
+                profileName={rights.profileName}
+              />
+            </div>
             </div>
           </header>
         </div>

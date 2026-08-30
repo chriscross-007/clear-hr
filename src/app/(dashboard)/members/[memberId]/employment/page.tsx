@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/server";
 import { getEffectiveRightsForUser, resolveTab } from "@/lib/rights-resolver";
 import { EmploymentForm } from "./employment-form";
 import { BookingsCard } from "./bookings-card";
-import { UserRightsPicker } from "./user-rights-picker";
 import { getAssignableProfiles } from "@/app/(dashboard)/settings/rights-profiles/actions";
 import type { WorkProfileAssignmentRow } from "./work-profile-section";
 import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
@@ -132,14 +131,8 @@ export default async function EmploymentPage({
         orgDefaultWorkProfileId={orgDefaultWorkProfileId}
         canViewSensitiveFields={canSeeCurrency}
         canEditSensitiveFields={canEditSensitiveFields}
-      />
-
-      <UserRightsPicker
-        memberId={member.id}
-        memberName={`${member.first_name} ${member.last_name}`}
-        currentProfileId={(member as { rights_profile_id: string | null }).rights_profile_id}
-        profiles={rightsProfilesList.map((p) => ({ id: p.id, name: p.name }))}
-        canEdit={rights.canEditRightsProfiles}
+        rightsProfiles={rightsProfilesList.map((p) => ({ id: p.id, name: p.name }))}
+        canEditRightsProfiles={rights.canEditRightsProfiles}
       />
 
       {/* CLE-188 — Member Bookings utility. Admin/owner with manage-members

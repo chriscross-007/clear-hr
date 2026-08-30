@@ -129,12 +129,15 @@ async function getCallerMember() {
 
 async function requireAdminOrOwner() {
   const { supabase, member } = await getCallerMember();
-  // CLE-196b-3 — Managing holiday periods requires holiday-approve rights
-  // (Manager/HR/Admin), matching the approvals mental model.
+  // CLE-201c-13 — Managing holiday periods now gates on the Holiday
+  // tab_matrix update flag, not canApproveHolidays. Approving bookings
+  // and managing an employee's holiday-period configuration are two
+  // distinct concerns; the tab matrix is the correct home for the
+  // latter, matching the per-tab access pattern on the member record.
   const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
   const { data: { user } } = await supabase.auth.getUser();
   const resolved = user ? await getEffectiveRightsForUser(user.id) : null;
-  if (!resolved?.rights.canApproveHolidays) {
+  if (!resolved?.rights.tabs.holiday?.update) {
     throw new Error("Insufficient permissions");
   }
   return { supabase, member };

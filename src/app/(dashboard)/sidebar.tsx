@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Users, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, CalendarDays, Clock, Palmtree, ClipboardCheck, ShieldCheck, LayoutDashboard, Settings } from "lucide-react";
+import { Users, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, CalendarDays, Clock, Palmtree, ClipboardCheck, ShieldCheck, LayoutDashboard } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { hasPlanFeature } from "@/lib/plan-config";
@@ -264,15 +264,8 @@ export function Sidebar({
             <ShieldCheck className="h-4 w-4 shrink-0" />
             Health &amp; Safety
           </Link>
-          {/* CLE-194 — Settings is the canonical surface for all org-level
-              config. The legacy "Organisation" dialog trigger that used to
-              sit above this link has been removed. */}
-          {showOrg && (
-            <Link href="/settings" className={linkClass("/settings")}>
-              <Settings className="h-4 w-4 shrink-0" />
-              Settings
-            </Link>
-          )}
+          {/* Settings has moved to the cog icon in the top bar. See
+              (dashboard)/layout.tsx — gated on canEditOrgSettings. */}
           {showBilling && (
             <Link href="/billing" className={linkClass("/billing")}>
               <CreditCard className="h-4 w-4 shrink-0" />

@@ -25,6 +25,7 @@ export type EmployeeSidebarMember = {
   last_name: string;
   avatar_url: string | null;
   role: string;
+  rights_profile_name: string | null;
 };
 
 interface NavItem {
@@ -71,7 +72,7 @@ export function EmployeeSidebar({
     { href: `${base}/calendar`, label: "Planner", icon: Calendar, tabKey: "planner" },
     { href: `${base}/timesheet`, label: "Timesheet", icon: Clock, tabKey: "timesheet" },
     { href: `${base}/dashboard`, label: "Dashboard", icon: LayoutDashboard, tabKey: "dashboard" },
-    { href: `${base}/holiday`, label: "Holiday", icon: Palmtree, tabKey: "holiday" },
+    { href: `${base}/holiday`, label: "Holiday Periods", icon: Palmtree, tabKey: "holiday" },
     { href: `${base}/employment`, label: "Employment", icon: Briefcase, tabKey: "employment" },
     { href: `${base}/personal`, label: "Personal", icon: User, tabKey: "personal" },
     { href: `${base}/contacts`, label: "Contacts", icon: Phone, tabKey: "contacts" },
@@ -87,7 +88,11 @@ export function EmployeeSidebar({
   const initials = [member.first_name, member.last_name]
     .map((n) => n?.charAt(0).toUpperCase() ?? "")
     .join("");
-  const roleLabel = member.role.charAt(0).toUpperCase() + member.role.slice(1);
+  // Show the assigned User Rights profile name in the sidebar chip
+  // (falls back to the legacy role label when no profile is assigned).
+  const roleLabel =
+    member.rights_profile_name ??
+    member.role.charAt(0).toUpperCase() + member.role.slice(1);
 
   return (
     <aside className="sticky top-16 h-[calc(100vh-4rem)] w-56 shrink-0 overflow-y-auto border-r bg-muted/30">

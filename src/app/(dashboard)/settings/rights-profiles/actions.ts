@@ -15,6 +15,7 @@ import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 // imports of RightsProfileWritePayload don't drag in `next/headers`.
 import { TAB_KEYS, type Rank, type CrossUserAccess, type TabKey, type TabAccess } from "@/lib/rights-types";
 import { revalidatePath } from "next/cache";
+import { logAudit } from "@/lib/audit";
 
 // ---------------------------------------------------------------------------
 // DTO shape returned to the client
@@ -89,7 +90,7 @@ function getAdmin() {
 }
 
 async function requireCanEditRightsProfiles(): Promise<
-  | { ok: true; organisationId: string }
+  | { ok: true; organisationId: string; callerMemberId: string; callerUserId: string }
   | { ok: false; error: string }
 > {
   const supabase = await createClient();
@@ -103,7 +104,12 @@ async function requireCanEditRightsProfiles(): Promise<
   if (!resolved.rights.canEditRightsProfiles) {
     return { ok: false, error: "You don't have permission to edit User Rights" };
   }
-  return { ok: true, organisationId: resolved.ctx.organisationId };
+  return {
+    ok: true,
+    organisationId: resolved.ctx.organisationId,
+    callerMemberId: resolved.ctx.memberId,
+    callerUserId: user.id,
+  };
 }
 
 // Full tab matrix defaulted to view:false, update:false. Used when
@@ -454,6 +460,7 @@ export async function setMemberRightsProfile(
   memberId: string,
   profileId: string,
 ): Promise<{ success: boolean; error?: string }> {
+  try {
   const guard = await requireCanEditRightsProfiles();
   if (!guard.ok) return { success: false, error: guard.error };
   const admin = getAdmin();
@@ -461,20 +468,34 @@ export async function setMemberRightsProfile(
   // Verify the profile belongs to the caller's org.
   const { data: profile } = await admin
     .from("rights_profiles")
-    .select("id")
+    .select("id, name")
     .eq("id", profileId)
     .eq("organisation_id", guard.organisationId)
     .single();
   if (!profile) return { success: false, error: "Profile not found" };
 
-  // Verify the target member is in the caller's org.
-  const { data: target } = await admin
-    .from("members")
-    .select("id")
-    .eq("id", memberId)
-    .eq("organisation_id", guard.organisationId)
-    .single();
+  // Fetch the target member (+ their current profile name) and the
+  // caller's own member row for audit attribution. The caller's
+  // memberId is already known from the guard (resolver has looked it
+  // up), so this lookup is just to get first/last name.
+  const [{ data: target }, { data: caller }] = await Promise.all([
+    admin
+      .from("members")
+      .select("id, first_name, last_name, rights_profile_id, rights_profiles(name)")
+      .eq("id", memberId)
+      .eq("organisation_id", guard.organisationId)
+      .single(),
+    admin
+      .from("members")
+      .select("first_name, last_name")
+      .eq("id", guard.callerMemberId)
+      .single(),
+  ]);
   if (!target) return { success: false, error: "Member not found" };
+
+  const oldProfileName =
+    (target.rights_profiles as unknown as { name?: string } | null)?.name ?? null;
+  const newProfileName = profile.name;
 
   const { error } = await admin
     .from("members")
@@ -483,10 +504,38 @@ export async function setMemberRightsProfile(
     .eq("organisation_id", guard.organisationId);
   if (error) return { success: false, error: error.message };
 
+  // Audit on every real profile change. Await the insert so any
+  // failure surfaces on the terminal, and the write always completes
+  // before this server action returns (fire-and-forget can lose the
+  // row on serverless environments).
+  if (oldProfileName !== newProfileName) {
+    const targetName = [target.first_name, target.last_name].filter(Boolean).join(" ");
+    const actorName =
+      `${caller?.first_name ?? ""} ${caller?.last_name ?? ""}`.trim() ||
+      "Unknown";
+    await logAudit({
+      organisationId: guard.organisationId,
+      actorId: guard.callerMemberId,
+      actorName,
+      action: "member.rights_profile_changed",
+      targetType: "member",
+      targetId: memberId,
+      targetLabel: targetName || memberId,
+      changes: {
+        rights_profile: { old: oldProfileName, new: newProfileName },
+      },
+    });
+  }
+
   revalidatePath(`/members/${memberId}/employment`);
   revalidatePath("/employees");
   revalidatePath("/settings/rights-profiles");
   return { success: true };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Failed to update User Rights";
+    console.error("[setMemberRightsProfile] threw:", msg);
+    return { success: false, error: msg };
+  }
 }
 
 export async function getBlankProfilePayload(rank: Rank): Promise<RightsProfileWritePayload> {
