@@ -12,6 +12,18 @@ function getAdminClient() {
   );
 }
 
+/** Translate Postgres errors from clocking INSERTs into user-facing text. */
+function friendlyClockingError(
+  err: { code?: string; message?: string; details?: string | null } | null | undefined,
+): string {
+  if (!err) return "";
+  const msg = err.message ?? "";
+  if (err.code === "23505" || msg.includes("clockings_member_clocked_at_unique")) {
+    return "A clocking for this member already exists at that date and time.";
+  }
+  return msg || "Could not save the clocking.";
+}
+
 /** Derive the caller's membership from the active session, including
  *  their resolved Rights Profile v2 rank so downstream gates can read
  *  `caller.rank !== "employee"` instead of the legacy role check. */
@@ -252,7 +264,7 @@ export async function debugCreateClocking(
     })
     .select("id").single();
 
-  if (error) return { success: false, error: error.message };
+  if (error) return { success: false, error: friendlyClockingError(error) };
   return { success: true, id: data.id };
 }
 
@@ -290,7 +302,7 @@ export async function debugUpdateClocking(
     })
     .select("id").single();
 
-  if (error) return { success: false, error: error.message };
+  if (error) return { success: false, error: friendlyClockingError(error) };
   return { success: true, newId: data.id };
 }
 
@@ -574,7 +586,7 @@ export async function addClocking(
       source:          "manual",
     });
 
-  if (insertErr) return { success: false, error: insertErr.message };
+  if (insertErr) return { success: false, error: friendlyClockingError(insertErr) };
 
   await logAudit({
     organisationId: caller.organisation_id,

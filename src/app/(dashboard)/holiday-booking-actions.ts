@@ -1714,8 +1714,11 @@ export async function adminDeleteBooking(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const { member: caller } = await getCallerMember();
-    if (!caller.rights?.canApproveHolidays) {
-      return { success: false, error: "Only admins or owners can delete bookings." };
+    // CLE-201c-13 — All Bookings card follows the Employment tab
+    // rights. Deleting a booking from this card requires update
+    // access on the employment tab.
+    if (!caller.rights?.tabs.employment.update) {
+      return { success: false, error: "You don't have permission to delete this booking." };
     }
     const admin = getAdminClient();
 
@@ -1804,8 +1807,11 @@ export async function getMemberBookings(
 ): Promise<{ success: boolean; error?: string; bookings: MemberBookingRow[] }> {
   try {
     const { member: caller } = await getCallerMember();
-    if (!caller.rights?.canApproveHolidays) {
-      return { success: false, error: "Only admins or owners can view member bookings.", bookings: [] };
+    // CLE-201c-13 — All Bookings card follows the Employment tab
+    // rights. Viewing a member's bookings requires view access on
+    // the employment tab.
+    if (!caller.rights?.tabs.employment.view) {
+      return { success: false, error: "You don't have permission to view this member's bookings.", bookings: [] };
     }
     const admin = getAdminClient();
 

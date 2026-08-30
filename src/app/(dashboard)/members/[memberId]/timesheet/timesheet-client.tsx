@@ -20,6 +20,9 @@ interface TimesheetClientProps {
   weekEnd:   string;
   workPeriods: WorkPeriodData[];
   callerRole: string;
+  /** CLE-201c-12 — sourced from resolver's tabs.timesheet.update.
+   *  Overrides the legacy role-based `canEdit` derivation. */
+  canEdit: boolean;
   shiftDefs: { id: string; name: string }[];
   shiftByDate: Record<string, { shiftDefinitionId: string | null; name: string | null; isOffDay: boolean }>;
   shiftBands: Record<string, OvertimeBandDef[]>;
@@ -49,6 +52,7 @@ export function TimesheetClient({
   weekEnd,
   workPeriods,
   callerRole,
+  canEdit,
   shiftDefs,
   shiftByDate,
   shiftBands,
@@ -63,7 +67,9 @@ export function TimesheetClient({
   const [reinferResult, setReinferResult] = useState<{ msg: string; ok: boolean } | null>(null);
   const [mapOpen, setMapOpen] = useState(false);
 
-  const canEdit = callerRole === "owner" || callerRole === "admin";
+  // CLE-201c-12 — canEdit is now the tab-matrix `update` flag, passed
+  // as a prop from the server. Legacy role-based derivation removed.
+  void callerRole; // kept in props for other consumers; not used here.
 
   async function handleShiftChange(date: string, shiftDefinitionId: string | null) {
     const result = await setDayShift(memberId, date, shiftDefinitionId);
@@ -116,6 +122,22 @@ export function TimesheetClient({
                 <ChevronRight className="h-4 w-4" />
               </Link>
             </Button>
+            <Button variant="outline" size="sm" asChild>
+              <Link href={`/members/${memberId}/timesheet`}>This Week</Link>
+            </Button>
+            {/* Jump to any week via a date picker (server normalises to
+                the containing week's Monday via getWeekBounds). */}
+            <input
+              type="date"
+              value={weekStart}
+              onChange={(e) => {
+                if (e.target.value) {
+                  router.push(`/members/${memberId}/timesheet?week=${e.target.value}`);
+                }
+              }}
+              className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+              aria-label="Jump to week"
+            />
           </div>
 
           <div className="flex items-center gap-3">

@@ -266,6 +266,7 @@ export default async function TimesheetPage({
       weekEnd={weekEnd}
       workPeriods={workPeriods}
       callerRole={callerRank}
+      canEdit={resolved.rights.tabs.timesheet?.update ?? false}
       shiftDefs={shiftDefs}
       shiftByDate={shiftByDate}
       shiftBands={shiftBands}

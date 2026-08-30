@@ -9,9 +9,9 @@
 // adminDeleteBooking action — that one already does a hard row delete and
 // writes a booking.deleted audit entry.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2 } from "lucide-react";
+import { Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -73,6 +73,9 @@ function statusBadgeClasses(status: string): string {
   }
 }
 
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+type PageSize = (typeof PAGE_SIZE_OPTIONS)[number] | "all";
+
 export function BookingsCard({ memberId, memberName, canManage }: BookingsCardProps) {
   const router = useRouter();
   const [bookings, setBookings] = useState<MemberBookingRow[]>([]);
@@ -80,6 +83,8 @@ export function BookingsCard({ memberId, memberName, canManage }: BookingsCardPr
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<MemberBookingRow | null>(null);
   const [deleteInFlight, setDeleteInFlight] = useState(false);
+  const [pageSize, setPageSize] = useState<PageSize>(10);
+  const [page, setPage] = useState(0);
 
   async function load() {
     setLoading(true);
@@ -98,6 +103,24 @@ export function BookingsCard({ memberId, memberName, canManage }: BookingsCardPr
     // load() is stable for this memberId; reload on memberId change only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memberId]);
+
+  // Client-side pagination. Bookings list is typically small (< a few
+  // hundred) so paging in-memory is fine; can shift to server-side
+  // limit/offset if any tenant grows past ~1000 bookings per member.
+  const totalCount = bookings.length;
+  const effectivePageSize = pageSize === "all" ? Math.max(totalCount, 1) : pageSize;
+  const pageCount = Math.max(1, Math.ceil(totalCount / effectivePageSize));
+  const clampedPage = Math.min(page, pageCount - 1);
+  const pageStart = clampedPage * effectivePageSize;
+  const pageEnd = Math.min(pageStart + effectivePageSize, totalCount);
+  const pageRows = useMemo(
+    () => bookings.slice(pageStart, pageEnd),
+    [bookings, pageStart, pageEnd],
+  );
+  // Reset to first page when the page size changes.
+  useEffect(() => {
+    setPage(0);
+  }, [pageSize]);
 
   async function handleConfirmDelete() {
     if (!deleting) return;
@@ -146,7 +169,7 @@ export function BookingsCard({ memberId, memberName, canManage }: BookingsCardPr
                 </tr>
               </thead>
               <tbody>
-                {bookings.map((b) => (
+                {pageRows.map((b) => (
                   <tr key={b.id} className="border-b last:border-b-0">
                     <td className="py-2 pr-3 tabular-nums">{fmtDate(b.startDate)}</td>
                     <td className="py-2 pr-3 tabular-nums">{fmtDate(b.endDate, true)}</td>
@@ -182,6 +205,52 @@ export function BookingsCard({ memberId, memberName, canManage }: BookingsCardPr
                 ))}
               </tbody>
             </table>
+            {/* Pagination controls */}
+            <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <span>Show</span>
+                <select
+                  className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+                  value={String(pageSize)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setPageSize(v === "all" ? "all" : (Number(v) as PageSize));
+                  }}
+                  aria-label="Page size"
+                >
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                  <option value="all">All</option>
+                </select>
+                <span>per page</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="tabular-nums">
+                  {totalCount === 0 ? "0" : `${pageStart + 1}–${pageEnd}`} of {totalCount}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={clampedPage === 0}
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={clampedPage >= pageCount - 1}
+                  onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
           </div>
         )}
       </CardContent>

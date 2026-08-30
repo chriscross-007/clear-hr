@@ -318,7 +318,9 @@ export function TimesheetGrid({ weekStart, workPeriods, shiftByDate = {}, onCell
                   className={cn("border-b border-border/50", isWeekend && "bg-muted/20")}
                 >
                   <td className="sticky left-0 z-10 bg-inherit px-3 py-2 font-medium whitespace-nowrap">
-                    <span className="text-muted-foreground/60">
+                    {/* Same date styling as the has-periods branch:
+                        weekend rows greyed, weekdays default weight. */}
+                    <span className={cn(isWeekend && "text-muted-foreground")}>
                       {formatDayLabel(dateStr, WEEK_DAYS[dayIdx])}
                     </span>
                   </td>
