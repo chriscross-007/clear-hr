@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { createClient } from "@/lib/supabase/server";
 import { redirect, notFound } from "next/navigation";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { TimesheetClient } from "./timesheet-client";
 
 function getWeekBounds(dateStr?: string): { weekStart: string; weekEnd: string } {
@@ -33,6 +34,10 @@ export default async function TimesheetPage({
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
+
+  // CLE-201c-12 — page-level tab-matrix gate.
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved || !resolved.rights.tabs.timesheet?.view) notFound();
 
   const { data: caller } = await supabase
     .from("members")

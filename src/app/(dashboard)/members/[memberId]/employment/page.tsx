@@ -34,6 +34,11 @@ export default async function EmploymentPage({
   if (!resolved) redirect("/organisation-setup");
   const { rights } = resolved;
   if (rights.crossUserAccess === "self") redirect("/dashboard");
+  // CLE-201c-12 — page-level tab-matrix gate.
+  if (!rights.tabs.employment?.view) {
+    const { notFound } = await import("next/navigation");
+    notFound();
+  }
 
   const canEdit = resolveTab(rights, "employment").update;
   const canSeeCurrency = rights.canViewSensitiveFields;

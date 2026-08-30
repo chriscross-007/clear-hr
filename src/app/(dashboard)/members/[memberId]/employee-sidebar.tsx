@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { recordRecentEmployee } from "@/lib/recent-employees";
+import type { TabKey } from "@/lib/rights-types";
 
 export type EmployeeSidebarMember = {
   id: string;
@@ -30,9 +31,20 @@ interface NavItem {
   href: string;
   label: string;
   icon: typeof LayoutDashboard;
+  tabKey: TabKey;
 }
 
-export function EmployeeSidebar({ member, userId }: { member: EmployeeSidebarMember; userId: string }) {
+export function EmployeeSidebar({
+  member,
+  userId,
+  visibleTabs,
+}: {
+  member: EmployeeSidebarMember;
+  userId: string;
+  /** CLE-201c-11 — tab-matrix view flags for the current Caller, keyed
+   *  by TAB_KEYS. Sidebar shows only the tabs whose `view` is true. */
+  visibleTabs: Record<TabKey, boolean>;
+}) {
   const pathname = usePathname();
   const base = `/members/${member.id}`;
 
@@ -55,18 +67,22 @@ export function EmployeeSidebar({ member, userId }: { member: EmployeeSidebarMem
       path: subPath || undefined,
     });
   }, [userId, member.id, member.first_name, member.last_name, member.avatar_url, pathname]);
-  const items: NavItem[] = [
-    { href: `${base}/calendar`, label: "Planner", icon: Calendar },
-    { href: `${base}/timesheet`, label: "Timesheet", icon: Clock },
-    { href: `${base}/dashboard`, label: "Dashboard", icon: LayoutDashboard },
-    { href: `${base}/holiday`, label: "Holiday", icon: Palmtree },
-    { href: `${base}/employment`, label: "Employment", icon: Briefcase },
-    { href: `${base}/personal`, label: "Personal", icon: User },
-    { href: `${base}/contacts`, label: "Contacts", icon: Phone },
-    { href: `${base}/docs`, label: "Docs", icon: FileText },
-    { href: `${base}/expenses`, label: "Expenses", icon: Receipt },
-    { href: `${base}/history`, label: "History", icon: History },
+  const allItems: NavItem[] = [
+    { href: `${base}/calendar`, label: "Planner", icon: Calendar, tabKey: "planner" },
+    { href: `${base}/timesheet`, label: "Timesheet", icon: Clock, tabKey: "timesheet" },
+    { href: `${base}/dashboard`, label: "Dashboard", icon: LayoutDashboard, tabKey: "dashboard" },
+    { href: `${base}/holiday`, label: "Holiday", icon: Palmtree, tabKey: "holiday" },
+    { href: `${base}/employment`, label: "Employment", icon: Briefcase, tabKey: "employment" },
+    { href: `${base}/personal`, label: "Personal", icon: User, tabKey: "personal" },
+    { href: `${base}/contacts`, label: "Contacts", icon: Phone, tabKey: "contacts" },
+    { href: `${base}/docs`, label: "Docs", icon: FileText, tabKey: "documents" },
+    { href: `${base}/expenses`, label: "Expenses", icon: Receipt, tabKey: "expenses" },
+    { href: `${base}/history`, label: "History", icon: History, tabKey: "history" },
   ];
+  // CLE-201c-11 — filter by tab-matrix view flags. A tab with `view=false`
+  // is hidden from the sidebar entirely. Direct-URL access still needs
+  // gating at each page.tsx (follow-up).
+  const items = allItems.filter((i) => visibleTabs[i.tabKey]);
 
   const initials = [member.first_name, member.last_name]
     .map((n) => n?.charAt(0).toUpperCase() ?? "")

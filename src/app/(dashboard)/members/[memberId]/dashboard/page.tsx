@@ -1,7 +1,8 @@
 export const dynamic = 'force-dynamic';
 
-import { redirect } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar, Clock, Sun, BarChart2 } from "lucide-react";
@@ -18,6 +19,10 @@ export default async function EmployeeDashboardPage({
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
+
+  // CLE-201c-12 — page-level tab-matrix gate.
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved || !resolved.rights.tabs.dashboard?.view) notFound();
 
   // Caller must be in the admin shell (Manager+)
   const { data: caller } = await supabase

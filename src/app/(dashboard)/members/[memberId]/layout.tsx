@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
+import { TAB_KEYS, type TabKey } from "@/lib/rights-types";
 import { EmployeeSidebar } from "./employee-sidebar";
 
 export default async function EmployeeMemberLayout({
@@ -36,10 +37,18 @@ export default async function EmployeeMemberLayout({
     .single();
   if (!member) notFound();
 
+  // CLE-201c-11 — compute per-tab visibility from the resolver so the
+  // sidebar only lists tabs the Caller's profile grants view on.
+  const visibleTabs = {} as Record<TabKey, boolean>;
+  for (const key of TAB_KEYS) {
+    visibleTabs[key] = resolved.rights.tabs[key]?.view ?? false;
+  }
+
   return (
     <div className="flex">
       <EmployeeSidebar
         userId={user.id}
+        visibleTabs={visibleTabs}
         member={{
           id: member.id,
           first_name: member.first_name,

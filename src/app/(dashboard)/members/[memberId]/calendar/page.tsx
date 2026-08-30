@@ -1,7 +1,8 @@
 export const dynamic = "force-dynamic";
 
-import { redirect } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { type CalendarBooking, type CalendarBankHoliday } from "@/components/holiday-calendar";
 import {
   patternForDate,
@@ -39,6 +40,10 @@ export default async function EmployeeCalendarPage({
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
+
+  // CLE-201c-12 — page-level tab-matrix gate.
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved || !resolved.rights.tabs.planner?.view) notFound();
 
   const { data: caller } = await supabase
     .from("members")

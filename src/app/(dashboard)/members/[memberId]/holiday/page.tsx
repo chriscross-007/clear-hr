@@ -7,8 +7,9 @@
 
 export const dynamic = "force-dynamic";
 
-import { redirect } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import {
   getHolidayPeriodsForMember,
   getNewPeriodDefaults,
@@ -41,6 +42,10 @@ export default async function EmployeeHolidayPage({
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
+
+  // CLE-201c-12 — page-level tab-matrix gate.
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved || !resolved.rights.tabs.holiday?.view) notFound();
 
   const { data: caller } = await supabase
     .from("members")
