@@ -44,6 +44,11 @@ export interface RightsProfileDto {
   canViewSensitiveFields: boolean;
   canEditSensitiveFields: boolean;
 
+  // CLE-205 — Documents Tier 1 flags.
+  canViewOrganisationDocuments: boolean;
+  canManageDeletedDocuments: boolean;
+  canForceDeleteDocuments: boolean;
+
   tabs: Record<TabKey, TabAccess>;
 
   /** Number of members currently assigned to this profile. Drives the
@@ -74,6 +79,11 @@ export interface RightsProfileWritePayload {
   canViewAuditLogs: boolean;
   canViewSensitiveFields: boolean;
   canEditSensitiveFields: boolean;
+
+  // CLE-205 — Documents Tier 1 flags.
+  canViewOrganisationDocuments: boolean;
+  canManageDeletedDocuments: boolean;
+  canForceDeleteDocuments: boolean;
 
   tabs: Record<TabKey, TabAccess>;
 }
@@ -141,6 +151,10 @@ interface DbRow {
   can_view_audit_logs: boolean;
   can_view_sensitive_fields: boolean;
   can_edit_sensitive_fields: boolean;
+  // CLE-205 — Documents Tier 1
+  can_view_organisation_documents: boolean;
+  can_manage_deleted_documents: boolean;
+  can_force_delete_documents: boolean;
   tab_matrix: Record<string, { view?: boolean; update?: boolean }>;
 }
 
@@ -175,6 +189,9 @@ function rowToDto(row: DbRow, memberCount: number): RightsProfileDto {
     canViewAuditLogs: row.can_view_audit_logs,
     canViewSensitiveFields: row.can_view_sensitive_fields,
     canEditSensitiveFields: row.can_edit_sensitive_fields,
+    canViewOrganisationDocuments: row.can_view_organisation_documents,
+    canManageDeletedDocuments: row.can_manage_deleted_documents,
+    canForceDeleteDocuments: row.can_force_delete_documents,
     tabs: normaliseTabs(row.tab_matrix ?? {}),
     memberCount,
   };
@@ -187,7 +204,9 @@ const SELECT_COLUMNS =
   "can_run_reports, can_run_admin_reports, " +
   "can_manage_teams, can_edit_org_settings, can_edit_rights_profiles, " +
   "can_manage_billing, can_view_audit_logs, " +
-  "can_view_sensitive_fields, can_edit_sensitive_fields, tab_matrix";
+  "can_view_sensitive_fields, can_edit_sensitive_fields, " +
+  "can_view_organisation_documents, can_manage_deleted_documents, " +
+  "can_force_delete_documents, tab_matrix";
 
 /**
  * Convert a TabAccess bag ({view, update}) into the three-level label
@@ -254,6 +273,9 @@ function payloadToRow(p: RightsProfileWritePayload): Record<string, unknown> {
     can_view_audit_logs: p.canViewAuditLogs,
     can_view_sensitive_fields: p.canViewSensitiveFields,
     can_edit_sensitive_fields: p.canEditSensitiveFields,
+    can_view_organisation_documents: p.canViewOrganisationDocuments,
+    can_manage_deleted_documents: p.canManageDeletedDocuments,
+    can_force_delete_documents: p.canForceDeleteDocuments,
     tab_matrix: p.tabs,
   };
 }
@@ -412,6 +434,9 @@ export async function updateRightsProfile(
       can_view_audit_logs: b.can_view_audit_logs,
       can_view_sensitive_fields: b.can_view_sensitive_fields,
       can_edit_sensitive_fields: b.can_edit_sensitive_fields,
+      can_view_organisation_documents: b.can_view_organisation_documents,
+      can_manage_deleted_documents: b.can_manage_deleted_documents,
+      can_force_delete_documents: b.can_force_delete_documents,
       tab_matrix: b.tab_matrix,
     };
     const afterValues = payloadToRow(payload);
@@ -575,6 +600,9 @@ export async function copyRightsProfile(
     canViewAuditLogs: source.can_view_audit_logs,
     canViewSensitiveFields: source.can_view_sensitive_fields,
     canEditSensitiveFields: source.can_edit_sensitive_fields,
+    canViewOrganisationDocuments: source.can_view_organisation_documents,
+    canManageDeletedDocuments: source.can_manage_deleted_documents,
+    canForceDeleteDocuments: source.can_force_delete_documents,
     tabs: normaliseTabs(source.tab_matrix),
   };
 
@@ -729,6 +757,9 @@ export async function getBlankProfilePayload(rank: Rank): Promise<RightsProfileW
     canViewAuditLogs: false,
     canViewSensitiveFields: false,
     canEditSensitiveFields: false,
+    canViewOrganisationDocuments: false,
+    canManageDeletedDocuments: false,
+    canForceDeleteDocuments: false,
     tabs: emptyTabMatrix(),
   };
 }

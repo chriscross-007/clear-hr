@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   LayoutGrid,
   Database,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -89,6 +90,15 @@ export function SettingsSidebar({
       label: "Groups",
       icon: LayoutGrid,
       visible: canManageTeams,
+    },
+    {
+      // CLE-205 — Documents Tier 1. Subtypes manager sits under
+      // Documents; more surfaces (Org Documents CRUD, retention
+      // scheduling) will hang off the same route later.
+      href: "/settings/documents",
+      label: "Documents",
+      icon: FileText,
+      visible: canEditOrgSettings,
     },
     {
       href: "/settings/backups",

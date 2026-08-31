@@ -82,7 +82,9 @@ type PayloadFlagKey =
   | "canRunReports" | "canRunAdminReports"
   | "canManageTeams" | "canEditOrgSettings" | "canEditRightsProfiles"
   | "canManageBilling" | "canViewAuditLogs"
-  | "canViewSensitiveFields" | "canEditSensitiveFields";
+  | "canViewSensitiveFields" | "canEditSensitiveFields"
+  | "canViewOrganisationDocuments" | "canManageDeletedDocuments"
+  | "canForceDeleteDocuments";
 
 interface SwitchDef { key: PayloadFlagKey; label: string }
 
@@ -169,6 +171,17 @@ const GROUPS: { name: string; items: SwitchDef[] }[] = [
       { key: "canEditSensitiveFields", label: "Edit sensitive fields" },
     ],
   },
+  {
+    // CLE-205 — Documents Tier 1 flags. Sit alongside the other
+    // configuration switches; per-tab documents access continues to
+    // live in the tab matrix.
+    name: "Documents",
+    items: [
+      { key: "canViewOrganisationDocuments", label: "View organisation documents" },
+      { key: "canManageDeletedDocuments", label: "Manage deleted documents (Trash + Restore)" },
+      { key: "canForceDeleteDocuments", label: "Force-delete documents (bypass retention block)" },
+    ],
+  },
 ];
 
 // Convert a full DTO into the write payload shape (drops id/memberCount).
@@ -192,6 +205,9 @@ function dtoToPayload(dto: RightsProfileDto): RightsProfileWritePayload {
     canViewAuditLogs: dto.canViewAuditLogs,
     canViewSensitiveFields: dto.canViewSensitiveFields,
     canEditSensitiveFields: dto.canEditSensitiveFields,
+    canViewOrganisationDocuments: dto.canViewOrganisationDocuments,
+    canManageDeletedDocuments: dto.canManageDeletedDocuments,
+    canForceDeleteDocuments: dto.canForceDeleteDocuments,
     tabs: dto.tabs,
   };
 }
