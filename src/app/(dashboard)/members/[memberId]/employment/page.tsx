@@ -48,7 +48,7 @@ export default async function EmploymentPage({
   // Target member
   const { data: member } = await supabase
     .from("members")
-    .select("id, first_name, last_name, email, role, team_id, payroll_number, avatar_url, invited_at, accepted_at, user_id, custom_fields, start_date, updated_at, rights_profile_id")
+    .select("id, first_name, last_name, email, team_id, payroll_number, avatar_url, invited_at, accepted_at, user_id, custom_fields, start_date, updated_at, rights_profile_id")
     .eq("id", memberId)
     .eq("organisation_id", caller.organisation_id)
     .single();
@@ -109,7 +109,6 @@ export default async function EmploymentPage({
           first_name: member.first_name,
           last_name: member.last_name,
           email: member.email,
-          role: member.role,
           team_id: member.team_id,
           payroll_number: member.payroll_number,
           avatar_url: member.avatar_url,

@@ -16,8 +16,8 @@ export type ConversationMessage = {
     memberId: string;
     firstName: string;
     lastName: string;
-    /** 'admin' | 'owner' | 'employee' */
-    role: string;
+    // CLE-201c-9 — legacy `role` field dropped. Access-level context
+    // lives on the member profile, not inline on every chat bubble.
   };
   documents: {
     id: string;
@@ -47,7 +47,7 @@ async function getCallerMember() {
 
   const { data: member } = await supabase
     .from("members")
-    .select("id, organisation_id, role")
+    .select("id, organisation_id")
     .eq("user_id", user.id)
     .single();
   if (!member) throw new Error("No membership found");
@@ -332,7 +332,7 @@ export async function getConversationMessages(
     }
 
     const messages: ConversationMessage[] = (rows ?? []).map((r) => {
-      const author = r.members as unknown as { first_name: string; last_name: string; role: string } | null;
+      const author = r.members as unknown as { first_name: string; last_name: string } | null;
       return {
         id: r.id as string,
         body: r.body as string,
@@ -341,7 +341,6 @@ export async function getConversationMessages(
           memberId: r.author_member_id as string,
           firstName: author?.first_name ?? "",
           lastName: author?.last_name ?? "",
-          role: author?.role ?? "employee",
         },
         documents: docsByMessage.get(r.id as string) ?? [],
       };
@@ -392,10 +391,10 @@ export async function sendConversationMessage(
       return { success: false, error: insertError?.message ?? "Could not send message" };
     }
 
-    // Pull the author's name/role for the returned shape.
+    // Pull the author's name for the returned shape.
     const { data: authorRow } = await admin
       .from("members")
-      .select("first_name, last_name, role")
+      .select("first_name, last_name")
       .eq("id", caller.id)
       .single();
 
@@ -407,7 +406,6 @@ export async function sendConversationMessage(
         memberId: caller.id,
         firstName: (authorRow?.first_name as string) ?? "",
         lastName: (authorRow?.last_name as string) ?? "",
-        role: (authorRow?.role as string) ?? caller.role,
       },
       documents: [],
     };

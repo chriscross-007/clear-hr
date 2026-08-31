@@ -24,7 +24,8 @@ export type EmployeeSidebarMember = {
   first_name: string;
   last_name: string;
   avatar_url: string | null;
-  role: string;
+  // CLE-201c-9 — legacy `role` field dropped; sidebar chip shows the
+  // assigned User Rights profile name (or "Unassigned" if null).
   rights_profile_name: string | null;
 };
 
@@ -88,11 +89,7 @@ export function EmployeeSidebar({
   const initials = [member.first_name, member.last_name]
     .map((n) => n?.charAt(0).toUpperCase() ?? "")
     .join("");
-  // Show the assigned User Rights profile name in the sidebar chip
-  // (falls back to the legacy role label when no profile is assigned).
-  const roleLabel =
-    member.rights_profile_name ??
-    member.role.charAt(0).toUpperCase() + member.role.slice(1);
+  const roleLabel = member.rights_profile_name ?? "Unassigned";
 
   return (
     <aside className="sticky top-16 h-[calc(100vh-4rem)] w-56 shrink-0 overflow-y-auto border-r bg-muted/30">

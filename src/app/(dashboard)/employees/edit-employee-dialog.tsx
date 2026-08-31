@@ -50,7 +50,6 @@ interface EditEmployeeDialogProps {
     member_id: string;
     first_name: string;
     last_name: string;
-    role: string;
     team_id: string | null;
     payroll_number: string | null;
     custom_fields: Record<string, unknown>;
@@ -77,7 +76,8 @@ export function EditEmployeeDialog({
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [payrollNumber, setPayrollNumber] = useState("");
-  const [role, setRole] = useState("");
+  // CLE-201c-9 — legacy `role` state removed. Access level is
+  // driven by rights_profile_id, edited on the Employment page.
   const [teamId, setTeamId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -91,7 +91,6 @@ export function EditEmployeeDialog({
       setFirstName(member.first_name);
       setLastName(member.last_name);
       setPayrollNumber(member.payroll_number ?? "");
-      setRole(member.role);
       setTeamId(member.team_id);
       setError(null);
       setInviteSuccess(false);
@@ -120,11 +119,8 @@ export function EditEmployeeDialog({
       memberId: member.member_id,
       firstName,
       lastName,
-      role,
       payrollNumber: payrollNumber.trim() || null,
       teamId,
-      // CLE-201c — profileId no longer sent from this dialog; User
-      // Rights is set via the Employment page picker.
       updatedAt: member.updated_at,
       startDate: startDate || null,
     });
@@ -170,7 +166,6 @@ export function EditEmployeeDialog({
       member_id: member.member_id,
       first_name: firstName,
       last_name: lastName,
-      role,
       team_id: teamId,
       payroll_number: payrollNumber.trim() || null,
       custom_fields: customValues,

@@ -121,7 +121,7 @@ export async function getBookingHistory(
 
     const { data: member } = await supabase
       .from("members")
-      .select("id, organisation_id, role")
+      .select("id, organisation_id")
       .eq("user_id", user.id)
       .single();
     if (!member) return { success: false, error: "No membership found", entries: [] };
@@ -190,8 +190,7 @@ export async function getBookingHistory(
           created_at,
           members!conversation_messages_author_member_id_fkey(
             first_name,
-            last_name,
-            role
+            last_name
           )
         `)
         .eq("conversation_id", conversation.id)
@@ -218,17 +217,14 @@ export async function getBookingHistory(
         const author = m.members as unknown as {
           first_name: string;
           last_name: string;
-          role: string;
         };
         const authorName = `${author?.first_name ?? ""} ${author?.last_name ?? ""}`.trim() || "Unknown";
-        const role = (author?.role ?? "employee") as "admin" | "owner" | "employee";
 
         chatEntries.push({
           type: "chat" as const,
           id: m.id as string,
           timestamp: m.created_at as string,
           authorName,
-          authorRole: role,
           body: m.body as string,
           documents: docsByMessage[m.id as string] ?? [],
         });

@@ -19,7 +19,7 @@ async function getCallerMembership() {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("id, organisation_id, role, permissions")
+    .select("id, organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();

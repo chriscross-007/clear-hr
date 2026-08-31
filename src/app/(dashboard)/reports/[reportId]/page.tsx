@@ -27,7 +27,7 @@ export default async function StandardReportPage({
 
   const { data: membership } = await supabase
     .from("members")
-    .select("id, organisation_id, role, permissions, organisations(plan, currency_symbol, name)")
+    .select("id, organisation_id, organisations(plan, currency_symbol, name)")
     .eq("user_id", user.id)
     .limit(1)
     .single();

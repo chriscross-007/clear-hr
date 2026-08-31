@@ -59,7 +59,10 @@ export type ApprovalProfileInput = {
 export type ApproverOption = {
   id: string;
   name: string;
-  role: "owner" | "admin" | "employee";
+  /** Assigned User Rights profile name (e.g. "Admin", "HR", "Manager")
+   *  — shown as the small chip on the approver picker so the caller
+   *  can tell approvers apart at a glance. */
+  profileName: string;
   isActive: boolean;
 };
 
@@ -268,24 +271,22 @@ export async function getApproverOptions(): Promise<{
 
     // CLE-196b-3 — Approver candidates are members whose Rights Profile
     // grants can_approve_holidays. Join through and let Postgres filter.
+    // CLE-201c-9 — surface the profile *name* on the picker chip
+    // rather than the legacy 3-way role tag.
     const { data, error } = await supabase
       .from("members")
-      .select("id, first_name, last_name, user_id, rights_profiles!inner(rank, can_approve_holidays)")
+      .select("id, first_name, last_name, user_id, rights_profiles!inner(name, can_approve_holidays)")
       .eq("organisation_id", member.organisation_id)
       .eq("rights_profiles.can_approve_holidays", true)
       .order("first_name", { ascending: true });
     if (error) return { success: false, error: error.message, approvers: [] };
 
     const approvers: ApproverOption[] = (data ?? []).map((m) => {
-      const rp = m.rights_profiles as unknown as { rank: string } | null;
-      // Rank maps onto the legacy role shape for the picker's badge.
-      const rank = rp?.rank ?? "employee";
-      const legacyRole: "owner" | "admin" | "employee" =
-        rank === "admin" ? "owner" : rank === "employee" ? "employee" : "admin";
+      const rp = m.rights_profiles as unknown as { name: string } | null;
       return {
         id: m.id as string,
         name: `${m.first_name ?? ""} ${m.last_name ?? ""}`.trim() || "—",
-        role: legacyRole,
+        profileName: rp?.name ?? "—",
         isActive: m.user_id !== null,
       };
     });

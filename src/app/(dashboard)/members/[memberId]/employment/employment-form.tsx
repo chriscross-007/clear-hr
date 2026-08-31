@@ -59,7 +59,6 @@ type Member = {
   first_name: string;
   last_name: string;
   email: string;
-  role: string;
   team_id: string | null;
   payroll_number: string | null;
   avatar_url: string | null;
@@ -132,10 +131,8 @@ export function EmploymentForm({
   const [firstName, setFirstName] = useState(member.first_name);
   const [lastName, setLastName] = useState(member.last_name);
   const [payrollNumber, setPayrollNumber] = useState(member.payroll_number ?? "");
-  // CLE-201a — role state kept for the header display badge below and
-  // for the (legacy) updateEmployee call payload until the action's
-  // signature is trimmed in CLE-201c. Not user-editable.
-  const [role] = useState(member.role);
+  // CLE-201c-9 — legacy `role` state removed. Access level is entirely
+  // driven by the User Rights profile picker (rights_profile_id).
   const [teamId, setTeamId] = useState<string | null>(member.team_id);
   const [rightsProfileId, setRightsProfileId] = useState<string | null>(member.current_profile_id);
   const [startDate, setStartDate] = useState(member.start_date ?? "");
@@ -151,7 +148,10 @@ export function EmploymentForm({
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [avatarError, setAvatarError] = useState<string | null>(null);
 
-  const isOwner = member.role === "owner";
+  // CLE-201c-9 — `isOwner` gate removed alongside the owner concept.
+  // Bus-factor is now enforced by the DB-level
+  // `ensure_at_least_two_rights_editors_on_member` trigger; the picker
+  // surfaces its error verbatim.
   const isAccepted = !!member.accepted_at;
   const isInvited = !!invitedAt;
 
@@ -214,11 +214,8 @@ export function EmploymentForm({
         memberId: member.member_id,
         firstName,
         lastName,
-        role,
         payrollNumber: payrollNumber.trim() || null,
         teamId,
-        // CLE-201a — legacy profileId omitted; the action ignores an
-        // undefined value.
         updatedAt: member.updated_at,
         startDate: startDate || null,
       });

@@ -76,12 +76,21 @@ export default async function MyHolidayPage({
 
   const { data: member } = await supabase
     .from("members")
-    .select("id, organisation_id, role, team_id, start_date")
+    .select("id, organisation_id, team_id, start_date")
     .eq("user_id", user.id)
     .limit(1)
     .single();
 
   if (!member) redirect("/login");
+
+  // CLE-201c-9 — the "My Absences" surface lets a caller with
+  // canOverrideHolidayRules retroactively cancel their own approved
+  // bookings. Everyone else can only withdraw pending requests.
+  // Replaces the legacy `role === "admin" | "owner"` check.
+  const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
+  const resolvedCaller = await getEffectiveRightsForUser(user.id);
+  const canOverrideOwnBookings =
+    resolvedCaller?.rights.canOverrideHolidayRules === true;
 
   // Org bank holiday handling/colour and country code
   const { data: orgRow } = await supabase
@@ -503,7 +512,7 @@ export default async function MyHolidayPage({
     <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
       <MyHolidayClient
         memberId={member.id}
-        role={member.role}
+        canOverrideOwnBookings={canOverrideOwnBookings}
         balance={balance}
         nextBalance={nextBalance}
         bookings={bookings}

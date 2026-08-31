@@ -131,18 +131,13 @@ export async function addEmployee(formData: {
         email: formData.email.trim().toLowerCase(),
         first_name: formData.firstName,
         last_name: formData.lastName,
-        role: "employee",
         team_id: formData.teamId || null,
         payroll_number: trimmedPayroll,
         start_date: formData.startDate || null,
-        permissions: {
-          can_request_holidays: true,
-          can_approve_holidays: false,
-          can_view_team_members: false,
-          can_view_all_teams: false,
-          can_add_members: false,
-          can_edit_organisation: false,
-        },
+        // CLE-201c-9 — legacy `role` and `permissions` writes dropped.
+        // The BEFORE INSERT trigger `trigger_assign_default_rights_profile`
+        // seeds `rights_profile_id` from the org's default Employee
+        // profile.
         // CLE-194 Phase 2 — `holiday_profile_id` is set automatically by
         // `trigger_assign_holiday_profile` (BEFORE INSERT) so we don't
         // need to populate it here. The 7 values are then resolved via
@@ -345,12 +340,9 @@ export async function updateEmployee(formData: {
   memberId: string;
   firstName: string;
   lastName: string;
-  role?: string;
   payrollNumber?: string | null;
   // CLE-185 — single team per member. Pass null to clear.
   teamId?: string | null;
-  // undefined = no change, "__none__" = clear profile, UUID = assign profile
-  profileId?: string;
   updatedAt?: string | null;
   startDate?: string | null;
 }): Promise<{ success: boolean; error?: string; conflict?: boolean }> {
@@ -399,27 +391,10 @@ export async function updateEmployee(formData: {
       updateData.start_date = formData.startDate || null;
     }
 
-    // Role change validation (skip if owner — owner role is immutable)
-    if (formData.role && formData.role !== "owner") {
-      const validRoles = ["admin", "employee"];
-      if (!validRoles.includes(formData.role)) {
-        return { success: false, error: "Invalid role" };
-      }
-
-      // Fetch the target member to prevent changing the owner's role
-      const { data: target } = await admin
-        .from("members")
-        .select("role")
-        .eq("id", formData.memberId)
-        .eq("organisation_id", membership.organisation_id)
-        .single();
-
-      if (target?.role === "owner") {
-        return { success: false, error: "Cannot change the owner's role" };
-      }
-
-      updateData.role = formData.role;
-    }
+    // CLE-201c-9 — legacy role-write branch removed. Role is a
+    // vestigial column being dropped; access is resolved via
+    // rights_profile_id (assigned through the User Rights picker in
+    // the Employment form). formData.role is ignored.
 
     // CLE-201c — Legacy profile-assignment branch removed. The User
     // Rights profile is set via the dedicated <UserRightsPicker> on
@@ -456,13 +431,11 @@ export async function updateEmployee(formData: {
         {
           first_name: beforeState.first_name,
           last_name: beforeState.last_name,
-          role: beforeState.role,
           payroll_number: beforeState.payroll_number,
         },
         {
           first_name: formData.firstName,
           last_name: formData.lastName,
-          role: (updateData.role as string | undefined) ?? beforeState.role,
           payroll_number: trimmedPayroll,
         }
       );
@@ -803,7 +776,9 @@ export async function acceptInvite(
 
 export type BulkUpdatePayload = {
   team_id?: string;
-  role?: "admin" | "employee";
+  // CLE-201c-9 — `role` dropped from bulk update. Access level is set
+  // via `rights_profile_id` below (or the per-member picker on the
+  // Employment page).
   custom_fields?: Record<string, unknown>;
   /** CLE-186 — set the Holiday (Annual Leave) approval profile for each
    *  selected member. `null` clears the assignment (falls back to legacy
@@ -849,17 +824,17 @@ export async function bulkUpdateMembers(
     if (!membership) return { success: false, error: "No organisation" };
 
     // CLE-196b-2 / CLE-201 — Split gate:
-    //   • Personal-tab writes (team_id, role, custom_fields, approval) need
+    //   • Personal-tab writes (team_id, custom_fields, approval) need
     //     Personal.update.
     //   • User Rights writes (rights_profile_id) need canEditRightsProfiles
     //     — the resolver-level equivalent of the User Rights picker on
     //     the Employment page.
     // A payload can request either or both; the caller must have the
     // right gate for each field it's touching.
+    // CLE-201c-9 — `role` removed from the update payload.
     const resolved = await getEffectiveRightsForUser(user.id);
     const needsPersonal =
       updates.team_id !== undefined ||
-      updates.role !== undefined ||
       updates.custom_fields !== undefined ||
       updates.approval_profile_id !== undefined;
     const needsRightsEdit = updates.rights_profile_id !== undefined;
@@ -870,21 +845,15 @@ export async function bulkUpdateMembers(
       return { success: false, error: "You don't have permission to edit User Rights" };
     }
 
-    // Validate role if provided
-    if (updates.role && !["admin", "employee"].includes(updates.role)) {
-      return { success: false, error: "Invalid role" };
-    }
-
     // Call the RPC via service role client (bypasses RLS, runs in single transaction)
     const admin = createAdminClient();
     const hasRpcChanges =
-      updates.team_id !== undefined || updates.role !== undefined || updates.custom_fields !== undefined;
+      updates.team_id !== undefined || updates.custom_fields !== undefined;
     if (hasRpcChanges) {
       const { error } = await admin.rpc("bulk_update_members", {
         p_member_ids: memberIds,
         p_org_id: membership.organisation_id,
         p_team_id: updates.team_id ?? null,
-        p_role: updates.role ?? null,
         p_custom_fields: updates.custom_fields ?? null,
       });
       if (error) {
@@ -996,7 +965,6 @@ export async function bulkUpdateMembers(
     // Audit log
     const changedParts: string[] = [];
     if (updates.team_id) changedParts.push("team");
-    if (updates.role) changedParts.push("role");
     if (updates.custom_fields) changedParts.push("custom fields");
     if (updates.approval_profile_id !== undefined) changedParts.push("approver profile");
     if (updates.rights_profile_id !== undefined) changedParts.push("User Rights");

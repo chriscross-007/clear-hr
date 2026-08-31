@@ -85,8 +85,9 @@ function AuditRow({ entry, isLast }: { entry: BookingHistoryAudit; isLast: boole
 // ---------------------------------------------------------------------------
 
 function ChatRow({ entry, isLast }: { entry: BookingHistoryChat; isLast: boolean }) {
-  const isAdmin = entry.authorRole === "admin" || entry.authorRole === "owner";
-
+  // CLE-201c-9 — right-align / role badge dropped. Every chat bubble
+  // renders left-aligned with a plain grey background; the author's
+  // name + timestamp header carries who-said-what.
   return (
     <div className="relative flex gap-3">
       {/* Connector column — chat icon */}
@@ -99,36 +100,19 @@ function ChatRow({ entry, isLast }: { entry: BookingHistoryChat; isLast: boolean
 
       {/* Chat bubble */}
       <div className={`min-w-0 flex-1 ${isLast ? "" : "pb-1"}`}>
-        <div className={`flex flex-col ${isAdmin ? "items-end" : "items-start"}`}>
+        <div className="flex flex-col items-start">
           <p className="text-xs text-muted-foreground mb-1">
             {entry.authorName}
-            <span
-              className={`ml-1.5 inline-block rounded px-1 py-0.5 text-[10px] font-medium leading-none ${
-                isAdmin
-                  ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {entry.authorRole === "owner" ? "Owner" : isAdmin ? "Admin" : "Employee"}
-            </span>
             <span className="ml-1.5">{fmtTimestamp(entry.timestamp)}</span>
           </p>
-          <div
-            className={`max-w-[85%] px-3 py-2 text-xs leading-relaxed ${
-              isAdmin
-                ? "rounded-2xl rounded-tr-sm bg-blue-600 text-white"
-                : "rounded-2xl rounded-tl-sm bg-muted"
-            }`}
-          >
+          <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-muted px-3 py-2 text-xs leading-relaxed">
             {entry.body}
             {entry.documents.length > 0 && (
               <div className="mt-1.5 space-y-1">
                 {entry.documents.map((doc) => (
                   <div
                     key={doc.id}
-                    className={`flex items-center gap-1 text-[10px] ${
-                      isAdmin ? "text-white/80" : "text-muted-foreground"
-                    }`}
+                    className="flex items-center gap-1 text-[10px] text-muted-foreground"
                   >
                     <FileText className="h-3 w-3 shrink-0" />
                     <span className="truncate">{doc.fileName}</span>

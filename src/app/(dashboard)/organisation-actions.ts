@@ -53,7 +53,7 @@ export async function updateOrganisation(data: {
   // Verify caller is owner OR an admin with can_edit_organisation permission.
   const { data: membership } = await supabase
     .from("members")
-    .select("id, organisation_id, role, permissions, first_name, last_name")
+    .select("id, organisation_id, first_name, last_name")
     .eq("user_id", user.id)
     .limit(1)
     .single();

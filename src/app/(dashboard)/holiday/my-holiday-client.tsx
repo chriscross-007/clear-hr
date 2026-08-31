@@ -50,7 +50,10 @@ import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 
 interface MyHolidayClientProps {
   memberId: string;
-  role: string;
+  /** CLE-201c-9 — replaces the legacy `role` prop. When true, the
+   *  caller can retroactively cancel their own approved bookings; when
+   *  false they can only withdraw pending requests. */
+  canOverrideOwnBookings: boolean;
   balance: BalanceSummary | null;
   nextBalance: BalanceSummary | null;
   bookings: HolidayBookingRow[];
@@ -112,7 +115,7 @@ const STATUS_CHECKBOX_CLASS: Record<string, string> = {
 
 export function MyHolidayClient({
   memberId,
-  role,
+  canOverrideOwnBookings,
   balance,
   nextBalance,
   bookings,
@@ -147,7 +150,7 @@ export function MyHolidayClient({
   const [editingBooking, setEditingBooking] = useState<HolidayBookingRow | null>(null);
   const [cancellingBooking, setCancellingBooking] = useState<HolidayBookingRow | null>(null);
   const [cancelBookingLoading, setCancelBookingLoading] = useState(false);
-  const isAdmin = role === "owner" || role === "admin";
+  const isAdmin = canOverrideOwnBookings;
   const unit = measurementMode === "hours" ? "hours" : "days";
 
   // -------------------------------------------------------------------------

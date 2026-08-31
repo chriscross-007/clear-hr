@@ -18,7 +18,9 @@ export type BookingHistoryChat = {
   id: string;
   timestamp: string;
   authorName: string;
-  authorRole: "admin" | "owner" | "employee";
+  // CLE-201c-9 — authorRole dropped. The rendered chat bubble no
+  // longer differentiates by role; author name + timestamp header
+  // carries the identity, everything left-aligned.
   body: string;
   documents: { id: string; fileName: string }[];
 };

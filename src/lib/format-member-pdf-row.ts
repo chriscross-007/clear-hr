@@ -1,4 +1,3 @@
-import { capitalize } from "@/lib/label-utils";
 import type { Member, Team } from "@/app/(dashboard)/employees/employee-columns";
 import { formatOptionForDisplay } from "@/components/custom-field-multiselect";
 import type { InputMode } from "@/app/(dashboard)/employees/custom-field-actions";
@@ -28,7 +27,7 @@ export function formatMemberForPdf(
     canViewSensitiveFields?: boolean;
   }
 ): Record<string, string> {
-  const { teams, customFieldDefs, currencySymbol, memberLabel } = opts;
+  const { teams, customFieldDefs, currencySymbol } = opts;
   const canViewSensitiveFields = opts.canViewSensitiveFields ?? true;
   const teamMap = Object.fromEntries(teams.map((t) => [t.id, t.name]));
 
@@ -36,7 +35,8 @@ export function formatMemberForPdf(
     first_name: m.first_name,
     last_name: m.last_name,
     email: m.email,
-    role: m.role === "admin" ? "Admin" : m.role === "owner" ? "Owner" : capitalize(memberLabel),
+    // CLE-201c-10 — legacy `role` field removed from the export;
+    // `profile` (User Rights profile name) is the canonical field.
     profile: m.profile_name ?? "—",
     team: m.team_id ? (teamMap[m.team_id] ?? "—") : "—",
     payroll_number: m.payroll_number ?? "—",

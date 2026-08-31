@@ -42,8 +42,10 @@ const COLUMN_WEIGHTS: Record<string, number> = {
   first_name:     14,
   last_name:      14,
   email:          24,
-  role:           10,
-  profile:        13,
+  // CLE-201c-10 — legacy `role` column removed. Its weight was folded
+  // into `profile` (the User Rights profile name is the canonical
+  // display).
+  profile:        23,
   team:           13,
   payroll_number: 11,
   status:         10,

@@ -280,7 +280,7 @@ export function EmployeesClient({
         first_name: m.first_name,
         last_name: m.last_name,
         email: m.email,
-        role: m.role === "admin" ? "Admin" : m.role === "owner" ? "Owner" : capitalize(memberLabel),
+        // CLE-201c-10 — legacy `role` field removed from the export.
         profile: m.profile_name ?? "—",
         team: m.team_id
           ? (Object.fromEntries(teams.map((t) => [t.id, t.name]))[m.team_id] ?? "—")
@@ -611,7 +611,7 @@ export function EmployeesClient({
           setMembers((prev) =>
             prev.map((m) =>
               m.member_id === updated.member_id
-                ? { ...m, first_name: updated.first_name, last_name: updated.last_name, role: updated.role, team_id: updated.team_id, payroll_number: updated.payroll_number, custom_fields: updated.custom_fields }
+                ? { ...m, first_name: updated.first_name, last_name: updated.last_name, team_id: updated.team_id, payroll_number: updated.payroll_number, custom_fields: updated.custom_fields }
                 : m
             )
           );
@@ -690,7 +690,7 @@ export function EmployeesClient({
               if (!updatedIds.includes(member.member_id)) return member;
               const updated = { ...member };
               if (updates.team_id !== undefined) updated.team_id = updates.team_id;
-              if (updates.role !== undefined) updated.role = updates.role;
+              // CLE-201c-9 — legacy `role` bulk-update dropped.
               if (updates.custom_fields) {
                 updated.custom_fields = {
                   ...member.custom_fields,

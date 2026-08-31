@@ -80,18 +80,9 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
-function roleLabel(role: string): string {
-  if (role === "owner") return "Owner";
-  if (role === "admin") return "Admin";
-  return "Employee";
-}
-
-function roleClass(role: string): string {
-  if (role === "owner" || role === "admin") {
-    return "bg-muted text-muted-foreground";
-  }
-  return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300";
-}
+// CLE-201c-9 — roleLabel / roleClass helpers removed. The chat header
+// shows just the author's name + timestamp; access-level context lives
+// on the member's profile, not inline in every message bubble.
 
 export const BookingConversation = forwardRef<
   BookingConversationHandle,
@@ -186,7 +177,6 @@ export const BookingConversation = forwardRef<
               memberId: row.author_member_id,
               firstName: member?.first_name ?? "Unknown",
               lastName: member?.last_name ?? "",
-              role: member?.role ?? "employee",
             },
             documents: [], // docs arrive separately via the subscription below
           };
@@ -542,9 +532,6 @@ function MessageRow({
         <div className={`flex items-center gap-2 text-xs text-muted-foreground ${isMine ? "justify-end" : "justify-start"}`}>
           <span className="font-medium">
             {message.author.firstName} {message.author.lastName}
-          </span>
-          <span className={`rounded-full px-2 py-0.5 text-[10px] ${roleClass(message.author.role)}`}>
-            {roleLabel(message.author.role)}
           </span>
           <span>{relativeTime(message.createdAt)}</span>
         </div>

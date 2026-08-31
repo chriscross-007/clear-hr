@@ -16,7 +16,7 @@ export default async function TimesheetSettingsPage() {
 
   const { data: caller } = await supabase
     .from("members")
-    .select("organisation_id, role, permissions")
+    .select("organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();

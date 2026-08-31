@@ -61,7 +61,10 @@ type BackupMember = {
   first_name: string;
   last_name: string;
   email: string;
-  role: string;
+  // CLE-201c-9 — legacy `role` field dropped from the export.
+  // Restore treats the value as absent; the imported member is
+  // seeded onto the org's default Employee rights profile.
+  role?: string;
   team_name: string | null;
   payroll_number: string | null;
   known_as: string | null;
@@ -143,7 +146,7 @@ export async function createBackup(
     const { data: members } = await admin
       .from("members")
       .select(
-        "first_name, last_name, email, role, team_id, payroll_number, known_as, avatar_url, custom_fields"
+        "first_name, last_name, email, team_id, payroll_number, known_as, avatar_url, custom_fields"
       )
       .eq("organisation_id", orgId);
 
@@ -153,7 +156,6 @@ export async function createBackup(
       first_name: m.first_name,
       last_name: m.last_name,
       email: m.email,
-      role: m.role,
       team_name: m.team_id ? (teamMap.get(m.team_id) ?? null) : null,
       payroll_number: m.payroll_number ?? null,
       known_as: m.known_as ?? null,
@@ -316,7 +318,7 @@ export async function previewRestore(
     if (mode === "member_data" || mode === "full") {
       const { data: currentMembers } = await admin
         .from("members")
-        .select("email, role")
+        .select("email, is_billing_contact")
         .eq("organisation_id", orgId);
 
       const currentEmailSet = new Set(
@@ -334,7 +336,11 @@ export async function previewRestore(
 
       for (const cm of currentMembers ?? []) {
         if (!backupEmailSet.has(cm.email)) {
-          if (mode === "full" && cm.role !== "owner") {
+          // CLE-201c-9 — owner concept dropped. The one member that
+          // must survive a full restore is the org's billing contact
+          // (partial-unique-one-per-org). Everyone else is
+          // deletable if they're not in the backup.
+          if (mode === "full" && !cm.is_billing_contact) {
             preview.membersToDelete++;
           } else {
             preview.membersUnchanged++;
@@ -475,11 +481,13 @@ export async function restoreBackup(
     // Apply members
     if (mode === "member_data" || mode === "full") {
       if (mode === "full") {
+        // CLE-201c-9 — owner concept dropped. The one member that
+        // must survive a full restore is the billing contact.
         await admin
           .from("members")
           .delete()
           .eq("organisation_id", orgId)
-          .neq("role", "owner");
+          .eq("is_billing_contact", false);
       }
 
       const { data: currentMembers } = await admin
@@ -516,14 +524,15 @@ export async function restoreBackup(
             })
             .eq("id", existing.id);
         } else {
-          const insertRole =
-            bm.role === "owner" ? "employee" : bm.role;
+          // CLE-201c-9 — legacy role write dropped. The insert trigger
+          // (`trigger_assign_default_rights_profile`) seeds the new
+          // row's rights_profile_id from the org's default Employee
+          // profile.
           await admin.from("members").insert({
             organisation_id: orgId,
             email: bm.email,
             first_name: bm.first_name,
             last_name: bm.last_name,
-            role: insertRole,
             team_id: teamId,
             payroll_number: bm.payroll_number,
             known_as: bm.known_as,

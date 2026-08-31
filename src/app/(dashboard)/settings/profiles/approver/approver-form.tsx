@@ -310,7 +310,7 @@ function ApproverPicker(props: {
                     {checked && <Check className="h-3 w-3 text-primary-foreground" />}
                   </span>
                   <span className="flex-1 truncate">{a.name}</span>
-                  <span className="text-xs text-muted-foreground capitalize">{a.role}</span>
+                  <span className="text-xs text-muted-foreground">{a.profileName}</span>
                   {!a.isActive && (
                     <span className="text-xs text-amber-600">pending</span>
                   )}

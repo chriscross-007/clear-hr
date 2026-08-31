@@ -53,7 +53,6 @@ export type Member = {
   first_name: string;
   last_name: string;
   email: string;
-  role: string;
   invited_at: string | null;
   accepted_at: string | null;
   team_id: string | null;
@@ -81,27 +80,9 @@ export type Member = {
 // Badge components
 // ---------------------------------------------------------------------------
 
-export function RoleBadge({ role, memberLabel }: { role: string; memberLabel: string }) {
-  if (role === "owner") {
-    return (
-      <span className="inline-flex items-center rounded-full bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-700 dark:text-blue-400">
-        Owner
-      </span>
-    );
-  }
-  if (role === "admin") {
-    return (
-      <span className="inline-flex items-center rounded-full bg-red-500/10 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400">
-        Admin
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center rounded-full bg-green-500/10 px-2 py-1 text-xs font-medium text-green-700 dark:text-green-400">
-      {capitalize(memberLabel)}
-    </span>
-  );
-}
+// CLE-201c-10 — RoleBadge deleted alongside the Role column. User
+// Rights profile name (rendered plainly in the User Rights column) is
+// the canonical display.
 
 export function InviteStatus({ member }: { member: Member }) {
   if (member.accepted_at) {
@@ -197,13 +178,17 @@ export const DATE_PRESET_LABELS: Record<string, string> = {
 // Column ID constants
 // ---------------------------------------------------------------------------
 
+// CLE-201c-10 — `role` and its display cousin `profile` (which used
+// to source from admin_profiles / employee_profiles) removed from the
+// directory. `user_rights` (rights_profile.name) is the canonical
+// access-level column.
 export const ALL_EMPLOYEE_COLS = [
-  "avatar", "payroll_number", "first_name", "last_name", "email", "role", "user_rights", "profile",
+  "avatar", "payroll_number", "first_name", "last_name", "email", "user_rights",
   "team", "holiday_profile", "approval_profile", "work_pattern", "status", "last_log_in",
 ];
 
 export const DEFAULT_EMPLOYEE_COLS = [
-  "avatar", "payroll_number", "first_name", "last_name", "email", "user_rights", "profile",
+  "avatar", "payroll_number", "first_name", "last_name", "email", "user_rights",
   "team", "holiday_profile", "approval_profile", "work_pattern", "status",
 ];
 
@@ -213,9 +198,7 @@ export const EMPLOYEE_COL_LABELS: Record<string, string> = {
   last_name: "Last Name",
   payroll_number: "Payroll #",
   email: "Email",
-  role: "Role",
   user_rights: "User Rights",
-  profile: "Rights",
   team: "Team",
   holiday_profile: "Holiday Profile",
   approval_profile: "Approver Profile",
@@ -554,27 +537,9 @@ export function buildEmployeeColumns(opts: {
       header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label="Payroll #" />,
       cell: ({ row }) => row.original.payroll_number ?? "—",
     },
-    {
-      id: "role",
-      accessorFn: (row) =>
-        row.role === "admin" ? "Admin" : row.role === "owner" ? "Owner" : capitalize(memberLabel),
-      header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label="Role" />,
-      cell: ({ row }) => <RoleBadge role={row.original.role} memberLabel={memberLabel} />,
-      meta: {
-        filterElement: (column) => (
-          <select
-            className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
-            value={(column.getFilterValue() as string) ?? ""}
-            onChange={(e) => column.setFilterValue(e.target.value || undefined)}
-          >
-            <option value="">All</option>
-            <option value="Owner">Owner</option>
-            <option value="Admin">Admin</option>
-            <option value={capitalize(memberLabel)}>{capitalize(memberLabel)}</option>
-          </select>
-        ),
-      },
-    },
+    // CLE-201c-10 — legacy Role column removed. The "User Rights" column
+    // (immediately below) is the canonical display of a member's access
+    // level, sourced from their assigned rights_profile.name.
     {
       // CLE-198 follow-up — User Rights profile assignment. Sourced
       // from members.rights_profiles.name via the enrichment step in
@@ -596,31 +561,9 @@ export function buildEmployeeColumns(opts: {
         ),
       },
     },
-    {
-      id: "profile",
-      accessorFn: (row) => row.profile_name ?? "—",
-      sortingFn: (rowA, rowB) => {
-        const a = rowA.original.profile_name ?? "";
-        const b = rowB.original.profile_name ?? "";
-        return a.localeCompare(b, undefined, { sensitivity: "base" });
-      },
-      header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label="Rights" />,
-      cell: ({ row }) => row.original.profile_name ?? "—",
-      meta: {
-        filterElement: (column) => (
-          <select
-            className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
-            value={(column.getFilterValue() as string) ?? ""}
-            onChange={(e) => column.setFilterValue(e.target.value || undefined)}
-          >
-            <option value="">All</option>
-            {profileNames.map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-        ),
-      },
-    },
+    // CLE-201c-10 — legacy "Rights" (admin_profiles/employee_profiles
+    // name) column removed. The "User Rights" column above is the
+    // canonical display of a member's access profile.
     {
       id: "team",
       accessorFn: (row) => (row.team_id ? teamMap[row.team_id] ?? "—" : "—"),

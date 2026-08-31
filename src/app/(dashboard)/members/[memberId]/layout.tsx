@@ -31,7 +31,7 @@ export default async function EmployeeMemberLayout({
   if (!resolved || resolved.rights.crossUserAccess === "self") redirect("/dashboard");
   const { data: member } = await supabase
     .from("members")
-    .select("id, first_name, last_name, avatar_url, role, rights_profiles(name)")
+    .select("id, first_name, last_name, avatar_url, rights_profiles(name)")
     .eq("id", memberId)
     .eq("organisation_id", caller.organisation_id)
     .single();
@@ -57,7 +57,6 @@ export default async function EmployeeMemberLayout({
           first_name: member.first_name,
           last_name: member.last_name,
           avatar_url: member.avatar_url ?? null,
-          role: member.role,
           rights_profile_name: profileName,
         }}
       />
