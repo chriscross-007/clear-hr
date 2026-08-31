@@ -77,7 +77,7 @@ export function EmployeeSidebar({
     { href: `${base}/employment`, label: "Employment", icon: Briefcase, tabKey: "employment" },
     { href: `${base}/personal`, label: "Personal", icon: User, tabKey: "personal" },
     { href: `${base}/contacts`, label: "Contacts", icon: Phone, tabKey: "contacts" },
-    { href: `${base}/docs`, label: "Docs", icon: FileText, tabKey: "documents" },
+    { href: `${base}/docs`, label: "Documents", icon: FileText, tabKey: "documents" },
     { href: `${base}/expenses`, label: "Expenses", icon: Receipt, tabKey: "expenses" },
     { href: `${base}/history`, label: "History", icon: History, tabKey: "history" },
   ];

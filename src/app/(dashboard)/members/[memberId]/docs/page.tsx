@@ -5,6 +5,11 @@ import { createClient } from "@/lib/supabase/server";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { DocsClient } from "./docs-client";
 
+// CLE-206 — Per-Member Documents. Reads/writes now go through the
+// `document` table via the action layer in ./document-actions.ts. The
+// legacy `member_documents`-backed viewer this replaced was
+// absence-attachment-only.
+
 export default async function DocsPage({
   params,
 }: {
@@ -12,9 +17,20 @@ export default async function DocsPage({
 }) {
   const { memberId } = await params;
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) redirect("/login");
   const resolved = await getEffectiveRightsForUser(user.id);
   if (!resolved || !resolved.rights.tabs.documents?.view) notFound();
-  return <DocsClient memberId={memberId} />;
+  const canUpdate = resolved.rights.tabs.documents?.update === true;
+
+  return (
+    <DocsClient
+      memberId={memberId}
+      canUpdate={canUpdate}
+      canManageDeleted={resolved.rights.canManageDeletedDocuments}
+      canForceDelete={resolved.rights.canForceDeleteDocuments}
+    />
+  );
 }
