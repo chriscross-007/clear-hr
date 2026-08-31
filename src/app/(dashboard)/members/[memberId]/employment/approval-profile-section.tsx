@@ -4,9 +4,10 @@
 //
 // One selector per absence type that has at least one profile defined for
 // the org. The selector shows the available profiles (incl. the org's
-// default, badged) plus an "Any admin (legacy)" option that clears the
-// per-employee pointer. New employees inherit the org's default profile
-// automatically via the seed_approval_profile_on_member_insert trigger.
+// default, badged). The legacy "Any admin" escape hatch was removed —
+// every member must route through a specific approval profile. New
+// employees inherit the org's default profile automatically via the
+// seed_approval_profile_on_member_insert trigger.
 
 import { useEffect, useState } from "react";
 import { Label } from "@/components/ui/label";
@@ -25,8 +26,6 @@ import {
   setMemberApprovalProfile,
   type ApprovalProfile,
 } from "@/app/(dashboard)/approval-profile-actions";
-
-const LEGACY_VALUE = "__legacy__";
 
 interface Props {
   memberId: string;
@@ -78,19 +77,13 @@ export function ApprovalProfileSection({ memberId, canEdit }: Props) {
   async function handleChange(absenceTypeId: string, value: string) {
     setError(null);
     setSavingTypeId(absenceTypeId);
-    const newProfileId = value === LEGACY_VALUE ? null : value;
-    const result = await setMemberApprovalProfile(memberId, absenceTypeId, newProfileId);
+    const result = await setMemberApprovalProfile(memberId, absenceTypeId, value);
     setSavingTypeId(null);
     if (!result.success) {
       setError(result.error ?? "Failed to save");
       return;
     }
-    setAssignments((prev) => {
-      const next = { ...prev };
-      if (newProfileId === null) delete next[absenceTypeId];
-      else next[absenceTypeId] = newProfileId;
-      return next;
-    });
+    setAssignments((prev) => ({ ...prev, [absenceTypeId]: value }));
   }
 
   if (loading) {
@@ -128,7 +121,11 @@ export function ApprovalProfileSection({ memberId, canEdit }: Props) {
       <div className="space-y-3">
         {renderableTypes.map((t) => {
           const typeProfiles = profilesByType.get(t.id) ?? [];
-          const current = assignments[t.id] ?? LEGACY_VALUE;
+          // Fall back to the type's Default profile (or first) when no
+          // assignment exists — the "Any admin" escape hatch is gone.
+          const defaultProfileId =
+            typeProfiles.find((p) => p.isDefault)?.id ?? typeProfiles[0]?.id ?? "";
+          const current = assignments[t.id] ?? defaultProfileId;
           const isSaving = savingTypeId === t.id;
           return (
             <div key={t.id} className="grid grid-cols-1 sm:grid-cols-[12rem_1fr] gap-2 sm:items-center">
@@ -151,9 +148,6 @@ export function ApprovalProfileSection({ memberId, canEdit }: Props) {
                         )}
                       </SelectItem>
                     ))}
-                    <SelectItem value={LEGACY_VALUE}>
-                      Any admin (no profile)
-                    </SelectItem>
                   </SelectContent>
                 </Select>
                 {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}

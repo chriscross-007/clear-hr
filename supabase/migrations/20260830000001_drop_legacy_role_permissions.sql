@@ -1,33 +1,41 @@
--- CLE-201c-9 + CLE-201c-10 — Drop the legacy identity/authorisation
--- surface that Rights Profiles v2 replaced.
+-- CLE-201c-9 + CLE-201c-10 — legacy identity/authorisation cleanup,
+-- reduced scope. What lands here is only what can drop cleanly
+-- against current prod state.
 --
--- What lands in this migration:
---   • members.role              — dropped
---   • members.permissions       — dropped
+-- Ships in this migration:
 --   • members.admin_profile_id  — dropped
 --   • members.employee_profile_id — dropped
---   • table admin_profiles      — dropped
---   • table employee_profiles   — dropped
---   • function get_user_role    — dropped (no longer read anywhere)
---   • function get_user_permission — dropped
---   • RPC bulk_update_members   — CREATE OR REPLACE with the p_role parameter removed
+--   • RPC bulk_update_members   — CREATE OR REPLACE, p_role parameter removed
 --   • trigger trigger_assign_default_rights_profile — ensured (creates if missing)
 --
+-- Deferred to CLE-201d (blocked on policy rewrites):
+--   • members.role, members.permissions — still read by 22 RLS
+--     policies that source them directly rather than via
+--     get_user_role. Dropping requires either CASCADE (silently
+--     deletes the policies, opens RLS holes) or rewriting each
+--     policy first onto rights_profiles.rank. Doing the rewrites
+--     properly is CLE-201d.
+--   • admin_profiles / employee_profiles tables — blocked by policies
+--     on those tables that still reference members.role.
+--   • get_user_role / get_user_permission functions — still called by
+--     ~30 RLS policies; dropped when CLE-201d rewires them onto the
+--     flag-based helpers (has_rights_flag / get_cross_user_access /
+--     get_effective_tab_update from 20260828000003).
+--
 -- Pre-flight expectations:
---   • App has already stopped writing role/permissions (this commit).
---   • Path B flag-based RLS is live (migration 20260828000003) so no
---     policy still calls get_user_role / get_user_permission.
---   • get_org_members was rewritten in 20260828000002 to source
---     "rank" from rights_profiles.rank rather than members.role.
---   • Every member has a valid rights_profile_id (CLE-196a foundation
---     migration assigned defaults). This migration double-checks.
+--   • App has stopped writing role/permissions (same commit).
+--   • Path B flag-based RLS is live (20260828000003).
+--   • get_user_role + get_user_permission were rewritten to source
+--     from rights_profiles in 20260828000001, so they don't touch
+--     the members.role/permissions columns even though ~30 policies
+--     still call them.
+--   • get_org_members was rewritten in 20260828000002.
+--   • Every member has a valid rights_profile_id (double-checked below).
 
 begin;
 
 -- ---------------------------------------------------------------------------
--- 0. Defensive check — abort if any member is still unassigned. This
---    would otherwise silently strand the row without an access
---    profile, which the resolver treats as read-only-self-only.
+-- 0. Defensive check — abort if any member is still unassigned.
 -- ---------------------------------------------------------------------------
 do $$
 declare
@@ -45,9 +53,9 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- 1. Ensure the assign-default-profile trigger exists on members. The
---    app's addEmployee / backup restore paths rely on the trigger to
---    seed rights_profile_id when the insert doesn't specify one.
+-- 1. Ensure the assign-default-profile trigger exists. The app's
+--    addEmployee / backup restore paths rely on the trigger to seed
+--    rights_profile_id when the insert doesn't specify one.
 -- ---------------------------------------------------------------------------
 create or replace function public.trigger_assign_default_rights_profile()
 returns trigger
@@ -62,9 +70,6 @@ begin
     return new;
   end if;
 
-  -- Prefer the org's seeded Employee default (rank='employee', is_default=true).
-  -- Fall back to any is_default profile if the specific rank isn't
-  -- there (paranoid — every seeded org has all four defaults).
   select id into default_profile_id
   from public.rights_profiles
   where organisation_id = new.organisation_id
@@ -101,7 +106,7 @@ execute function public.trigger_assign_default_rights_profile();
 -- ---------------------------------------------------------------------------
 -- 2. Rewrite bulk_update_members without the p_role parameter. The
 --    old 5-arg signature is dropped explicitly so a stale app call
---    fails loudly rather than silently ignoring the role change.
+--    fails loudly rather than silently ignoring the change.
 -- ---------------------------------------------------------------------------
 drop function if exists public.bulk_update_members(uuid[], uuid, uuid, text, jsonb);
 
@@ -133,35 +138,26 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- 3. Drop legacy DB helpers. Both were rewritten in 20260828000001 to
---    source from rights_profiles.rank; nothing calls them any more
---    (all RLS now uses the flag-based helpers from 20260828000003).
--- ---------------------------------------------------------------------------
-drop function if exists public.get_user_role(uuid);
-drop function if exists public.get_user_permission(uuid, text);
-
--- ---------------------------------------------------------------------------
--- 4. Drop the legacy profile-assignment FKs and pointer columns on
---    members. Safe because no page selects them any more (verified in
---    the app-side cleanup that lands with this migration).
+-- 3. Drop the legacy profile-assignment pointer columns on members.
+--    Safe because no page selects them any more and no RLS policy or
+--    trigger references them.
 -- ---------------------------------------------------------------------------
 alter table public.members
   drop column if exists admin_profile_id,
   drop column if exists employee_profile_id;
 
 -- ---------------------------------------------------------------------------
--- 5. Drop the legacy role + permissions columns on members. Every
---    access decision has been on rights_profile_id for a while; this
---    is the final step to make the schema match the runtime truth.
+-- 4. Bridge the still-existing role + permissions columns so app
+--    inserts that no longer specify them don't fail on NOT NULL.
+--    Once CLE-201d rewrites the 22 policies and drops these columns,
+--    these defaults become moot. Belt-and-braces `drop not null`
+--    covers legacy schemas where the column was NOT NULL without
+--    a default; no-op on schemas that already permit NULL.
 -- ---------------------------------------------------------------------------
 alter table public.members
-  drop column if exists role,
-  drop column if exists permissions;
-
--- ---------------------------------------------------------------------------
--- 6. Drop the vestigial profile tables. Their content has no reader.
--- ---------------------------------------------------------------------------
-drop table if exists public.admin_profiles cascade;
-drop table if exists public.employee_profiles cascade;
+  alter column role drop not null,
+  alter column role set default 'employee',
+  alter column permissions drop not null,
+  alter column permissions set default '{}'::jsonb;
 
 commit;

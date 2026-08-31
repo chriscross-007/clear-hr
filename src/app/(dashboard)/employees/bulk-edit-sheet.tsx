@@ -50,10 +50,10 @@ interface BulkEditSheetProps {
 const NO_CHANGE = "no-change";
 // Sentinel for checkbox fields — distinct from true/false
 const CHECKBOX_NO_CHANGE = "no-change";
-// CLE-186 — bulk Approval Profile picker uses string sentinels because
-// Select can't hold a JS `null`. NO_CHANGE = leave alone, LEGACY = clear
-// the pointer ("Any admin"), any other value = profile id.
-const APPROVAL_LEGACY = "approval-legacy";
+// CLE-186 — bulk Approval Profile picker: NO_CHANGE leaves the value
+// alone; any other value is a profile id. The legacy "Any admin"
+// escape hatch was removed — every member now routes through a
+// specific approval profile (the org's Default is the fallback).
 
 export function BulkEditSheet({
   open,
@@ -93,12 +93,8 @@ export function BulkEditSheet({
     summaryParts.push(`Team → ${teamName}`);
   }
   if (selectedApprovalProfile !== NO_CHANGE) {
-    let label = "Any admin";
-    if (selectedApprovalProfile !== APPROVAL_LEGACY) {
-      const found = holidayApprovalProfiles.find((p) => p.id === selectedApprovalProfile);
-      label = found?.name ?? "Unknown";
-    }
-    summaryParts.push(`Approver Profile → ${label}`);
+    const found = holidayApprovalProfiles.find((p) => p.id === selectedApprovalProfile);
+    summaryParts.push(`Approver Profile → ${found?.name ?? "Unknown"}`);
   }
   if (selectedRightsProfile !== NO_CHANGE) {
     const found = rightsProfiles.find((p) => p.id === selectedRightsProfile);
@@ -154,8 +150,7 @@ export function BulkEditSheet({
       const updates: BulkUpdatePayload = {};
       if (selectedTeamId !== NO_CHANGE) updates.team_id = selectedTeamId;
       if (selectedApprovalProfile !== NO_CHANGE) {
-        updates.approval_profile_id =
-          selectedApprovalProfile === APPROVAL_LEGACY ? null : selectedApprovalProfile;
+        updates.approval_profile_id = selectedApprovalProfile;
       }
       if (selectedRightsProfile !== NO_CHANGE) {
         updates.rights_profile_id = selectedRightsProfile;
@@ -276,7 +271,6 @@ export function BulkEditSheet({
                       {p.name}{p.isDefault ? " (default)" : ""}
                     </SelectItem>
                   ))}
-                  <SelectItem value={APPROVAL_LEGACY}>Any admin (no profile)</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
