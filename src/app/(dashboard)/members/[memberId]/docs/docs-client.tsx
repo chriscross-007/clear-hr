@@ -57,8 +57,12 @@ import {
   softDeleteMemberDocument,
   restoreMemberDocument,
   getSubtypesForUpload,
+  verifyMemberDocument,
+  renewMemberDocument,
 } from "./document-actions";
 import type { MemberDocumentRow, TrashedMemberDocumentRow } from "./document-types";
+import { STATUS_LABEL, STATUS_TONE } from "@/lib/document-status";
+import { ShieldCheck } from "lucide-react";
 
 type UploadSubtype = {
   id: string;
@@ -136,6 +140,7 @@ export function DocsClient({
   const [uploadOpen, setUploadOpen] = useState(false);
   const [editing, setEditing] = useState<MemberDocumentRow | null>(null);
   const [deleting, setDeleting] = useState<MemberDocumentRow | null>(null);
+  const [verifying, setVerifying] = useState<{ mode: "verify" | "renew"; row: MemberDocumentRow } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -228,6 +233,7 @@ export function DocsClient({
           onDownload={handleDownload}
           onEdit={(r) => setEditing(r)}
           onDelete={(r) => setDeleting(r)}
+          onVerify={(r) => setVerifying({ mode: r.verifiedOn ? "renew" : "verify", row: r })}
         />
       )}
 
@@ -272,6 +278,19 @@ export function DocsClient({
           }}
         />
       )}
+
+      {verifying && (
+        <VerifyDialog
+          mode={verifying.mode}
+          row={verifying.row}
+          onClose={() => setVerifying(null)}
+          onSaved={async () => {
+            setVerifying(null);
+            await load();
+            router.refresh();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -287,6 +306,7 @@ function DocList({
   onDownload,
   onEdit,
   onDelete,
+  onVerify,
 }: {
   rows: MemberDocumentRow[];
   canUpdate: boolean;
@@ -294,6 +314,7 @@ function DocList({
   onDownload: (r: MemberDocumentRow) => void;
   onEdit: (r: MemberDocumentRow) => void;
   onDelete: (r: MemberDocumentRow) => void;
+  onVerify: (r: MemberDocumentRow) => void;
 }) {
   if (rows.length === 0) {
     return <p className="text-sm text-muted-foreground py-8 text-center">No documents yet.</p>;
@@ -306,8 +327,10 @@ function DocList({
             <th className="px-4 py-2 font-medium">File</th>
             <th className="px-4 py-2 font-medium hidden sm:table-cell">Type</th>
             <th className="px-4 py-2 font-medium hidden md:table-cell">Subtype</th>
+            <th className="px-4 py-2 font-medium">Status</th>
             <th className="px-4 py-2 font-medium hidden lg:table-cell">Expires</th>
-            <th className="px-4 py-2 font-medium hidden lg:table-cell">Uploaded</th>
+            <th className="px-4 py-2 font-medium hidden lg:table-cell">Next review</th>
+            <th className="px-4 py-2 font-medium hidden xl:table-cell">Uploaded</th>
             <th className="px-4 py-2 font-medium text-right" />
           </tr>
         </thead>
@@ -337,10 +360,20 @@ function DocList({
                   <span className="text-muted-foreground">—</span>
                 )}
               </td>
+              <td className="px-4 py-2">
+                {r.status !== "not_applicable" && (
+                  <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_TONE[r.status].className}`}>
+                    {STATUS_LABEL[r.status]}
+                  </span>
+                )}
+              </td>
               <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">
                 {fmtDate(r.expiresOn)}
               </td>
               <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">
+                {fmtDate(r.nextReviewOn)}
+              </td>
+              <td className="px-4 py-2 text-muted-foreground hidden xl:table-cell">
                 {fmtDateTime(r.uploadedAt)}
               </td>
               <td className="px-4 py-2 text-right">
@@ -348,6 +381,17 @@ function DocList({
                   <Button variant="ghost" size="icon" aria-label="Download" onClick={(e) => { e.stopPropagation(); onDownload(r); }}>
                     <ExternalLink className="h-4 w-4" />
                   </Button>
+                  {canUpdate && r.requiresVerification && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={r.verifiedOn ? "Renew" : "Verify"}
+                      title={r.verifiedOn ? "Renew" : "Verify"}
+                      onClick={(e) => { e.stopPropagation(); onVerify(r); }}
+                    >
+                      <ShieldCheck className={`h-4 w-4 ${r.status === "verified" ? "text-green-600" : "text-amber-600"}`} />
+                    </Button>
+                  )}
                   {canUpdate && (
                     <>
                       <Button variant="ghost" size="icon" aria-label="Edit" onClick={(e) => { e.stopPropagation(); onEdit(r); }}>
@@ -669,6 +713,91 @@ function EditMetadataDialog({
           <Button onClick={handleSave} disabled={pending}>
             {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// -------- Verify / Renew dialog -----------------------------------------
+
+function VerifyDialog({
+  mode,
+  row,
+  onClose,
+  onSaved,
+}: {
+  mode: "verify" | "renew";
+  row: MemberDocumentRow;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [verifiedOn, setVerifiedOn] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [nextReviewOn, setNextReviewOn] = useState<string>(row.nextReviewOn ?? "");
+  const [notes, setNotes] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function handleSave() {
+    setError(null);
+    startTransition(async () => {
+      const fn = mode === "verify" ? verifyMemberDocument : renewMemberDocument;
+      const res = await fn(row.id, {
+        verifiedOn,
+        verificationNotes: notes || null,
+        nextReviewOn: nextReviewOn || null,
+      });
+      if (!res.success) { setError(res.error ?? "Failed to save"); return; }
+      await onSaved();
+    });
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{mode === "verify" ? "Verify document" : "Renew verification"}</DialogTitle>
+          <DialogDescription>
+            {mode === "verify"
+              ? "Record that you've sighted this document. Adds a Verify entry to the audit trail."
+              : "Record a re-sight of the same document. Adds a Renew entry to the audit trail."}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+
+          <div className="space-y-2">
+            <Label>Verified on</Label>
+            <Input type="date" value={verifiedOn} onChange={(e) => setVerifiedOn(e.target.value)} />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Next review on <span className="text-muted-foreground font-normal">(optional)</span></Label>
+            <Input type="date" value={nextReviewOn} onChange={(e) => setNextReviewOn(e.target.value)} />
+            <p className="text-xs text-muted-foreground">
+              Auto-fills from the subtype&apos;s review cadence when left blank.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Notes <span className="text-muted-foreground font-normal">(private, never audited)</span></Label>
+            <Textarea
+              rows={3}
+              maxLength={1000}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Anything else HR should know about this check…"
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={pending}>Cancel</Button>
+          <Button onClick={handleSave} disabled={pending || !verifiedOn}>
+            {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {mode === "verify" ? "Verify" : "Renew"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -19,6 +19,7 @@ import {
   type MemberDocumentRow,
   type TrashedMemberDocumentRow,
 } from "./document-types";
+import { deriveDocumentStatus } from "@/lib/document-status";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -147,7 +148,7 @@ export async function listMemberDocuments(
     const { data, error } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, document_subtype!subtype_id(name), members!uploaded_by(first_name, last_name)",
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", caller.organisationId)
       .eq("owner_scope", "member")
@@ -167,15 +168,23 @@ export async function listMemberDocuments(
       disposal_date: string | null;
       uploaded_by: string | null;
       uploaded_at: string;
-      document_subtype: { name: string } | null;
-      members: { first_name: string; last_name: string } | null;
+      verified_on: string | null;
+      verified_by: string | null;
+      next_review_on: string | null;
+      document_subtype: { name: string; requires_verification: boolean } | { name: string; requires_verification: boolean }[] | null;
+      members: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
     };
     const rows: MemberDocumentRow[] = (data ?? [])
       .map((r) => r as unknown as Row)
       .filter((r) => !queuedIds.has(r.id))
       .filter((r) => r.disposal_date === null || r.disposal_date > today)
       .map((row) => {
-        const uploader = `${row.members?.first_name ?? ""} ${row.members?.last_name ?? ""}`.trim() || "Unknown";
+        const st = row.document_subtype;
+        const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
+        const mem = row.members;
+        const memPair = Array.isArray(mem) ? (mem[0] ?? null) : mem;
+        const uploader = `${memPair?.first_name ?? ""} ${memPair?.last_name ?? ""}`.trim() || "Unknown";
+        const requiresVerification = stObj?.requires_verification === true;
         return {
           id: row.id,
           fileName: row.file_name,
@@ -183,12 +192,22 @@ export async function listMemberDocuments(
           contentType: row.content_type,
           type: row.type,
           subtypeId: row.subtype_id,
-          subtypeName: row.document_subtype?.name ?? null,
+          subtypeName: stObj?.name ?? null,
+          requiresVerification,
+          verifiedOn: row.verified_on,
+          verifiedBy: row.verified_by,
+          nextReviewOn: row.next_review_on,
           expiresOn: row.expires_on,
           retentionClass: row.retention_class,
           disposalDate: row.disposal_date,
           uploadedBy: uploader,
           uploadedAt: row.uploaded_at,
+          status: deriveDocumentStatus({
+            requiresVerification,
+            verifiedOn: row.verified_on,
+            expiresOn: row.expires_on,
+            nextReviewOn: row.next_review_on,
+          }),
         };
       });
     return { success: true, rows };
@@ -230,7 +249,7 @@ export async function listTrashedMemberDocuments(
     const { data: docs, error: docsErr } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, owner_id, document_subtype!subtype_id(name), members!uploaded_by(first_name, last_name)",
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, owner_id, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", caller.organisationId)
       .eq("owner_scope", "member")
@@ -250,8 +269,11 @@ export async function listTrashedMemberDocuments(
       disposal_date: string | null;
       uploaded_by: string | null;
       uploaded_at: string;
+      verified_on: string | null;
+      verified_by: string | null;
+      next_review_on: string | null;
       owner_id: string | null;
-      document_subtype: { name: string } | { name: string }[] | null;
+      document_subtype: { name: string; requires_verification: boolean } | { name: string; requires_verification: boolean }[] | null;
       members: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
     };
     const docsById = new Map<string, DRow>();
@@ -262,7 +284,9 @@ export async function listTrashedMemberDocuments(
         const d = docsById.get(q.document_id as string);
         if (!d) return null;
         const st = d.document_subtype;
-        const stName = Array.isArray(st) ? (st[0]?.name ?? null) : (st?.name ?? null);
+        const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
+        const stName = stObj?.name ?? null;
+        const requiresVerification = stObj?.requires_verification === true;
         const mem = d.members;
         const memPair = Array.isArray(mem) ? (mem[0] ?? null) : mem;
         const uploader = `${memPair?.first_name ?? ""} ${memPair?.last_name ?? ""}`.trim() || "Unknown";
@@ -274,11 +298,21 @@ export async function listTrashedMemberDocuments(
           type: d.type,
           subtypeId: d.subtype_id,
           subtypeName: stName,
+          requiresVerification,
+          verifiedOn: d.verified_on,
+          verifiedBy: d.verified_by,
+          nextReviewOn: d.next_review_on,
           expiresOn: d.expires_on,
           retentionClass: d.retention_class,
           disposalDate: d.disposal_date,
           uploadedBy: uploader,
           uploadedAt: d.uploaded_at,
+          status: deriveDocumentStatus({
+            requiresVerification,
+            verifiedOn: d.verified_on,
+            expiresOn: d.expires_on,
+            nextReviewOn: d.next_review_on,
+          }),
           queuedAt: q.queued_at as string,
           queuedBy: (q.queued_by as string | null) ?? null,
           forceDeleteReason: (q.force_delete_reason as string | null) ?? null,
@@ -739,6 +773,121 @@ export async function restoreMemberDocument(
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Verify + Renew
+// ---------------------------------------------------------------------------
+//
+// Both write to the same set of columns on the document row; the
+// action names differ so the audit trail shows first-sight vs
+// re-sight cadence.
+
+async function verifyOrRenew(
+  actionName: "document.verified" | "document.renewed",
+  documentId: string,
+  input: { verifiedOn?: string | null; verificationNotes?: string | null; nextReviewOn?: string | null } = {},
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const admin = getAdmin();
+    const { data: doc } = await admin
+      .from("document")
+      .select("id, organisation_id, owner_scope, owner_id, type, expires_on, file_name, document_subtype!subtype_id(name, requires_verification, review_period_months)")
+      .eq("id", documentId)
+      .single();
+    if (!doc || doc.organisation_id !== caller.organisationId || doc.owner_scope !== "member") {
+      return { success: false, error: "Document not found" };
+    }
+    const st = doc.document_subtype as unknown as { name: string; requires_verification: boolean; review_period_months: number | null } | { name: string; requires_verification: boolean; review_period_months: number | null }[] | null;
+    const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
+    if (!stObj?.requires_verification) {
+      return { success: false, error: "This kind of document doesn't need verification." };
+    }
+    const target = await getTarget(admin, doc.owner_id as string, caller.organisationId);
+    if (!target) return { success: false, error: "Document not found" };
+    if (!caller.canUpdateTarget({ memberId: target.id, teamId: target.team_id })) {
+      return { success: false, error: "You don't have permission to change this document." };
+    }
+
+    // Refuse if the disposal_queue has this doc (F20).
+    const { data: queued } = await admin
+      .from("disposal_queue")
+      .select("id")
+      .eq("document_id", documentId)
+      .maybeSingle();
+    if (queued) {
+      return { success: false, error: "This document has been deleted. Restore it or upload a replacement first." };
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const verifiedOn = input.verifiedOn ?? today;
+    if (verifiedOn > today) {
+      return { success: false, error: "The verification date can't be in the future." };
+    }
+    if (doc.expires_on !== null && (doc.expires_on as string) < today) {
+      return { success: false, error: "This document has already expired. Upload a current one first." };
+    }
+    let nextReviewOn: string | null = input.nextReviewOn ?? null;
+    if (nextReviewOn === null && stObj.review_period_months !== null) {
+      const d = new Date(verifiedOn + "T00:00:00Z");
+      d.setUTCMonth(d.getUTCMonth() + Number(stObj.review_period_months));
+      nextReviewOn = d.toISOString().slice(0, 10);
+    }
+    if (nextReviewOn !== null && nextReviewOn < today) {
+      return { success: false, error: "The next-review date can't be in the past." };
+    }
+
+    const { error } = await admin
+      .from("document")
+      .update({
+        verified_on: verifiedOn,
+        verified_by: caller.memberId,
+        verification_notes: input.verificationNotes ?? null,
+        next_review_on: nextReviewOn,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", documentId)
+      .eq("organisation_id", caller.organisationId);
+    if (error) return { success: false, error: error.message };
+
+    await logAudit({
+      organisationId: caller.organisationId,
+      actorId: caller.memberId,
+      actorName: await callerName(admin, caller.memberId),
+      action: actionName,
+      targetType: "member_document",
+      targetId: documentId,
+      targetLabel: (doc.file_name as string) ?? "",
+      metadata: {
+        member: memberDisplay(target),
+        type_subtype: typeSubtypeLabel(doc.type as string, stObj.name),
+        verified_on: verifiedOn,
+        next_review_on: nextReviewOn,
+        // verification_notes intentionally omitted — never in audit.
+      },
+    });
+
+    revalidatePath(`/members/${doc.owner_id}/docs`);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+export async function verifyMemberDocument(
+  documentId: string,
+  input: { verifiedOn?: string | null; verificationNotes?: string | null; nextReviewOn?: string | null } = {},
+): Promise<{ success: boolean; error?: string }> {
+  return verifyOrRenew("document.verified", documentId, input);
+}
+
+export async function renewMemberDocument(
+  documentId: string,
+  input: { verifiedOn?: string | null; verificationNotes?: string | null; nextReviewOn?: string | null } = {},
+): Promise<{ success: boolean; error?: string }> {
+  return verifyOrRenew("document.renewed", documentId, input);
 }
 
 // ---------------------------------------------------------------------------

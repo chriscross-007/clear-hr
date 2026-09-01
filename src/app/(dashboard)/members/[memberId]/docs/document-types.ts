@@ -1,5 +1,7 @@
 // CLE-206 — Types shared between the server actions and the client.
 
+import type { DocumentStatus } from "@/lib/document-status";
+
 export interface MemberDocumentRow {
   id: string;
   fileName: string;
@@ -8,11 +10,21 @@ export interface MemberDocumentRow {
   type: string;
   subtypeId: string | null;
   subtypeName: string | null;
+  /** Whether the subtype requires HR to sign off. Drives status +
+   *  whether the Verify/Renew UI shows on this row. */
+  requiresVerification: boolean;
+  /** ISO date the doc was verified. NULL when subtype requires
+   *  verification but nobody's signed off yet. */
+  verifiedOn: string | null;
+  verifiedBy: string | null;
+  nextReviewOn: string | null;
   expiresOn: string | null;
   retentionClass: string;
   disposalDate: string | null;
   uploadedBy: string;
   uploadedAt: string;
+  /** Derived per-row status. Consumers should not recompute. */
+  status: DocumentStatus;
 }
 
 export interface TrashedMemberDocumentRow extends MemberDocumentRow {
