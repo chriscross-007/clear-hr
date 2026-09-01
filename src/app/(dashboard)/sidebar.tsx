@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Users, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, CalendarDays, Clock, Palmtree, ClipboardCheck, ShieldCheck, LayoutDashboard } from "lucide-react";
+import { Users, CreditCard, ClipboardList, BarChart2, ChevronDown, Star, BookOpen, FolderOpen, Calendar, CalendarDays, Clock, Palmtree, ClipboardCheck, ShieldCheck, LayoutDashboard, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { hasPlanFeature } from "@/lib/plan-config";
@@ -263,6 +263,13 @@ export function Sidebar({
           <Link href="/health-and-safety" className={linkClass("/health-and-safety")}>
             <ShieldCheck className="h-4 w-4 shrink-0" />
             Health &amp; Safety
+          </Link>
+          {/* CLE-207 — Documents compliance dashboard. Everyone with
+              documents.view sees at least their own docs; scope
+              (self/team/all) narrows the rows server-side. */}
+          <Link href="/documents/compliance" className={linkClass("/documents/compliance")}>
+            <FileText className="h-4 w-4 shrink-0" />
+            Documents
           </Link>
           {/* Settings has moved to the cog icon in the top bar. See
               (dashboard)/layout.tsx — gated on canEditOrgSettings. */}

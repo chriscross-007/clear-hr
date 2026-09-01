@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getEffectiveRightsForUser, resolveTab } from "@/lib/rights-resolver";
 import { EmploymentForm } from "./employment-form";
 import { BookingsCard } from "./bookings-card";
+import { RtwNotRequiredSection } from "./rtw-not-required-section";
 import { getAssignableProfiles } from "@/app/(dashboard)/settings/rights-profiles/actions";
 import type { WorkProfileAssignmentRow } from "./work-profile-section";
 import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
@@ -48,7 +49,7 @@ export default async function EmploymentPage({
   // Target member
   const { data: member } = await supabase
     .from("members")
-    .select("id, first_name, last_name, email, team_id, payroll_number, avatar_url, invited_at, accepted_at, user_id, custom_fields, start_date, updated_at, rights_profile_id")
+    .select("id, first_name, last_name, email, team_id, payroll_number, avatar_url, invited_at, accepted_at, user_id, custom_fields, start_date, updated_at, rights_profile_id, rtw_not_required, rtw_not_required_reason")
     .eq("id", memberId)
     .eq("organisation_id", caller.organisation_id)
     .single();
@@ -132,6 +133,18 @@ export default async function EmploymentPage({
         canEditSensitiveFields={canEditSensitiveFields}
         rightsProfiles={rightsProfilesList.map((p) => ({ id: p.id, name: p.name }))}
         canEditRightsProfiles={rights.canEditRightsProfiles}
+      />
+
+      {/* CLE-207 — Right-to-Work opt-out toggle. Feeds the compliance
+          dashboard filter. Owned by Employee Records; edit gated by
+          employment.update. */}
+      <RtwNotRequiredSection
+        memberId={member.id}
+        initial={{
+          rtwNotRequired: (member as { rtw_not_required?: boolean }).rtw_not_required ?? false,
+          reason: (member as { rtw_not_required_reason?: string | null }).rtw_not_required_reason ?? null,
+        }}
+        canEdit={canEdit}
       />
 
       {/* CLE-188 — Member Bookings utility. Admin/owner with manage-members
