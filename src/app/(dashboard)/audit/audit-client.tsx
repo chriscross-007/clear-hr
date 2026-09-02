@@ -52,6 +52,7 @@ const ACTION_LABELS: Record<string, string> = {
   "document_subtype.updated": "Document subtype updated",
   "document_subtype.deleted": "Document subtype deleted",
   "document.uploaded": "Document uploaded",
+  "document.viewed": "Document viewed",
   "document.downloaded": "Document downloaded",
   "document.metadata_updated": "Document metadata updated",
   "document.deleted": "Document moved to Trash",
@@ -97,6 +98,7 @@ const FILTER_ACTIONS = [
   "document_subtype.updated",
   "document_subtype.deleted",
   "document.uploaded",
+  "document.viewed",
   "document.downloaded",
   "document.metadata_updated",
   "document.deleted",
@@ -194,7 +196,6 @@ const FIELD_LABELS: Record<string, string> = {
   member: "Member",
   type_subtype: "Type / Subtype",
   file_size: "File size",
-  mode: "Mode",
   force_delete_reason: "Force-delete reason",
   subtype_id: "Subtype",
   expires_on: "Expires on",
@@ -260,10 +261,19 @@ function formatValue(value: unknown): string {
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (Array.isArray(value)) return value.length === 0 ? "None" : value.join(", ");
   if (isRightsObject(value)) return formatRightsObject(value);
+  // ISO datetime string → "02 Sep 2026, 14:30". See CLAUDE.md
+  // → Date/time formatting.
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) {
     return new Date(value).toLocaleString("en-GB", {
       day: "2-digit", month: "short", year: "numeric",
       hour: "2-digit", minute: "2-digit", timeZone: "UTC",
+    });
+  }
+  // Date-only string (YYYY-MM-DD) → "02 Sep 2026". UTC-anchored so
+  // the day doesn't drift for UK viewers.
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return new Date(value + "T00:00:00Z").toLocaleDateString("en-GB", {
+      day: "2-digit", month: "short", year: "numeric", timeZone: "UTC",
     });
   }
   return String(value);

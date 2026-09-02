@@ -92,11 +92,16 @@ export function SettingsSidebar({
       visible: canManageTeams,
     },
     {
-      // CLE-205 — Documents Tier 1. Subtypes manager sits under
-      // Documents; more surfaces (Org Documents CRUD, retention
-      // scheduling) will hang off the same route later.
+      // CLE-205 — Document Subtypes manager.
       href: "/settings/documents",
-      label: "Documents",
+      label: "Document Subtypes",
+      icon: FileText,
+      visible: canEditOrgSettings,
+    },
+    {
+      // CLE-208 — Organisation Documents admin CRUD.
+      href: "/settings/documents/organisation",
+      label: "Org Documents",
       icon: FileText,
       visible: canEditOrgSettings,
     },

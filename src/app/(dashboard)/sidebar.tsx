@@ -269,7 +269,13 @@ export function Sidebar({
               (self/team/all) narrows the rows server-side. */}
           <Link href="/documents/compliance" className={linkClass("/documents/compliance")}>
             <FileText className="h-4 w-4 shrink-0" />
-            Documents
+            Doc Compliance
+          </Link>
+          {/* CLE-208 — Org-scoped read view. Gated on
+              can_view_organisation_documents. */}
+          <Link href="/documents/organisation" className={linkClass("/documents/organisation")}>
+            <FileText className="h-4 w-4 shrink-0" />
+            Org Documents
           </Link>
           {/* Settings has moved to the cog icon in the top bar. See
               (dashboard)/layout.tsx — gated on canEditOrgSettings. */}

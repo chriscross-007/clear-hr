@@ -377,14 +377,15 @@ export async function getMemberDocumentSignedUrl(
       organisationId: caller.organisationId,
       actorId: caller.memberId,
       actorName: await callerName(admin, caller.memberId),
-      action: "document.downloaded",
+      // CLE-208 follow-up — inline access = viewed, download = downloaded.
+      // Two distinct events read more naturally in the audit trail.
+      action: mode === "download" ? "document.downloaded" : "document.viewed",
       targetType: "member_document",
       targetId: doc.id,
       targetLabel: doc.file_name,
       metadata: {
         member: memberDisplay(target),
         type_subtype: typeSubtypeLabel(doc.type as string, subtypeNameStr),
-        mode,
       },
     });
 
