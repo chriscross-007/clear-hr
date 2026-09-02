@@ -17,6 +17,7 @@ import {
   LayoutGrid,
   Database,
   FileText,
+  HardDrive,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +53,7 @@ export function SettingsTabs({
     { href: "/settings/groups",         label: "Groups",             icon: LayoutGrid,    visible: canManageTeams },
     { href: "/settings/documents",      label: "Document Subtypes",  icon: FileText,      visible: canEditOrgSettings },
     { href: "/settings/backups",        label: "Backups",            icon: Database,      visible: canEditOrgSettings || canManageBilling },
+    { href: "/settings/usage",          label: "Usage",              icon: HardDrive,     visible: canEditOrgSettings },
   ];
   const visible = items.filter((i) => i.visible);
 
