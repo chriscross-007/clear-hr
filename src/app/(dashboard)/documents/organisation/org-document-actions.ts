@@ -253,6 +253,8 @@ export async function uploadOrgDocument(
     if (subtype.expiry_required && !expiresOn) {
       return { success: false, error: "This document type needs an expiry date." };
     }
+    // Past-expiry check intentionally omitted to allow the
+    // retention/status sweeps to be tested end-to-end.
 
     const uuid = crypto.randomUUID();
     const ext = file.name.includes(".") ? file.name.substring(file.name.lastIndexOf(".")) : "";

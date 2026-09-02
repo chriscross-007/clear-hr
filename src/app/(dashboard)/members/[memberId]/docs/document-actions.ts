@@ -447,12 +447,8 @@ export async function uploadMemberDocument(
     if (subtype.expiry_required && !expiresOn) {
       return { success: false, error: "This document type needs an expiry date." };
     }
-    if (expiresOn) {
-      const today = new Date().toISOString().slice(0, 10);
-      if (expiresOn < today) {
-        return { success: false, error: "The expiry date can't be in the past." };
-      }
-    }
+    // Past-expiry check removed to allow the retention/status sweeps
+    // to be exercised end-to-end during testing.
     // Self-upload check.
     const isSelf = caller.isSelf(memberId);
     if (isSelf && !subtype.employee_can_upload) {
@@ -577,12 +573,8 @@ export async function updateMemberDocumentMetadata(
       }
     }
     if (patch.expiresOn !== undefined) {
-      if (patch.expiresOn !== null) {
-        const today = new Date().toISOString().slice(0, 10);
-        if (patch.expiresOn < today) {
-          return { success: false, error: "The expiry date can't be in the past." };
-        }
-      }
+      // Past-expiry check removed to allow the retention/status
+      // sweeps to be exercised end-to-end during testing.
       updates.expires_on = patch.expiresOn;
     }
 
@@ -714,6 +706,40 @@ export async function softDeleteMemberDocument(
 // ---------------------------------------------------------------------------
 // Restore from trash
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Testing helper — backdate the queued_at on a disposal_queue row so
+// the nightly purge sweep can be exercised without waiting 30 days.
+// Gated on can_edit_org_settings.
+// ---------------------------------------------------------------------------
+
+export async function backdateDisposalQueue(
+  documentId: string,
+  newQueuedAt: string,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Not authenticated" };
+    const resolved = await getEffectiveRightsForUser(user.id);
+    if (!resolved?.rights.canEditOrgSettings) {
+      return { success: false, error: "Forbidden" };
+    }
+    const admin = getAdmin();
+    const iso = new Date(newQueuedAt).toISOString();
+    const { error } = await admin
+      .from("disposal_queue")
+      .update({ queued_at: iso })
+      .eq("document_id", documentId)
+      .eq("organisation_id", caller.organisationId);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
 
 export async function restoreMemberDocument(
   documentId: string,

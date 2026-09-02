@@ -59,6 +59,7 @@ import {
   getSubtypesForUpload,
   verifyMemberDocument,
   renewMemberDocument,
+  backdateDisposalQueue,
 } from "./document-actions";
 import type { MemberDocumentRow, TrashedMemberDocumentRow } from "./document-types";
 import { STATUS_LABEL, STATUS_TONE } from "@/lib/document-status";
@@ -221,6 +222,12 @@ export function DocsClient({
           onRestore={async (id) => {
             const res = await restoreMemberDocument(id);
             if (!res.success) { setError(res.error ?? "Failed to restore"); return; }
+            await load();
+            router.refresh();
+          }}
+          onBackdate={async (id, newQueuedAt) => {
+            const res = await backdateDisposalQueue(id, newQueuedAt);
+            if (!res.success) { setError(res.error ?? "Failed to backdate"); return; }
             await load();
             router.refresh();
           }}
@@ -418,12 +425,15 @@ function DocList({
 function TrashList({
   rows,
   onRestore,
+  onBackdate,
   onView,
 }: {
   rows: TrashedMemberDocumentRow[];
   onRestore: (id: string) => Promise<void>;
+  onBackdate: (id: string, newQueuedAt: string) => Promise<void>;
   onView: (r: TrashedMemberDocumentRow) => void;
 }) {
+  const [backdating, setBackdating] = useState<TrashedMemberDocumentRow | null>(null);
   if (rows.length === 0) {
     return <p className="text-sm text-muted-foreground py-8 text-center">Trash is empty.</p>;
   }
@@ -456,16 +466,81 @@ function TrashList({
                 {r.forceDeleteReason ?? "—"}
               </td>
               <td className="px-4 py-2 text-right">
-                <Button variant="outline" size="sm" onClick={() => onRestore(r.id)}>
-                  <Undo2 className="mr-1.5 h-3.5 w-3.5" />
-                  Restore
-                </Button>
+                <div className="flex items-center justify-end gap-1">
+                  <Button variant="ghost" size="sm" title="Backdate the queued date (testing helper for the nightly purge sweep)" onClick={() => setBackdating(r)}>
+                    Backdate
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => onRestore(r.id)}>
+                    <Undo2 className="mr-1.5 h-3.5 w-3.5" />
+                    Restore
+                  </Button>
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {backdating && (
+        <BackdateDialog
+          row={backdating}
+          onClose={() => setBackdating(null)}
+          onSaved={async (newQueuedAt) => {
+            const id = backdating.id;
+            setBackdating(null);
+            await onBackdate(id, newQueuedAt);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function BackdateDialog({
+  row,
+  onClose,
+  onSaved,
+}: {
+  row: TrashedMemberDocumentRow;
+  onClose: () => void;
+  onSaved: (newQueuedAt: string) => Promise<void>;
+}) {
+  const [when, setWhen] = useState<string>(() => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - 31);
+    return d.toISOString().slice(0, 10);
+  });
+  const [pending, startTransition] = useTransition();
+
+  function handleSave() {
+    startTransition(async () => {
+      await onSaved(when);
+    });
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Backdate queue entry</DialogTitle>
+          <DialogDescription>
+            Testing helper. Move the queued date on <span className="font-medium">{row.fileName}</span> so
+            the nightly purge sweep can pick it up without waiting 30 days.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label>New queued date</Label>
+          <Input type="date" value={when} onChange={(e) => setWhen(e.target.value)} />
+          <p className="text-xs text-muted-foreground">Pre-filled to 31 days ago so the sweep will purge on next run.</p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={pending}>Cancel</Button>
+          <Button onClick={handleSave} disabled={pending || !when}>
+            {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Apply
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
