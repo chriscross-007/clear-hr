@@ -83,7 +83,7 @@ type PayloadFlagKey =
   | "canManageTeams" | "canEditOrgSettings" | "canEditRightsProfiles"
   | "canManageBilling" | "canViewAuditLogs"
   | "canViewSensitiveFields" | "canEditSensitiveFields"
-  | "canViewOrganisationDocuments" | "canManageDeletedDocuments"
+  | "canViewOrganisationDocuments" | "canManageOrganisationDocuments"
   | "canForceDeleteDocuments";
 
 interface SwitchDef { key: PayloadFlagKey; label: string }
@@ -177,9 +177,9 @@ const GROUPS: { name: string; items: SwitchDef[] }[] = [
     // live in the tab matrix.
     name: "Documents",
     items: [
-      { key: "canViewOrganisationDocuments", label: "View organisation documents" },
-      { key: "canManageDeletedDocuments", label: "Manage deleted documents (Trash + Restore)" },
-      { key: "canForceDeleteDocuments", label: "Force-delete documents (bypass retention block)" },
+      { key: "canViewOrganisationDocuments", label: "View Organisation Documents" },
+      { key: "canManageOrganisationDocuments", label: "Manage Organisation Documents (full CRUD + Trash restore)" },
+      { key: "canForceDeleteDocuments", label: "Force Delete all Documents (bypass retention block)" },
     ],
   },
 ];
@@ -206,7 +206,7 @@ function dtoToPayload(dto: RightsProfileDto): RightsProfileWritePayload {
     canViewSensitiveFields: dto.canViewSensitiveFields,
     canEditSensitiveFields: dto.canEditSensitiveFields,
     canViewOrganisationDocuments: dto.canViewOrganisationDocuments,
-    canManageDeletedDocuments: dto.canManageDeletedDocuments,
+    canManageOrganisationDocuments: dto.canManageOrganisationDocuments,
     canForceDeleteDocuments: dto.canForceDeleteDocuments,
     tabs: dto.tabs,
   };

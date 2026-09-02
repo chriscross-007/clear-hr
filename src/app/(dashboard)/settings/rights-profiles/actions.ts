@@ -46,7 +46,7 @@ export interface RightsProfileDto {
 
   // CLE-205 — Documents Tier 1 flags.
   canViewOrganisationDocuments: boolean;
-  canManageDeletedDocuments: boolean;
+  canManageOrganisationDocuments: boolean;
   canForceDeleteDocuments: boolean;
 
   tabs: Record<TabKey, TabAccess>;
@@ -82,7 +82,7 @@ export interface RightsProfileWritePayload {
 
   // CLE-205 — Documents Tier 1 flags.
   canViewOrganisationDocuments: boolean;
-  canManageDeletedDocuments: boolean;
+  canManageOrganisationDocuments: boolean;
   canForceDeleteDocuments: boolean;
 
   tabs: Record<TabKey, TabAccess>;
@@ -153,7 +153,7 @@ interface DbRow {
   can_edit_sensitive_fields: boolean;
   // CLE-205 — Documents Tier 1
   can_view_organisation_documents: boolean;
-  can_manage_deleted_documents: boolean;
+  can_manage_organisation_documents: boolean;
   can_force_delete_documents: boolean;
   tab_matrix: Record<string, { view?: boolean; update?: boolean }>;
 }
@@ -190,7 +190,7 @@ function rowToDto(row: DbRow, memberCount: number): RightsProfileDto {
     canViewSensitiveFields: row.can_view_sensitive_fields,
     canEditSensitiveFields: row.can_edit_sensitive_fields,
     canViewOrganisationDocuments: row.can_view_organisation_documents,
-    canManageDeletedDocuments: row.can_manage_deleted_documents,
+    canManageOrganisationDocuments: row.can_manage_organisation_documents,
     canForceDeleteDocuments: row.can_force_delete_documents,
     tabs: normaliseTabs(row.tab_matrix ?? {}),
     memberCount,
@@ -205,7 +205,7 @@ const SELECT_COLUMNS =
   "can_manage_teams, can_edit_org_settings, can_edit_rights_profiles, " +
   "can_manage_billing, can_view_audit_logs, " +
   "can_view_sensitive_fields, can_edit_sensitive_fields, " +
-  "can_view_organisation_documents, can_manage_deleted_documents, " +
+  "can_view_organisation_documents, can_manage_organisation_documents, " +
   "can_force_delete_documents, tab_matrix";
 
 /**
@@ -274,7 +274,7 @@ function payloadToRow(p: RightsProfileWritePayload): Record<string, unknown> {
     can_view_sensitive_fields: p.canViewSensitiveFields,
     can_edit_sensitive_fields: p.canEditSensitiveFields,
     can_view_organisation_documents: p.canViewOrganisationDocuments,
-    can_manage_deleted_documents: p.canManageDeletedDocuments,
+    can_manage_organisation_documents: p.canManageOrganisationDocuments,
     can_force_delete_documents: p.canForceDeleteDocuments,
     tab_matrix: p.tabs,
   };
@@ -435,7 +435,7 @@ export async function updateRightsProfile(
       can_view_sensitive_fields: b.can_view_sensitive_fields,
       can_edit_sensitive_fields: b.can_edit_sensitive_fields,
       can_view_organisation_documents: b.can_view_organisation_documents,
-      can_manage_deleted_documents: b.can_manage_deleted_documents,
+      can_manage_organisation_documents: b.can_manage_organisation_documents,
       can_force_delete_documents: b.can_force_delete_documents,
       tab_matrix: b.tab_matrix,
     };
@@ -601,7 +601,7 @@ export async function copyRightsProfile(
     canViewSensitiveFields: source.can_view_sensitive_fields,
     canEditSensitiveFields: source.can_edit_sensitive_fields,
     canViewOrganisationDocuments: source.can_view_organisation_documents,
-    canManageDeletedDocuments: source.can_manage_deleted_documents,
+    canManageOrganisationDocuments: source.can_manage_organisation_documents,
     canForceDeleteDocuments: source.can_force_delete_documents,
     tabs: normaliseTabs(source.tab_matrix),
   };
@@ -758,7 +758,7 @@ export async function getBlankProfilePayload(rank: Rank): Promise<RightsProfileW
     canViewSensitiveFields: false,
     canEditSensitiveFields: false,
     canViewOrganisationDocuments: false,
-    canManageDeletedDocuments: false,
+    canManageOrganisationDocuments: false,
     canForceDeleteDocuments: false,
     tabs: emptyTabMatrix(),
   };

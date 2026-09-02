@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { getDocumentSubtypes } from "./subtype-actions";
 import { DocumentSubtypesClient } from "./document-subtypes-client";
+import { RunSweepButton } from "./run-sweep-button";
 
 // CLE-205 — /settings/documents. Landing surface for Document
 // Subtypes admin. More sub-routes (Org Documents CRUD, retention
@@ -33,6 +34,7 @@ export default async function DocumentsSettingsPage() {
         </p>
       </div>
       <DocumentSubtypesClient initialSubtypes={subtypes} />
+      <RunSweepButton />
     </div>
   );
 }

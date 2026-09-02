@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/holiday-reminder",
       "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/documents-sweep",
+      "schedule": "0 2 * * *"
     }
   ]
 }

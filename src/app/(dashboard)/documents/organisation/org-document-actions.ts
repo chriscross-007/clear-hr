@@ -69,7 +69,7 @@ async function ctx(): Promise<Ctx | null> {
   return {
     memberId: resolved.ctx.memberId,
     organisationId: resolved.ctx.organisationId,
-    canEdit: resolved.rights.canEditOrgSettings,
+    canEdit: resolved.rights.canManageOrganisationDocuments,
     canView: resolved.rights.canViewOrganisationDocuments,
   };
 }

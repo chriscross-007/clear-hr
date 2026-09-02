@@ -29,7 +29,9 @@ export default async function DocsPage({
     <DocsClient
       memberId={memberId}
       canUpdate={canUpdate}
-      canManageDeleted={resolved.rights.canManageDeletedDocuments}
+      // Per-member Trash follows documents.update — anyone who can
+      // delete a member's docs can also restore them.
+      canManageDeleted={canUpdate}
       canForceDelete={resolved.rights.canForceDeleteDocuments}
     />
   );

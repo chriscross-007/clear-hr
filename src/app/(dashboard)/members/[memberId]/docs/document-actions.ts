@@ -5,7 +5,7 @@
 // table enforces tenant scope + cross-user access; each action layers
 // its own explicit permission check on top (target-scope tab-matrix
 // documents.update for writes; can_force_delete_documents for the
-// retention override; can_manage_deleted_documents for trash).
+// retention override; documents.update for per-member trash).
 
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
@@ -72,7 +72,11 @@ async function resolveCaller(): Promise<CallerCtx | null> {
           && rights.tabs.documents?.update === true;
       return false;
     },
-    canManageDeleted: rights.canManageDeletedDocuments,
+    // Per-member Trash is gated by documents.update on the target
+    // scope — anyone with write access can delete + restore. Cheapest
+    // proxy for the check is the caller's own documents.update, which
+    // downstream trash actions still cross-check per target member.
+    canManageDeleted: rights.tabs.documents?.update === true,
     canForceDelete: rights.canForceDeleteDocuments,
   };
 }

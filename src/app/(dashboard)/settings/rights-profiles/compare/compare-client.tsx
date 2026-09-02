@@ -60,8 +60,8 @@ const ROWS: Row[] = [
   { key: "canEditSensitiveFields", label: "Edit sensitive fields", category: "Sensitive data", readValue: (p) => p.canEditSensitiveFields },
 
   { key: "canViewOrganisationDocuments", label: "View organisation documents", category: "Documents", readValue: (p) => p.canViewOrganisationDocuments },
-  { key: "canManageDeletedDocuments", label: "Manage deleted documents", category: "Documents", readValue: (p) => p.canManageDeletedDocuments },
-  { key: "canForceDeleteDocuments", label: "Force-delete documents", category: "Documents", readValue: (p) => p.canForceDeleteDocuments },
+  { key: "canManageOrganisationDocuments", label: "Manage Organisation Documents", category: "Documents", readValue: (p) => p.canManageOrganisationDocuments },
+  { key: "canForceDeleteDocuments", label: "Force Delete all Documents", category: "Documents", readValue: (p) => p.canForceDeleteDocuments },
 
   ...TAB_KEYS.flatMap((t): Row[] => [
     { key: `tab_${t}_view`, label: `${TAB_LABEL[t]} — view`, category: "Tabs", readValue: (p) => p.tabs[t]?.view === true },

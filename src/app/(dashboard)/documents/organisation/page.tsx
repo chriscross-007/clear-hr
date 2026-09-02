@@ -4,11 +4,14 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { listOrgDocuments } from "./org-document-actions";
-import { OrganisationDocsClient } from "@/app/(dashboard)/settings/documents/organisation/organisation-docs-client";
+import { OrganisationDocsClient } from "./organisation-docs-client";
 
-// CLE-208 — Employee-visible Organisation Documents read view.
-// Reuses the admin client with `canEdit={false}` — same list + view
-// / download UI, no upload / edit / delete affordances.
+// CLE-209 follow-up — Organisation Documents lives on the main left
+// menu. Anyone with `can_view_organisation_documents` reads the list;
+// anyone with `can_manage_organisation_documents` gets the full CRUD
+// affordance (upload, edit, delete, restore). Settings sidebar no
+// longer carries an Org Documents entry — this page is the only
+// surface.
 
 export default async function OrganisationDocumentsPage() {
   const supabase = await createClient();
@@ -27,7 +30,10 @@ export default async function OrganisationDocumentsPage() {
           Policies, handbook and procedures. Click a document to preview or download.
         </p>
       </div>
-      <OrganisationDocsClient initialRows={rows} canEdit={false} />
+      <OrganisationDocsClient
+        initialRows={rows}
+        canEdit={resolved.rights.canManageOrganisationDocuments}
+      />
     </div>
   );
 }

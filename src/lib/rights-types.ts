@@ -57,9 +57,9 @@ export interface EffectiveRights {
   canViewSensitiveFields: boolean;
   canEditSensitiveFields: boolean;
 
-  // CLE-205 — Documents Tier 1 flags.
+  // CLE-205 → CLE-209 follow-up — Documents Tier 1 flags.
   canViewOrganisationDocuments: boolean;
-  canManageDeletedDocuments: boolean;
+  canManageOrganisationDocuments: boolean;
   canForceDeleteDocuments: boolean;
 
   tabs: Record<TabKey, TabAccess>;

@@ -92,16 +92,11 @@ export function SettingsSidebar({
       visible: canManageTeams,
     },
     {
-      // CLE-205 — Document Subtypes manager.
+      // CLE-205 — Document Subtypes manager. Org Documents CRUD
+      // moved to the main sidebar (/documents/organisation) per
+      // CLE-209 follow-up.
       href: "/settings/documents",
       label: "Document Subtypes",
-      icon: FileText,
-      visible: canEditOrgSettings,
-    },
-    {
-      // CLE-208 — Organisation Documents admin CRUD.
-      href: "/settings/documents/organisation",
-      label: "Org Documents",
       icon: FileText,
       visible: canEditOrgSettings,
     },

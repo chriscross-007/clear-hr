@@ -89,7 +89,7 @@ function summarise(member: MemberOption, profile: RightsProfileDto | undefined):
   pushBoth("view sensitive fields", profile.canViewSensitiveFields);
   pushBoth("edit sensitive fields", profile.canEditSensitiveFields);
   pushBoth("view organisation documents", profile.canViewOrganisationDocuments);
-  pushBoth("manage deleted documents", profile.canManageDeletedDocuments);
+  pushBoth("manage organisation documents", profile.canManageOrganisationDocuments);
   pushBoth("force-delete documents", profile.canForceDeleteDocuments);
 
   if (positive.length > 0) {

@@ -234,6 +234,7 @@ export default async function DashboardLayout({
             canEditOrgSettings={rights.canEditOrgSettings}
             canManageBilling={rights.canManageBilling}
             canViewAuditLogs={rights.canViewAuditLogs}
+            canViewOrganisationDocuments={rights.canViewOrganisationDocuments}
             canRunReports={rights.canRunReports}
             canApproveHolidays={rights.canApproveHolidays}
             memberLabel={memberLabel}

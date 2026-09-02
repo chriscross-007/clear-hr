@@ -24,6 +24,7 @@ interface SidebarProps {
   canEditOrgSettings: boolean;
   canManageBilling: boolean;
   canViewAuditLogs: boolean;
+  canViewOrganisationDocuments: boolean;
   canRunReports: boolean;
   canApproveHolidays: boolean;
   memberLabel: string;
@@ -43,6 +44,7 @@ export function Sidebar({
   canEditOrgSettings,
   canManageBilling,
   canViewAuditLogs,
+  canViewOrganisationDocuments,
   canRunReports,
   canApproveHolidays,
   memberLabel,
@@ -271,12 +273,15 @@ export function Sidebar({
             <FileText className="h-4 w-4 shrink-0" />
             Doc Compliance
           </Link>
-          {/* CLE-208 — Org-scoped read view. Gated on
-              can_view_organisation_documents. */}
-          <Link href="/documents/organisation" className={linkClass("/documents/organisation")}>
-            <FileText className="h-4 w-4 shrink-0" />
-            Org Documents
-          </Link>
+          {/* CLE-208 → CLE-209 follow-up — Org Documents (list +
+              CRUD if the caller has can_manage_organisation_documents).
+              Hidden entirely when the caller can't view. */}
+          {canViewOrganisationDocuments && (
+            <Link href="/documents/organisation" className={linkClass("/documents/organisation")}>
+              <FileText className="h-4 w-4 shrink-0" />
+              Org Documents
+            </Link>
+          )}
           {/* Settings has moved to the cog icon in the top bar. See
               (dashboard)/layout.tsx — gated on canEditOrgSettings. */}
           {showBilling && (

@@ -126,9 +126,9 @@ interface RightsProfileRow {
   can_view_audit_logs: boolean;
   can_view_sensitive_fields: boolean;
   can_edit_sensitive_fields: boolean;
-  // CLE-205 — Documents Tier 1
+  // CLE-205 → CLE-209 follow-up — Documents Tier 1
   can_view_organisation_documents: boolean;
-  can_manage_deleted_documents: boolean;
+  can_manage_organisation_documents: boolean;
   can_force_delete_documents: boolean;
   tab_matrix: Record<string, { view?: boolean; update?: boolean }>;
 }
@@ -168,7 +168,7 @@ function rowToEffective(row: RightsProfileRow): EffectiveRights {
     canViewSensitiveFields: row.can_view_sensitive_fields,
     canEditSensitiveFields: row.can_edit_sensitive_fields,
     canViewOrganisationDocuments: row.can_view_organisation_documents,
-    canManageDeletedDocuments: row.can_manage_deleted_documents,
+    canManageOrganisationDocuments: row.can_manage_organisation_documents,
     canForceDeleteDocuments: row.can_force_delete_documents,
     tabs: normaliseTabMatrix(row.tab_matrix ?? {}),
   };
@@ -182,7 +182,7 @@ const PROFILE_COLUMNS =
   "can_manage_teams, can_edit_org_settings, can_edit_rights_profiles, " +
   "can_manage_billing, can_view_audit_logs, " +
   "can_view_sensitive_fields, can_edit_sensitive_fields, " +
-  "can_view_organisation_documents, can_manage_deleted_documents, " +
+  "can_view_organisation_documents, can_manage_organisation_documents, " +
   "can_force_delete_documents, tab_matrix";
 
 /**
