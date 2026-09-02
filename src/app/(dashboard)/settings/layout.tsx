@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
-import { SettingsSidebar } from "./settings-sidebar";
+import { SettingsTabs } from "./settings-tabs";
 
 // CLE-196b-1 — Settings shell. Rewired onto the Rights Profiles v2
 // resolver. The Settings section is visible to anyone whose profile
@@ -34,8 +34,8 @@ export default async function SettingsLayout({
   if (!canManageAny) redirect("/dashboard");
 
   return (
-    <div className="flex">
-      <SettingsSidebar
+    <div className="flex flex-col">
+      <SettingsTabs
         canEditOrgSettings={rights.canEditOrgSettings}
         canManageTeams={rights.canManageTeams}
         canEditRightsProfiles={rights.canEditRightsProfiles}
