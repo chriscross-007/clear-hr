@@ -86,6 +86,144 @@ async function walkFolder(
   return { files, bytes };
 }
 
+// ---------------------------------------------------------------------------
+// One-shot: pull external avatar URLs into the member-avatars bucket.
+// ---------------------------------------------------------------------------
+//
+// Seed data historically populated `members.avatar_url` with URLs on
+// third-party services (dicebear, pravatar, ui-avatars). Those images
+// aren't in our storage — this action downloads each one, uploads it
+// to `member-avatars/{org_id}/{member_id}.{ext}`, and rewrites the
+// column. Skips members already hosted on Supabase.
+//
+// Gated on canEditOrgSettings. Idempotent — running it again is a
+// no-op for members that already point at the bucket.
+
+const AVATAR_BUCKET = "member-avatars";
+
+const EXT_BY_CONTENT_TYPE: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/jpg":  ".jpg",
+  "image/png":  ".png",
+  "image/webp": ".webp",
+  "image/gif":  ".gif",
+  "image/svg+xml": ".svg",
+};
+
+export interface AvatarMigrationResult {
+  scanned: number;
+  migrated: number;
+  skipped: number;
+  failed: Array<{ memberId: string; name: string; error: string }>;
+}
+
+export async function migrateExternalAvatarsToStorage(): Promise<
+  { success: true; result: AvatarMigrationResult } | { success: false; error: string }
+> {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Not authenticated" };
+    const resolved = await getEffectiveRightsForUser(user.id);
+    if (!resolved) return { success: false, error: "No organisation" };
+    if (!resolved.rights.canEditOrgSettings) {
+      return { success: false, error: "Forbidden" };
+    }
+
+    const admin = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } },
+    );
+    const supabaseUrlHost = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).host;
+
+    const { data: members, error } = await admin
+      .from("members")
+      .select("id, first_name, last_name, avatar_url")
+      .eq("organisation_id", resolved.ctx.organisationId)
+      .not("avatar_url", "is", null);
+    if (error) return { success: false, error: error.message };
+
+    const rows = (members ?? []) as Array<{
+      id: string; first_name: string; last_name: string; avatar_url: string | null;
+    }>;
+
+    const out: AvatarMigrationResult = {
+      scanned: rows.length,
+      migrated: 0,
+      skipped: 0,
+      failed: [],
+    };
+
+    // Cast admin to the storage shape used here — same reason as
+    // walkFolder above.
+    type StorageAdmin = {
+      storage: {
+        from: (bucket: string) => {
+          upload: (path: string, body: Uint8Array, opts: { contentType: string; upsert: boolean }) => Promise<{ error: { message: string } | null }>;
+          getPublicUrl: (path: string) => { data: { publicUrl: string } };
+        };
+      };
+    };
+    const storage = (admin as unknown as StorageAdmin).storage;
+
+    for (const m of rows) {
+      const url = m.avatar_url as string;
+      // Already in our bucket? Skip.
+      try {
+        const host = new URL(url).host;
+        if (host === supabaseUrlHost) {
+          out.skipped++;
+          continue;
+        }
+      } catch {
+        // Not a valid URL — treat as skip.
+        out.skipped++;
+        continue;
+      }
+
+      try {
+        const res = await fetch(url, { redirect: "follow" });
+        if (!res.ok) throw new Error(`fetch ${res.status}`);
+        const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+        const ext = EXT_BY_CONTENT_TYPE[contentType];
+        if (!ext) throw new Error(`unsupported content-type "${contentType}"`);
+        const buf = new Uint8Array(await res.arrayBuffer());
+        if (buf.byteLength === 0) throw new Error("empty response");
+
+        const path = `${resolved.ctx.organisationId}/${m.id}${ext}`;
+        const { error: uErr } = await storage.from(AVATAR_BUCKET)
+          .upload(path, buf, { contentType, upsert: true });
+        if (uErr) throw new Error(`upload: ${uErr.message}`);
+
+        const { data: { publicUrl } } = storage.from(AVATAR_BUCKET).getPublicUrl(path);
+        // Cache-bust so already-cached external URL doesn't leak into
+        // <img> tags after the swap.
+        const busted = `${publicUrl}?v=${Date.now()}`;
+
+        const { error: updErr } = await admin
+          .from("members")
+          .update({ avatar_url: busted })
+          .eq("id", m.id)
+          .eq("organisation_id", resolved.ctx.organisationId);
+        if (updErr) throw new Error(`update row: ${updErr.message}`);
+
+        out.migrated++;
+      } catch (e) {
+        out.failed.push({
+          memberId: m.id,
+          name: `${m.first_name ?? ""} ${m.last_name ?? ""}`.trim() || m.id,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    return { success: true, result: out };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
 export async function getStorageUsage(): Promise<
   { success: true; usage: UsageResult } | { success: false; error: string }
 > {

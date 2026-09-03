@@ -1,10 +1,15 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw, ImageDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getStorageUsage, type UsageResult } from "./usage-actions";
+import {
+  getStorageUsage,
+  migrateExternalAvatarsToStorage,
+  type AvatarMigrationResult,
+  type UsageResult,
+} from "./usage-actions";
 
 function fmtBytes(b: number): string {
   if (b < 1024) return `${b} B`;
@@ -29,6 +34,26 @@ export function UsageClient({
       hour: "2-digit", minute: "2-digit", hour12: false,
     }),
   );
+  const [migrating, startMigrating] = useTransition();
+  const [migration, setMigration] = useState<AvatarMigrationResult | null>(null);
+
+  function migrateAvatars() {
+    setError(null);
+    setMigration(null);
+    startMigrating(async () => {
+      const res = await migrateExternalAvatarsToStorage();
+      if (!res.success) { setError(res.error); return; }
+      setMigration(res.result);
+      // Refresh usage so the avatar bucket total picks up the new
+      // bytes immediately.
+      const u = await getStorageUsage();
+      if (u.success) setUsage(u.usage);
+      setRefreshedAt(new Date().toLocaleString("en-GB", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      }));
+    });
+  }
 
   function refresh() {
     setError(null);
@@ -88,6 +113,40 @@ export function UsageClient({
             </table>
           </>
         )}
+        <div className="mt-4 rounded-md border bg-muted/20 p-3 space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">Migrate external avatar URLs</p>
+              <p className="text-xs text-muted-foreground">
+                One-shot. Downloads any member avatar hosted on a third-party service
+                and stores it in the <code>member-avatars</code> bucket, then rewrites
+                the column. Idempotent — safe to run multiple times.
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={migrateAvatars} disabled={migrating}>
+              {migrating ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <ImageDown className="mr-1.5 h-4 w-4" />}
+              Run
+            </Button>
+          </div>
+          {migration && (
+            <div className="text-xs">
+              Scanned {migration.scanned} · migrated {migration.migrated} · already in bucket {migration.skipped}
+              {migration.failed.length > 0 && (
+                <div className="mt-2 rounded-md bg-destructive/10 p-2 text-destructive">
+                  <p className="font-medium mb-1">{migration.failed.length} failed:</p>
+                  <ul className="list-disc pl-5 space-y-0.5">
+                    {migration.failed.slice(0, 20).map((f, i) => (
+                      <li key={i}>{f.name}: {f.error}</li>
+                    ))}
+                    {migration.failed.length > 20 && (
+                      <li>… and {migration.failed.length - 20} more</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
