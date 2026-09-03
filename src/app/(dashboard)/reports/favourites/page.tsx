@@ -17,7 +17,7 @@ export default async function FavouritesPage() {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role, organisations(plan)")
+    .select("organisation_id, organisations(plan)")
     .eq("user_id", user.id)
     .limit(1)
     .single();

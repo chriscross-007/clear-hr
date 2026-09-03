@@ -19,16 +19,13 @@ export default async function ProfilesLayout({
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: caller } = await supabase
-    .from("members")
-    .select("role")
-    .eq("user_id", user.id)
-    .limit(1)
-    .single();
-  if (!caller) redirect("/organisation-setup");
+  // Resolver handles both "am I in an org" and "can I edit settings"
+  // in one call — no need to hit members directly (and no `role`
+  // column exists any more since CLE-203).
   const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
-  const _r = await getEffectiveRightsForUser(user.id);
-  if (!_r?.rights.canEditOrgSettings) redirect("/settings");
+  const resolved = await getEffectiveRightsForUser(user.id);
+  if (!resolved) redirect("/organisation-setup");
+  if (!resolved.rights.canEditOrgSettings) redirect("/settings");
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">

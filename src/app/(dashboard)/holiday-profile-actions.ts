@@ -67,7 +67,7 @@ async function getCallerMember() {
   if (!user) throw new Error("Not authenticated");
   const { data: member } = await supabase
     .from("members")
-    .select("id, organisation_id, role")
+    .select("id, organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();

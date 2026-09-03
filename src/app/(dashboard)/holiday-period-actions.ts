@@ -118,7 +118,7 @@ async function getCallerMember() {
 
   const { data: member } = await supabase
     .from("members")
-    .select("id, organisation_id, role, first_name, last_name")
+    .select("id, organisation_id, first_name, last_name")
     .eq("user_id", user.id)
     .limit(1)
     .single();

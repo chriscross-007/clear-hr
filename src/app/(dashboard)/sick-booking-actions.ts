@@ -32,7 +32,7 @@ async function getCallerMember() {
 
   const { data: member } = await supabase
     .from("members")
-    .select("id, organisation_id, role")
+    .select("id, organisation_id")
     .eq("user_id", user.id)
     .single();
   if (!member) throw new Error("No membership found");

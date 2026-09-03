@@ -16,16 +16,10 @@ export default async function ApproverProfilesPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: caller } = await supabase
-    .from("members")
-    .select("role")
-    .eq("user_id", user.id)
-    .limit(1)
-    .single();
-  if (!caller) redirect("/organisation-setup");
   const { getEffectiveRightsForUser: _grA } = await import("@/lib/rights-resolver");
   const _rA = await _grA(user.id);
-  if (!_rA?.rights.canEditOrgSettings) redirect("/settings");
+  if (!_rA) redirect("/organisation-setup");
+  if (!_rA.rights.canEditOrgSettings) redirect("/settings");
 
   return (
     <div className="space-y-6">

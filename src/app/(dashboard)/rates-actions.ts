@@ -26,7 +26,7 @@ async function getCallerMember(supabase: Awaited<ReturnType<typeof createClient>
   if (!user) return null;
   const { data: member } = await supabase
     .from("members")
-    .select("organisation_id, role")
+    .select("organisation_id")
     .eq("user_id", user.id)
     .single();
   return member ?? null;

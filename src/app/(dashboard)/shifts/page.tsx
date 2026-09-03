@@ -15,7 +15,7 @@ export default async function ShiftsPage() {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("id, organisation_id, role")
+    .select("id, organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();

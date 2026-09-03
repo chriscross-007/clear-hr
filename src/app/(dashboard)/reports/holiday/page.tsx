@@ -13,7 +13,7 @@ export default async function HolidayReportPage() {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("id, organisation_id, role, organisations(plan, name, holiday_year_start_day, holiday_year_start_month)")
+    .select("id, organisation_id, organisations(plan, name, holiday_year_start_day, holiday_year_start_month)")
     .eq("user_id", user.id)
     .limit(1)
     .single();

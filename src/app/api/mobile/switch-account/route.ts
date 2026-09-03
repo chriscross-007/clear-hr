@@ -52,7 +52,7 @@ export async function GET(request: Request) {
 
     const { data, error } = await admin
       .from("members")
-      .select("id, first_name, last_name, email, role")
+      .select("id, first_name, last_name, email")
       .eq("organisation_id", organisationId)
       .not("user_id", "is", null)
       .order("first_name");

@@ -20,7 +20,7 @@ export default async function WorkingPatternProfilesPage() {
 
   const { data: caller } = await supabase
     .from("members")
-    .select("organisation_id, role")
+    .select("organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();

@@ -21,16 +21,10 @@ export default async function HolidayProfilesPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: caller } = await supabase
-    .from("members")
-    .select("role")
-    .eq("user_id", user.id)
-    .limit(1)
-    .single();
-  if (!caller) redirect("/organisation-setup");
   const { getEffectiveRightsForUser: _grH } = await import("@/lib/rights-resolver");
   const _rH = await _grH(user.id);
-  if (!_rH?.rights.canEditOrgSettings) redirect("/settings");
+  if (!_rH) redirect("/organisation-setup");
+  if (!_rH.rights.canEditOrgSettings) redirect("/settings");
 
   const profilesRes = await getHolidayProfiles();
   const initialProfiles = profilesRes.success ? (profilesRes.profiles ?? []) : [];

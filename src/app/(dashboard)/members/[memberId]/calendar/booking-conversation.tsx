@@ -166,7 +166,7 @@ export const BookingConversation = forwardRef<
           // Fetch author info for the incoming message.
           const { data: member } = await supabase
             .from("members")
-            .select("id, first_name, last_name, role")
+            .select("id, first_name, last_name")
             .eq("id", row.author_member_id)
             .single();
           const msg: ConversationMessage = {

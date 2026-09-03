@@ -25,16 +25,10 @@ export default async function NoticePeriodProfilesPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: caller } = await supabase
-    .from("members")
-    .select("role")
-    .eq("user_id", user.id)
-    .limit(1)
-    .single();
-  if (!caller) redirect("/organisation-setup");
   const { getEffectiveRightsForUser: _grN } = await import("@/lib/rights-resolver");
   const _rN = await _grN(user.id);
-  if (!_rN?.rights.canEditOrgSettings) redirect("/settings");
+  if (!_rN) redirect("/organisation-setup");
+  if (!_rN.rights.canEditOrgSettings) redirect("/settings");
 
   const profilesRes = await getNoticePeriodProfiles();
   const initialProfiles = profilesRes.success ? (profilesRes.profiles ?? []) : [];

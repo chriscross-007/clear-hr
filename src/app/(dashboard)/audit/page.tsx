@@ -14,7 +14,7 @@ export default async function AuditPage() {
 
   const { data: membership } = await supabase
     .from("members")
-    .select("organisation_id, role")
+    .select("organisation_id")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -28,12 +28,12 @@ export default async function AuditPage() {
     redirect("/employees");
   }
 
-  // Fetch editors (owners + admins) for the filter
+  // Fetch editors (admin-rank members) for the filter
   const { data: editors } = await supabase
     .from("members")
-    .select("id, first_name, last_name")
+    .select("id, first_name, last_name, rights_profiles!inner(rank)")
     .eq("organisation_id", membership.organisation_id)
-    .in("role", ["owner", "admin"])
+    .eq("rights_profiles.rank", "admin")
     .order("first_name");
 
   // Fetch initial audit log entries (most recent 50)

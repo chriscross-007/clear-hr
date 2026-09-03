@@ -85,7 +85,7 @@ async function getCallerMember() {
 
   const { data: member } = await supabase
     .from("members")
-    .select("id, organisation_id, role, first_name, last_name")
+    .select("id, organisation_id, first_name, last_name")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -270,7 +270,9 @@ export async function getApproverOptions(): Promise<{
     const { supabase, member } = await requireAdminOrOwner();
 
     // CLE-196b-3 — Approver candidates are members whose Rights Profile
-    // grants can_approve_holidays. Join through and let Postgres filter.
+    // grants `can_approve_holidays`. Anyone senior enough to be an
+    // approver but who hasn't ticked that specific flag is expected to
+    // fix it themselves in Settings → User Rights.
     // CLE-201c-9 — surface the profile *name* on the picker chip
     // rather than the legacy 3-way role tag.
     const { data, error } = await supabase

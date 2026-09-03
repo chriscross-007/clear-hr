@@ -38,7 +38,7 @@ export default async function EmployeeDashboardPage({
   // Target member must be in the same org
   const { data: member } = await supabase
     .from("members")
-    .select("first_name, last_name, avatar_url, email, role")
+    .select("first_name, last_name, avatar_url, email")
     .eq("id", memberId)
     .eq("organisation_id", caller.organisation_id)
     .single();

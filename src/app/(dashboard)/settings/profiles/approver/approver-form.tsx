@@ -237,6 +237,11 @@ function ApproverPicker(props: {
 }) {
   const [open, setOpen] = useState(false);
   const nameById = new Map(props.approvers.map((a) => [a.id, a.name]));
+  // Only count IDs that appear in the current approver list — a saved
+  // approver whose rights have since changed shouldn't inflate the
+  // "N selected" chip without a corresponding tick.
+  const eligibleIds = new Set(props.approvers.map((a) => a.id));
+  const visibleSelected = props.selected.filter((id) => eligibleIds.has(id));
 
   function toggle(id: string) {
     if (props.selected.includes(id)) {
@@ -261,12 +266,12 @@ function ApproverPicker(props: {
             )}
           >
             <span className="truncate">
-              {props.selected.length === 0 ? (
+              {visibleSelected.length === 0 ? (
                 <span className="text-muted-foreground">{props.placeholder}</span>
-              ) : props.selected.length === 1 ? (
-                nameById.get(props.selected[0]) ?? "—"
+              ) : visibleSelected.length === 1 ? (
+                nameById.get(visibleSelected[0]) ?? "—"
               ) : (
-                `${props.selected.length} selected`
+                `${visibleSelected.length} selected`
               )}
             </span>
             {props.selected.length > 0 && !props.disabled && (
@@ -286,7 +291,14 @@ function ApproverPicker(props: {
           </button>
         </PopoverTrigger>
         <PopoverContent className="w-72 p-0" align="start">
-          <div className="max-h-64 overflow-y-auto py-1">
+          {/* overscroll-contain + onWheel stop prevents the wheel from
+              bubbling to a parent Dialog's scroll container — otherwise
+              the list looks frozen because the wheel event scrolls the
+              (invisible) Dialog behind the popover. */}
+          <div
+            className="max-h-64 overflow-y-auto overscroll-contain py-1"
+            onWheel={(e) => e.stopPropagation()}
+          >
             {props.approvers.length === 0 && (
               <div className="px-3 py-2 text-sm text-muted-foreground">
                 No eligible approvers. Grant the Approve Holidays right to an admin in Settings → Profiles → Rights, or the owner will appear here automatically.
@@ -312,7 +324,7 @@ function ApproverPicker(props: {
                   <span className="flex-1 truncate">{a.name}</span>
                   <span className="text-xs text-muted-foreground">{a.profileName}</span>
                   {!a.isActive && (
-                    <span className="text-xs text-amber-600">pending</span>
+                    <span className="text-xs text-amber-600">invite pending</span>
                   )}
                 </button>
               );
@@ -320,28 +332,6 @@ function ApproverPicker(props: {
           </div>
         </PopoverContent>
       </Popover>
-      {props.selected.length > 1 && (
-        <div className="flex flex-wrap gap-1">
-          {props.selected.map((id) => (
-            <span
-              key={id}
-              className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-xs"
-            >
-              {nameById.get(id) ?? "—"}
-              {!props.disabled && (
-                <button
-                  type="button"
-                  onClick={() => props.setSelected(props.selected.filter((x) => x !== id))}
-                  aria-label="Remove"
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </span>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

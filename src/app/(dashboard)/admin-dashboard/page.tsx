@@ -12,19 +12,11 @@ export default async function AdminDashboardPage() {
 
   if (!user) redirect("/login");
 
-  const { data: member } = await supabase
-    .from("members")
-    .select("role")
-    .eq("user_id", user.id)
-    .limit(1)
-    .single();
-
-  if (!member) redirect("/organisation-setup");
-
   // Only admins and owners
   const { getEffectiveRightsForUser } = await import("@/lib/rights-resolver");
   const resolved = await getEffectiveRightsForUser(user.id);
-  if (!resolved || resolved.rights.rank === "employee") {
+  if (!resolved) redirect("/organisation-setup");
+  if (resolved.rights.rank === "employee") {
     redirect("/dashboard");
   }
 

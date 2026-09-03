@@ -303,7 +303,7 @@ export async function getConversationMessages(
     // Pull messages + author info via the RLS-scoped client.
     const { data: rows, error: messagesError } = await supabase
       .from("conversation_messages")
-      .select("id, body, created_at, author_member_id, members:author_member_id(first_name, last_name, role)")
+      .select("id, body, created_at, author_member_id, members:author_member_id(first_name, last_name)")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
     if (messagesError) return { success: false, error: messagesError.message };

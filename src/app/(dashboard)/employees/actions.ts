@@ -357,7 +357,7 @@ export async function updateEmployee(formData: {
     // profileId-handling branch below.
     const { data: beforeState } = await admin
       .from("members")
-      .select("first_name, last_name, role, payroll_number, team_id")
+      .select("first_name, last_name, payroll_number, team_id")
       .eq("id", formData.memberId)
       .eq("organisation_id", membership.organisation_id)
       .single();
@@ -498,7 +498,7 @@ export async function deleteEmployee(
     // Fetch the member to check ownership and get full record for audit
     const { data: member, error: fetchError } = await admin
       .from("members")
-      .select("id, user_id, role, email, first_name, last_name, payroll_number, team_id")
+      .select("id, user_id, email, first_name, last_name, payroll_number, team_id")
       .eq("id", memberId)
       .eq("organisation_id", membership.organisation_id)
       .single();
