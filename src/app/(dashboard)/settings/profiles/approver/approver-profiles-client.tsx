@@ -289,9 +289,8 @@ export function ApproverProfilesClient() {
           })}
 
           <p className="text-xs text-muted-foreground">
-            Approvers are the org owner plus admins whose rights profile grants{" "}
-            <strong>Approve Holidays</strong>. Profile changes only affect new bookings — already-pending
-            bookings keep their original ladder.
+            Approvers are Users whose rights profile grants{" "}
+            <strong>Approve Holidays</strong>. Grant the flag in Settings → User Rights.
           </p>
         </CardContent>
       </Card>

@@ -142,13 +142,33 @@ export function BookHolidaySheet({
   const [bankHolidayHandling, setBankHolidayHandling] = useState<string>("deducted");
   const [noticeRules, setNoticeRules] = useState<{ min_booking_days: number; notice_days: number }[]>([]);
   const [noticeBlocks, setNoticeBlocks] = useState<boolean>(false);
+  // Ready flags — false until the async context loads return, so the
+  // "will likely be rejected" banners don't render against stale rules
+  // carried over from the previous opening of the sheet. Reset in the
+  // open-transition useEffect below.
+  const [noticeReady, setNoticeReady] = useState<boolean>(false);
+  const [coverReady, setCoverReady] = useState<boolean>(false);
   // CLE-187 — team-cover preview context. Loaded once on open; the client
   // computes per-day cover impact locally as the user adjusts dates.
   const [teamCover, setTeamCover] = useState<TeamCoverContext | null>(null);
 
-  // Load work pattern + bank holidays + notice rules on sheet open
+  // Load work pattern + bank holidays + notice rules on sheet open.
+  // Reset every context slice to its empty state BEFORE firing the
+  // async loads — otherwise stale values from the last opening (e.g.
+  // notice rules from a different notice profile) flash the "would
+  // likely be denied" banner for the first render, until the async
+  // load returns with the current values.
   useEffect(() => {
     if (open) {
+      setWorkPattern(null);
+      setBankHolidays(new Set());
+      setBankHolidayHandling("deducted");
+      setNoticeRules([]);
+      setNoticeBlocks(false);
+      setTeamCover(null);
+      setNoticeReady(false);
+      setCoverReady(false);
+
       getMyWorkPattern().then(setWorkPattern);
       getMyBankHolidayContext().then((ctx) => {
         setBankHolidays(new Set(ctx.dates));
@@ -157,9 +177,11 @@ export function BookHolidaySheet({
       getMyOrgNoticeContext().then((ctx) => {
         setNoticeRules(ctx.rules);
         setNoticeBlocks(ctx.blockRequests);
+        setNoticeReady(true);
       });
       getMyTeamCoverContext().then((res) => {
         setTeamCover(res.success ? res.context : null);
+        setCoverReady(true);
       });
     }
   }, [open]);
@@ -239,6 +261,9 @@ export function BookHolidaySheet({
     if (isReadOnly) return null;
     if (!form.startDate || !form.endDate) return null;
     if (estimatedDeduction <= 0) return null;
+    // Suppress until the notice context has actually loaded for the
+    // current opening — otherwise the banner flashes stale rules.
+    if (!noticeReady) return null;
     if (noticeRules.length === 0) return null;
 
     const workingDaysInGap = (afterIso: string, beforeIso: string): number => {
@@ -409,6 +434,10 @@ export function BookHolidaySheet({
     // won't have cover is just noise at this point.
     if (isReadOnly) return null;
     if (!form.startDate || !form.endDate) return null;
+    // Suppress until the cover context has actually loaded for the
+    // current opening — otherwise the banner flashes stale cover
+    // rules from the previous team.
+    if (!coverReady) return null;
     if (!teamCover || !teamCover.teamId) return null;
     if (teamCover.minCover <= 0) return null;
     const start = new Date(form.startDate + "T00:00:00Z");

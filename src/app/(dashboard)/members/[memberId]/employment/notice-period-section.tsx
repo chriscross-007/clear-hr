@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { Label } from "@/components/ui/label";
-import { Loader2 } from "lucide-react";
+import { Loader2, Check } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -32,6 +32,7 @@ export function NoticePeriodSection({ memberId, canEdit }: Props) {
   const [current, setCurrent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -56,6 +57,7 @@ export function NoticePeriodSection({ memberId, canEdit }: Props) {
   async function handleChange(value: string) {
     setError(null);
     setSaving(true);
+    setJustSaved(false);
     const res = await setMemberNoticeProfile(memberId, value);
     setSaving(false);
     if (!res.success) {
@@ -63,6 +65,8 @@ export function NoticePeriodSection({ memberId, canEdit }: Props) {
       return;
     }
     setCurrent(value);
+    setJustSaved(true);
+    setTimeout(() => setJustSaved(false), 2000);
   }
 
   if (loading) {
@@ -117,6 +121,12 @@ export function NoticePeriodSection({ memberId, canEdit }: Props) {
           </SelectContent>
         </Select>
         {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+        {!saving && justSaved && (
+          <span className="inline-flex items-center gap-1 text-xs text-green-600">
+            <Check className="h-3.5 w-3.5" />
+            Saved
+          </span>
+        )}
       </div>
     </div>
   );
