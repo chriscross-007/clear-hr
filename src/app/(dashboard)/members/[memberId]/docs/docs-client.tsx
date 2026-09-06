@@ -640,9 +640,40 @@ function UploadDialog({
 
   // Realtime subscription on the queued capture task. Fires when the
   // mobile app uploads, cancels, or the timeout sweep flips it.
+  //
+  // Realtime respects RLS, so the browser socket needs the caller's
+  // JWT to evaluate `queued_by_user_id = auth.uid()`. `setAuth` pins
+  // the token on the realtime client explicitly — newer supabase-js
+  // pulls it from the auth session, but doing it up-front avoids a
+  // race where the subscription opens before the auth exchange
+  // completes. Also polls the task status every 3 s as a belt-and-
+  // braces fallback for the Realtime event landing.
   useEffect(() => {
     if (mode !== "waiting" || !captureTaskId) return;
     const supabase = createSupabaseBrowserClient();
+
+    let cancelled = false;
+
+    function handleStatus(status: string) {
+      if (cancelled) return;
+      if (status === "uploaded") {
+        void onUploaded();
+      } else if (status === "cancelled") {
+        onClose();
+      } else if (status === "timeout") {
+        setWaitingMessage("This request timed out. Try again when you're ready to take the photo.");
+        setMode("form");
+        setCaptureTaskId(null);
+      }
+    }
+
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        supabase.realtime.setAuth(session.access_token);
+      }
+    })();
+
     const channel = supabase
       .channel(`capture_task:${captureTaskId}`)
       .on(
@@ -655,21 +686,30 @@ function UploadDialog({
         },
         (payload) => {
           const row = payload.new as { status?: string } | null;
-          const status = row?.status;
-          if (status === "uploaded") {
-            // Success — refresh the docs list and close.
-            void onUploaded();
-          } else if (status === "cancelled") {
-            onClose();
-          } else if (status === "timeout") {
-            setWaitingMessage("This request timed out. Try again when you're ready to take the photo.");
-            setMode("form");
-            setCaptureTaskId(null);
-          }
+          if (row?.status) handleStatus(row.status);
         },
       )
       .subscribe();
+
+    // Fallback poll every 3 s in case Realtime doesn't deliver the
+    // event (some Realtime + RLS + REPLICA IDENTITY edge cases). Cheap
+    // — one indexed row lookup per tick, only while the dialog is
+    // in `waiting` mode.
+    const pollInterval = setInterval(async () => {
+      if (cancelled) return;
+      const { data } = await supabase
+        .from("capture_task")
+        .select("status")
+        .eq("id", captureTaskId)
+        .single();
+      if (data?.status && data.status !== "pending") {
+        handleStatus(data.status as string);
+      }
+    }, 3000);
+
     return () => {
+      cancelled = true;
+      clearInterval(pollInterval);
       void supabase.removeChannel(channel);
     };
   }, [mode, captureTaskId, onUploaded, onClose]);
