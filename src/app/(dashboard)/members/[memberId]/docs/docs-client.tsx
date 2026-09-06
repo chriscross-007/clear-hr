@@ -114,6 +114,15 @@ function fmtDateTime(iso: string): string {
   });
 }
 
+// Return an ISO string N days after the given ISO. Used by the
+// Trash grid to show the projected purge date (queued_at + 30 days
+// grace, per the retention sweep).
+function addDaysIso(iso: string, days: number): string {
+  const d = new Date(iso);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString();
+}
+
 function fmtFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -464,7 +473,7 @@ function TrashList({
           <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
             <th className="w-8 px-4 py-2 font-medium" title="Source" />
             <th className="px-4 py-2 font-medium">Document</th>
-            <th className="px-4 py-2 font-medium">Queued</th>
+            <th className="px-4 py-2 font-medium">Queued for Deletion</th>
             <th className="px-4 py-2 font-medium hidden lg:table-cell">Force-delete reason</th>
             <th className="px-4 py-2 font-medium text-right" />
           </tr>
@@ -488,7 +497,9 @@ function TrashList({
                   </p>
                 </button>
               </td>
-              <td className="px-4 py-2 text-muted-foreground">{fmtDateTime(r.queuedAt)}</td>
+              <td className="px-4 py-2 text-muted-foreground" title={`Queued at ${fmtDateTime(r.queuedAt)}`}>
+                {fmtDateTime(addDaysIso(r.queuedAt, 30))}
+              </td>
               <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell max-w-xs truncate">
                 {r.forceDeleteReason ?? "—"}
               </td>
