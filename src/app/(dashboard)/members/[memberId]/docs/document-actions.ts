@@ -108,10 +108,8 @@ const TYPE_DISPLAY: Record<string, string> = {
   contract: "Contract",
   certificate: "Certificate",
   evidence: "Evidence",
-  policy: "Policy",
-  handbook: "Handbook",
   attachment: "Attachment",
-  other: "Other",
+  organisation_document: "Organisation document",
 };
 
 function typeSubtypeLabel(type: string, subtypeName: string | null): string {

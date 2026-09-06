@@ -30,7 +30,10 @@ const BUCKET = "org-documents";
 // Only these types make sense at the org scope. Enforced at the
 // picker + upload validation (the DB doesn't constrain — a tenant
 // could theoretically stash any type but the UI won't offer it).
-const ORG_TYPES = new Set(["policy", "handbook", "other"]);
+// CLE-210 — one org-scope type, `organisation_document`. The three
+// legacy types (policy / handbook / other) were migrated into it by
+// migration 20260904000001.
+const ORG_TYPES = new Set(["organisation_document"]);
 
 export interface OrgDocumentRow {
   id: string;

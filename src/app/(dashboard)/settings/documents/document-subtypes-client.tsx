@@ -6,7 +6,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Pencil, Trash2, Loader2, ShieldCheck, Users, Clock } from "lucide-react";
+import { Plus, Trash2, Loader2, ShieldCheck, Users, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -44,6 +44,7 @@ import {
 import {
   DOCUMENT_TYPES,
   RETENTION_CLASSES,
+  scopeForType,
   type DocumentSubtypeDto,
   type DocumentSubtypeWritePayload,
   type DocumentType,
@@ -54,10 +55,8 @@ const TYPE_LABEL: Record<DocumentType, string> = {
   contract: "Contracts",
   certificate: "Certificates",
   evidence: "Evidence (Right-to-Work, DBS, etc.)",
-  policy: "Policies",
-  handbook: "Handbook",
   attachment: "Absence attachments",
-  other: "Other",
+  organisation_document: "Organisation documents",
 };
 
 const RETENTION_LABEL: Record<RetentionClass, string> = {
@@ -114,12 +113,17 @@ export function DocumentSubtypesClient({
   const [deleteInFlight, setDeleteInFlight] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Group by type.
+  // Group by type. Any legacy row still carrying the pre-CLE-210
+  // types (policy/handbook/other) is treated as `organisation_document`
+  // for display so we don't crash on stale data mid-migration.
   const grouped: Record<DocumentType, DocumentSubtypeDto[]> = {
     contract: [], certificate: [], evidence: [],
-    policy: [], handbook: [], attachment: [], other: [],
+    attachment: [], organisation_document: [],
   };
-  for (const s of subtypes) grouped[s.type].push(s);
+  for (const s of subtypes) {
+    const bucket: DocumentType = (grouped[s.type] ? s.type : "organisation_document") as DocumentType;
+    grouped[bucket].push(s);
+  }
 
   async function handleConfirmDelete() {
     if (!deleting) return;
@@ -174,7 +178,9 @@ export function DocumentSubtypesClient({
                       >
                         <td className="px-3 py-2 font-medium">{s.name}</td>
                         <td className="px-3 py-2 text-muted-foreground">
-                          {RETENTION_LABEL[s.retentionClass]}
+                          {scopeForType(s.type) === "organisation"
+                            ? "—"
+                            : RETENTION_LABEL[s.retentionClass]}
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex flex-wrap gap-1.5">
@@ -206,32 +212,18 @@ export function DocumentSubtypesClient({
                           </div>
                         </td>
                         <td className="px-3 py-2 text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="ghost"
-                              aria-label="Edit subtype"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setEditing({ mode: "edit", id: s.id, payload: dtoToPayload(s) });
-                              }}
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="ghost"
-                              aria-label="Delete subtype"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDeleting(s);
-                              }}
-                            >
-                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                            </Button>
-                          </div>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            aria-label="Delete subtype"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleting(s);
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                          </Button>
                         </td>
                       </tr>
                     ))}
@@ -327,12 +319,34 @@ function SubtypeEditorDialog({
     setPayload((prev) => ({ ...prev, [key]: value }));
   }
 
+  const scope = scopeForType(payload.type);
+  const isOrgScope = scope === "organisation";
+
   function handleSave() {
     setError(null);
+    // Force personal-only flags off when saving an org-scope subtype.
+    // These flags have no meaning at org scope — an employee can't
+    // upload the handbook to themselves, nor is it "verified per
+    // member" or "expected on every record". Belt-and-braces since
+    // the UI already hides the toggles for org scope.
+    const outbound: DocumentSubtypeWritePayload = isOrgScope
+      ? {
+          ...payload,
+          employeeCanUpload: false,
+          requiresVerification: false,
+          expectedForEveryMember: false,
+          reviewPeriodMonths: null,
+          // Retention class is a GDPR concept — how long personal-data
+          // records survive after an employee leaves. Org docs have no
+          // personal data and no auto-disposal, so the value is inert.
+          // Pin to "other" for stored consistency.
+          retentionClass: "other",
+        }
+      : payload;
     startTransition(async () => {
       const res = mode === "create"
-        ? await createDocumentSubtype(payload)
-        : await updateDocumentSubtype(id as string, payload);
+        ? await createDocumentSubtype(outbound)
+        : await updateDocumentSubtype(id as string, outbound);
       if (!res.success) {
         setError(res.error ?? "Failed to save");
         return;
@@ -369,49 +383,65 @@ function SubtypeEditorDialog({
             />
           </div>
 
-          <div className="space-y-2">
-            <Label>Retention class</Label>
-            <Select
-              value={payload.retentionClass}
-              onValueChange={(v) => update("retentionClass", v as RetentionClass)}
-            >
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {RETENTION_CLASSES.map((rc) => (
-                  <SelectItem key={rc} value={rc}>{RETENTION_LABEL[rc]}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {/* Retention class is a GDPR concept — governs how long
+              personal-data documents survive after an employee leaves.
+              Meaningless for org docs (no personal data, no auto-
+              disposal), so hidden at org scope. */}
+          {!isOrgScope && (
+            <div className="space-y-2">
+              <Label>Retention class</Label>
+              <Select
+                value={payload.retentionClass}
+                onValueChange={(v) => update("retentionClass", v as RetentionClass)}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {RETENTION_CLASSES.map((rc) => (
+                    <SelectItem key={rc} value={rc}>{RETENTION_LABEL[rc]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <FlagRow
-              label="Employee can upload"
-              description="Employees may attach this subtype to their own record."
-              value={payload.employeeCanUpload}
-              onChange={(v) => update("employeeCanUpload", v)}
-            />
+            {/* Personal-scope-only flags — hidden entirely for org docs. */}
+            {!isOrgScope && (
+              <>
+                <FlagRow
+                  label="Employee can upload"
+                  description="Employees may attach this subtype to their own record."
+                  value={payload.employeeCanUpload}
+                  onChange={(v) => update("employeeCanUpload", v)}
+                />
+                <FlagRow
+                  label="Requires HR verification"
+                  description="Documents of this subtype must be sighted by HR."
+                  value={payload.requiresVerification}
+                  onChange={(v) => update("requiresVerification", v)}
+                />
+                <FlagRow
+                  label="Expected for every member"
+                  description="Members with no active doc of this subtype surface on the compliance dashboard."
+                  value={payload.expectedForEveryMember}
+                  onChange={(v) => update("expectedForEveryMember", v)}
+                />
+              </>
+            )}
+            {/* Applies to both scopes. */}
             <FlagRow
               label="Expiry required"
-              description="Upload flow requires an expiry date."
+              description={isOrgScope
+                ? "Doc has an expiry / review-by date."
+                : "Upload flow requires an expiry date."}
               value={payload.expiryRequired}
               onChange={(v) => update("expiryRequired", v)}
             />
             <FlagRow
-              label="Requires HR verification"
-              description="Documents of this subtype must be sighted by HR."
-              value={payload.requiresVerification}
-              onChange={(v) => update("requiresVerification", v)}
-            />
-            <FlagRow
-              label="Expected for every member"
-              description="Members with no active doc of this subtype surface on the compliance dashboard."
-              value={payload.expectedForEveryMember}
-              onChange={(v) => update("expectedForEveryMember", v)}
-            />
-            <FlagRow
-              label="Requires signature (Tier 2)"
-              description="Employee must sign / acknowledge. Inert until Tier 2."
+              label="Requires acknowledgement (Tier 2)"
+              description={isOrgScope
+                ? "Members must acknowledge they've read this. Inert until Tier 2."
+                : "Employee must sign / acknowledge. Inert until Tier 2."}
               value={payload.requiresSignature}
               onChange={(v) => update("requiresSignature", v)}
             />
@@ -431,19 +461,23 @@ function SubtypeEditorDialog({
                 placeholder="e.g. 24"
               />
             </div>
-            <div className="space-y-2">
-              <Label>Review cadence (months)</Label>
-              <Input
-                type="number"
-                min={0}
-                value={payload.reviewPeriodMonths ?? ""}
-                onChange={(e) => update(
-                  "reviewPeriodMonths",
-                  e.target.value === "" ? null : Number(e.target.value),
-                )}
-                placeholder="e.g. 36 for DBS"
-              />
-            </div>
+            {/* Review cadence is a per-member concept (DBS every 3 yrs
+                etc.). Meaningless for org docs. */}
+            {!isOrgScope && (
+              <div className="space-y-2">
+                <Label>Review cadence (months)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={payload.reviewPeriodMonths ?? ""}
+                  onChange={(e) => update(
+                    "reviewPeriodMonths",
+                    e.target.value === "" ? null : Number(e.target.value),
+                  )}
+                  placeholder="e.g. 36 for DBS"
+                />
+              </div>
+            )}
           </div>
         </div>
 

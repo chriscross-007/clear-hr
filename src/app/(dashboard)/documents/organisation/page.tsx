@@ -27,7 +27,7 @@ export default async function OrganisationDocumentsPage() {
       <div>
         <h1 className="text-2xl font-bold">Organisation Documents</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Policies, handbook and procedures. Click a document to preview or download.
+          Employee Handbook, policies and procedures. Click a document to preview or download.
         </p>
       </div>
       <OrganisationDocsClient

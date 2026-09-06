@@ -7,12 +7,35 @@ export const DOCUMENT_TYPES = [
   "contract",
   "certificate",
   "evidence",
-  "policy",
-  "handbook",
   "attachment",
-  "other",
+  "organisation_document",
 ] as const;
 export type DocumentType = (typeof DOCUMENT_TYPES)[number];
+
+/**
+ * Every document type belongs to one scope.
+ *   - `member` → the doc is owned by / attached to a specific member.
+ *   - `organisation` → the doc is org-wide (Employee Handbook, policies,
+ *     procedures). Only one type has this scope: `organisation_document`.
+ *
+ * The scope drives which flags are relevant in the subtype editor:
+ * `employee_can_upload`, `requires_verification`, and
+ * `expected_for_every_member` are meaningless at org scope and are
+ * hidden + forced false when the scope is `organisation`.
+ */
+export type DocumentScope = "member" | "organisation";
+
+export const SCOPE_BY_TYPE: Record<DocumentType, DocumentScope> = {
+  contract: "member",
+  certificate: "member",
+  evidence: "member",
+  attachment: "member",
+  organisation_document: "organisation",
+};
+
+export function scopeForType(type: DocumentType): DocumentScope {
+  return SCOPE_BY_TYPE[type];
+}
 
 export const RETENTION_CLASSES = [
   "contract",

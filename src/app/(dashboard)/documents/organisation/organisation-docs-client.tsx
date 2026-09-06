@@ -45,9 +45,7 @@ import {
 } from "@/app/(dashboard)/documents/organisation/org-document-actions";
 
 const TYPE_LABEL: Record<string, string> = {
-  policy: "Policy",
-  handbook: "Handbook",
-  other: "Other",
+  organisation_document: "Organisation document",
 };
 
 function fmtDate(iso: string | null): string {
@@ -291,8 +289,8 @@ function UploadDialog({ onClose, onUploaded }: { onClose: () => void; onUploaded
         <DialogHeader>
           <DialogTitle>Upload organisation document</DialogTitle>
           <DialogDescription>
-            Choose the subtype. Only policy / handbook / other subtypes are allowed
-            at the organisation scope.
+            Choose the subtype. Organisation-scope subtypes (Employee Handbook and
+            any you&apos;ve added in Settings) are the only options here.
           </DialogDescription>
         </DialogHeader>
 

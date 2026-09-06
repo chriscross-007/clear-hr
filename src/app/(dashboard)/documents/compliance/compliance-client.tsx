@@ -2,9 +2,9 @@
 
 // CLE-207 — Compliance dashboard client. Filters + row list.
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { AlertCircle, ExternalLink, Filter, ShieldCheck, XCircle } from "lucide-react";
+import { AlertCircle, ChevronLeft, ChevronRight, ExternalLink, Filter, ShieldCheck, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { VerifyDialog } from "@/components/documents/verify-dialog";
@@ -64,6 +64,21 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
   const [memberQuery, setMemberQuery] = useState<string>("");
   const [pending, startTransition] = useTransition();
   const [verifying, setVerifying] = useState<ComplianceRow | null>(null);
+  // Pagination — client-side; row list is already fetched in full.
+  // Persist the page-size preference in localStorage so the next visit
+  // keeps whatever the user last picked.
+  const [pageSize, setPageSize] = useState<number>(() => {
+    if (typeof window === "undefined") return 25;
+    const stored = window.localStorage.getItem("clearhr.compliance.pageSize");
+    const n = stored ? parseInt(stored, 10) : NaN;
+    return [10, 25, 50, 100, 250].includes(n) ? n : 25;
+  });
+  const [page, setPage] = useState<number>(1);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("clearhr.compliance.pageSize", String(pageSize));
+    }
+  }, [pageSize]);
 
   async function reload() {
     const res = await getComplianceRows({
@@ -109,6 +124,20 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
     if (!q) return rows;
     return rows.filter((r) => r.memberName.toLowerCase().includes(q));
   }, [rows, memberQuery]);
+
+  // Reset to page 1 whenever the visible-row set changes (filters,
+  // member-name query, or reload). Keeps the pager out of "page 7 of
+  // 3" territory.
+  useEffect(() => {
+    setPage(1);
+  }, [rows, memberQuery, pageSize]);
+
+  const totalRows = visible.length;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const startIdx = (currentPage - 1) * pageSize;
+  const endIdx = Math.min(startIdx + pageSize, totalRows);
+  const paged = visible.slice(startIdx, endIdx);
 
   const scopeLabel = crossUserAccess === "self" ? "Your own documents"
     : crossUserAccess === "team" ? "Your team"
@@ -238,7 +267,7 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
               </tr>
             </thead>
             <tbody>
-              {visible.map((r) => (
+              {paged.map((r) => (
                 <tr key={r.key} className="border-b last:border-b-0 hover:bg-muted/30">
                   <td className="px-4 py-2 font-medium">
                     <Link href={`/members/${r.memberId}/docs`} className="hover:underline">
@@ -292,6 +321,54 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
               ))}
             </tbody>
           </table>
+          {/* Pager */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <span>Rows per page</span>
+              <Select value={String(pageSize)} onValueChange={(v) => setPageSize(parseInt(v, 10))}>
+                <SelectTrigger className="h-7 w-20 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[10, 25, 50, 100, 250].map((n) => (
+                    <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-3">
+              <span>
+                {totalRows === 0
+                  ? "0 of 0"
+                  : `${startIdx + 1}–${endIdx} of ${totalRows}`}
+              </span>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="tabular-nums">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
