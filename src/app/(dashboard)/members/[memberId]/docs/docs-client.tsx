@@ -344,9 +344,8 @@ function DocList({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-            <th className="px-4 py-2 font-medium">File</th>
-            <th className="px-4 py-2 font-medium hidden sm:table-cell">Type</th>
-            <th className="px-4 py-2 font-medium hidden md:table-cell">Subtype</th>
+            <th className="w-8 px-4 py-2 font-medium" title="Source" />
+            <th className="px-4 py-2 font-medium">Document</th>
             <th className="px-4 py-2 font-medium">Status</th>
             <th className="px-4 py-2 font-medium hidden lg:table-cell">Expires</th>
             <th className="px-4 py-2 font-medium hidden lg:table-cell">Next review</th>
@@ -361,24 +360,19 @@ function DocList({
               className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
               onClick={() => onView(r)}
             >
+              <td className="px-4 py-2 text-muted-foreground" title={r.captureSource === "photo" ? "Captured on mobile" : "Uploaded from computer"}>
+                {r.captureSource === "photo"
+                  ? <Camera className="h-4 w-4" />
+                  : <UploadIcon className="h-4 w-4" />}
+              </td>
               <td className="px-4 py-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <p className="font-medium truncate">{r.fileName}</p>
-                    <p className="text-xs text-muted-foreground">{fmtFileSize(r.fileSize)}</p>
-                  </div>
+                <div className="min-w-0">
+                  <p className="font-medium truncate">
+                    {TYPE_LABEL[r.type] ?? r.type}
+                    {r.subtypeName ? <span className="text-muted-foreground"> / {r.subtypeName}</span> : null}
+                  </p>
+                  <p className="text-xs text-muted-foreground">{fmtFileSize(r.fileSize)}</p>
                 </div>
-              </td>
-              <td className="px-4 py-2 text-muted-foreground hidden sm:table-cell">
-                {TYPE_LABEL[r.type] ?? r.type}
-              </td>
-              <td className="px-4 py-2 hidden md:table-cell">
-                {r.subtypeName ? (
-                  <span className="inline-block rounded bg-muted px-2 py-0.5 text-xs">{r.subtypeName}</span>
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
               </td>
               <td className="px-4 py-2">
                 {r.status !== "not_applicable" && (
