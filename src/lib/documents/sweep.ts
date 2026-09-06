@@ -29,6 +29,7 @@ export interface SweepResult {
   expired: number;
   overdueReview: number;
   purged: number;
+  captureTasksTimedOut: number;
   errors: string[];
 }
 
@@ -243,5 +244,31 @@ export async function runDocumentsSweep(
     }
   }
 
-  return { expired, overdueReview, purged, errors };
+  // ---------------------------------------------------------------------------
+  // 4. Capture task timeout sweep — CLE-211. Flip any capture_task
+  //    rows whose expires_at has passed while still in 'pending' to
+  //    'timeout'. Realtime broadcasts the update so the web dialog
+  //    (if still open) surfaces the timeout copy. No audit — timeouts
+  //    are noise; if HR wants the row they can look at the queued
+  //    audit that fired at creation.
+  // ---------------------------------------------------------------------------
+  let captureTasksTimedOut = 0;
+  {
+    const nowIso = new Date().toISOString();
+    let q = admin
+      .from("capture_task")
+      .update({ status: "timeout" })
+      .eq("status", "pending")
+      .lt("expires_at", nowIso)
+      .select("id");
+    if (opts?.organisationId) q = q.eq("organisation_id", opts.organisationId);
+    const { data, error } = await q;
+    if (error) {
+      errors.push(`capture_task/timeout: ${error.message}`);
+    } else {
+      captureTasksTimedOut = (data ?? []).length;
+    }
+  }
+
+  return { expired, overdueReview, purged, captureTasksTimedOut, errors };
 }

@@ -147,7 +147,7 @@ export async function POST(request: Request) {
         expires_on: expiresOn,
         retention_class: subtype.retention_class,
         uploaded_by: callerMemberId,
-        metadata: { capture_source: "mobile_adhoc" },
+        // capture_source lives in the audit_log entry below.
       })
       .select("id")
       .single();

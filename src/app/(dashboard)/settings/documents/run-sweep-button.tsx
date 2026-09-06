@@ -50,10 +50,11 @@ export function RunSweepButton() {
       {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
 
       {result && (
-        <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
           <Stat label="Expired" value={result.expired} tone="orange" />
           <Stat label="Overdue review" value={result.overdueReview} tone="purple" />
           <Stat label="Purged" value={result.purged} tone="red" />
+          <Stat label="Capture timeouts" value={result.captureTasksTimedOut} tone="slate" />
         </div>
       )}
 
@@ -69,10 +70,11 @@ export function RunSweepButton() {
   );
 }
 
-function Stat({ label, value, tone }: { label: string; value: number; tone: "orange" | "purple" | "red" }) {
+function Stat({ label, value, tone }: { label: string; value: number; tone: "orange" | "purple" | "red" | "slate" }) {
   const cls =
     tone === "orange" ? "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300"
       : tone === "purple" ? "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300"
+      : tone === "slate" ? "bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-300"
       : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300";
   return (
     <div className={`rounded-md p-2 ${cls}`}>

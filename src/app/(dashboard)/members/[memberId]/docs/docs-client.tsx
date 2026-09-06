@@ -5,18 +5,21 @@
 // docs-client, but the underlying storage bucket + row now live on
 // the new `document` table.
 
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Calendar,
+  Camera,
   ExternalLink,
   FileText,
   Loader2,
   Pencil,
   Plus,
   RotateCcw,
+  Smartphone,
   Trash2,
   Undo2,
+  Upload as UploadIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,7 +46,9 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -65,6 +70,8 @@ import type { MemberDocumentRow, TrashedMemberDocumentRow } from "./document-typ
 import { STATUS_LABEL, STATUS_TONE } from "@/lib/document-status";
 import { ShieldCheck } from "lucide-react";
 import { VerifyDialog } from "@/components/documents/verify-dialog";
+import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { queueCaptureTask, cancelCaptureTask } from "./capture-actions";
 
 type UploadSubtype = {
   id: string;
@@ -115,6 +122,7 @@ function fmtFileSize(bytes: number): string {
 
 interface DocsClientProps {
   memberId: string;
+  memberName: string;
   canUpdate: boolean;
   canManageDeleted: boolean;
   canForceDelete: boolean;
@@ -122,6 +130,7 @@ interface DocsClientProps {
 
 export function DocsClient({
   memberId,
+  memberName,
   canUpdate,
   canManageDeleted,
   canForceDelete,
@@ -204,7 +213,7 @@ export function DocsClient({
             {canUpdate && (
               <Button type="button" size="sm" onClick={() => setUploadOpen(true)}>
                 <Plus className="mr-1.5 h-4 w-4" />
-                Upload
+                Add Document
               </Button>
             )}
           </div>
@@ -252,6 +261,7 @@ export function DocsClient({
       {uploadOpen && (
         <UploadDialog
           memberId={memberId}
+          memberName={memberName}
           onClose={() => setUploadOpen(false)}
           onUploaded={async () => {
             setUploadOpen(false);
@@ -574,19 +584,33 @@ function ViewerDialog({
 
 function UploadDialog({
   memberId,
+  memberName,
   onClose,
   onUploaded,
 }: {
   memberId: string;
+  memberName: string;
   onClose: () => void;
   onUploaded: () => Promise<void>;
 }) {
   const [subtypes, setSubtypes] = useState<UploadSubtype[]>([]);
   const [subtypeId, setSubtypeId] = useState<string>("");
-  const [file, setFile] = useState<File | null>(null);
   const [expiresOn, setExpiresOn] = useState<string>("");
+  const [note, setNote] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Hidden file input triggered by the Upload button — file picker
+  // only opens once the caller has committed to the Upload path, so
+  // it doesn't clutter the initial form.
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // CLE-211 — two-mode dialog. `form` is the metadata form + three
+  // footer buttons (Cancel / Upload / Photo). `waiting` is the state
+  // after Photo has queued a capture_task; a Realtime subscription
+  // on the task row drives the transition to closed (uploaded /
+  // cancelled / timeout).
+  const [mode, setMode] = useState<"form" | "waiting">("form");
+  const [captureTaskId, setCaptureTaskId] = useState<string | null>(null);
+  const [waitingMessage, setWaitingMessage] = useState<string>("");
 
   useEffect(() => {
     (async () => {
@@ -614,12 +638,71 @@ function UploadDialog({
     }
   }, [currentSubtype?.defaultExpiryMonths]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handleUpload() {
-    if (!file) { setError("Choose a file first"); return; }
+  // Realtime subscription on the queued capture task. Fires when the
+  // mobile app uploads, cancels, or the timeout sweep flips it.
+  useEffect(() => {
+    if (mode !== "waiting" || !captureTaskId) return;
+    const supabase = createSupabaseBrowserClient();
+    const channel = supabase
+      .channel(`capture_task:${captureTaskId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "capture_task",
+          filter: `id=eq.${captureTaskId}`,
+        },
+        (payload) => {
+          const row = payload.new as { status?: string } | null;
+          const status = row?.status;
+          if (status === "uploaded") {
+            // Success — refresh the docs list and close.
+            void onUploaded();
+          } else if (status === "cancelled") {
+            onClose();
+          } else if (status === "timeout") {
+            setWaitingMessage("This request timed out. Try again when you're ready to take the photo.");
+            setMode("form");
+            setCaptureTaskId(null);
+          }
+        },
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [mode, captureTaskId, onUploaded, onClose]);
+
+  // Cleanup: if the user closes the dialog while a task is pending,
+  // cancel it server-side so it doesn't hang around.
+  useEffect(() => {
+    return () => {
+      if (captureTaskId && mode === "waiting") {
+        void cancelCaptureTask(captureTaskId);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Upload path: click Upload → open OS file picker via hidden input →
+  // as soon as the user selects a file, submit immediately. Metadata
+  // is already committed in state at this point.
+  function handleUploadClick() {
     if (!subtypeId) { setError("Choose a subtype"); return; }
+    if (expiryRequired && !expiresOn) { setError("Expiry date is required for this subtype"); return; }
+    setError(null);
+    fileInputRef.current?.click();
+  }
+
+  function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+    const chosen = e.target.files?.[0] ?? null;
+    // Reset the input so re-selecting the same file re-triggers change.
+    e.target.value = "";
+    if (!chosen) return;
     setError(null);
     const fd = new FormData();
-    fd.set("file", file);
+    fd.set("file", chosen);
     fd.set("subtypeId", subtypeId);
     if (expiresOn) fd.set("expiresOn", expiresOn);
     startTransition(async () => {
@@ -632,84 +715,177 @@ function UploadDialog({
     });
   }
 
+  function handlePhoto() {
+    if (!subtypeId) { setError("Choose a subtype"); return; }
+    if (expiryRequired && !expiresOn) { setError("Expiry date is required for this subtype"); return; }
+    setError(null);
+    setWaitingMessage("");
+    startTransition(async () => {
+      const res = await queueCaptureTask(
+        memberId,
+        subtypeId,
+        expiresOn || null,
+        note.trim() || null,
+      );
+      if (!res.success) {
+        setError(res.error);
+        return;
+      }
+      setCaptureTaskId(res.taskId);
+      setMode("waiting");
+    });
+  }
+
+  async function handleWaitingCancel() {
+    if (captureTaskId) {
+      await cancelCaptureTask(captureTaskId);
+    }
+    onClose();
+  }
+
   // Group subtypes by type for the picker.
   const grouped = subtypes.reduce<Record<string, UploadSubtype[]>>((acc, s) => {
     (acc[s.type] ??= []).push(s);
     return acc;
   }, {});
 
+  // Metadata complete? Enables both Upload and Photo. Uploader still
+  // has to pick a file in the OS dialog after clicking Upload.
+  const metadataReady = subtypeId && (!expiryRequired || !!expiresOn);
+
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Upload document</DialogTitle>
+          <DialogTitle>{mode === "waiting" ? "Waiting for photo…" : "Add document"}</DialogTitle>
           <DialogDescription>
-            Choose the subtype the document belongs to. Fields marked required are driven
-            by the tenant&apos;s subtype configuration.
+            {mode === "waiting"
+              ? "Open ClearHR on your phone and take the photo. This dialog closes when the photo arrives."
+              : "Choose a subtype, then either Upload a file from this computer or take a Photo on your phone."}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          {error && (
-            <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
-          )}
+        {mode === "waiting" ? (
+          <div className="space-y-4">
+            <div className="flex flex-col items-center gap-3 rounded-md border bg-muted/30 p-6">
+              <Smartphone className="h-10 w-10 text-muted-foreground" />
+              <div className="text-center">
+                <p className="text-sm">
+                  Take a photo of{" "}
+                  <strong>{memberName}</strong>&apos;s{" "}
+                  <strong>{currentSubtype?.name ?? "document"}</strong>
+                </p>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Open ClearHR on your phone — the capture task is at the top of the app.
+                </p>
+              </div>
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={handleWaitingCancel}>Cancel</Button>
+            </DialogFooter>
+          </div>
+        ) : (
+          <>
+            <div className="space-y-4">
+              {error && (
+                <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
+              )}
+              {waitingMessage && !error && (
+                <div className="rounded-md bg-amber-100 p-3 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+                  {waitingMessage}
+                </div>
+              )}
 
-          <div className="space-y-2">
-            <Label>Subtype</Label>
-            <Select value={subtypeId} onValueChange={setSubtypeId}>
-              <SelectTrigger><SelectValue placeholder="Choose a subtype…" /></SelectTrigger>
-              <SelectContent>
-                {Object.entries(grouped).map(([type, list]) => (
-                  <div key={type}>
-                    <div className="px-2 py-1 text-[10px] font-semibold uppercase text-muted-foreground">
-                      {TYPE_LABEL[type] ?? type}
-                    </div>
-                    {list.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+              <div className="space-y-2">
+                <Label>Subtype</Label>
+                {/* Radix Select needs SelectItem children to be inside
+                    SelectGroup (or direct SelectContent children) —
+                    wrapping in a <div> silently drops items after the
+                    first group, which was truncating the list. */}
+                <Select value={subtypeId} onValueChange={setSubtypeId}>
+                  <SelectTrigger><SelectValue placeholder="Choose a subtype…" /></SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(grouped).map(([type, list]) => (
+                      <SelectGroup key={type}>
+                        <SelectLabel className="text-[10px] font-semibold uppercase text-muted-foreground">
+                          {TYPE_LABEL[type] ?? type}
+                        </SelectLabel>
+                        {list.map((s) => (
+                          <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                        ))}
+                      </SelectGroup>
                     ))}
-                  </div>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+                  </SelectContent>
+                </Select>
+              </div>
 
-          <div className="space-y-2">
-            <Label>
-              Expires on
-              {expiryRequired && <span className="ml-1 text-destructive">*</span>}
-            </Label>
-            <Input
-              type="date"
-              value={expiresOn}
-              onChange={(e) => setExpiresOn(e.target.value)}
-            />
-            {!expiryRequired && (
-              <p className="text-xs text-muted-foreground">Optional for this subtype.</p>
-            )}
-          </div>
+              <div className="space-y-2">
+                <Label>
+                  Expires on
+                  {expiryRequired && <span className="ml-1 text-destructive">*</span>}
+                </Label>
+                <Input
+                  type="date"
+                  value={expiresOn}
+                  onChange={(e) => setExpiresOn(e.target.value)}
+                />
+                {!expiryRequired && (
+                  <p className="text-xs text-muted-foreground">Optional for this subtype.</p>
+                )}
+              </div>
 
-          <div className="space-y-2">
-            <Label>File</Label>
-            <Input
-              type="file"
-              accept="image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
-            {file && (
-              <p className="text-xs text-muted-foreground">
-                {file.name} · {fmtFileSize(file.size)}
-              </p>
-            )}
-          </div>
-        </div>
+              {/* Hidden file input — opened by the Upload button
+                  after metadata is complete. Nothing visible until the
+                  caller commits to the Upload path. */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain"
+                className="hidden"
+                onChange={handleFileChosen}
+              />
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={pending}>Cancel</Button>
-          <Button onClick={handleUpload} disabled={pending || !file || !subtypeId}>
-            {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Upload
-          </Button>
-        </DialogFooter>
+              {/* Optional note — only meaningful for the Photo path. */}
+              {subtypeId && (
+                <div className="space-y-2">
+                  <Label>Note for the photo (optional)</Label>
+                  <Textarea
+                    value={note}
+                    onChange={(e) => setNote(e.target.value.slice(0, 240))}
+                    placeholder="e.g. both pages of the passport"
+                    rows={2}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Only shown in the mobile app when you use Photo — ignored for Upload.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <DialogFooter className="flex-wrap gap-2 sm:flex-nowrap">
+              <Button variant="outline" onClick={onClose} disabled={pending}>Cancel</Button>
+              <Button
+                onClick={handlePhoto}
+                disabled={pending || !metadataReady}
+                title="Take the photo on your paired mobile app"
+              >
+                {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Camera className="mr-1.5 h-4 w-4" />
+                Photo
+              </Button>
+              <Button
+                onClick={handleUploadClick}
+                disabled={pending || !metadataReady}
+                title="Pick a file from this computer"
+              >
+                {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <UploadIcon className="mr-1.5 h-4 w-4" />
+                Upload
+              </Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );

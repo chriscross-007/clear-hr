@@ -121,7 +121,9 @@ export async function POST(
         expires_on: task.expires_on,
         retention_class: subtype.retention_class,
         uploaded_by: callerMemberId,
-        metadata: { capture_source: "web_queued", capture_task_id: taskId },
+        // capture_source lives in the audit_log entry below — the
+        // `document` table has no `metadata` column and doesn't need
+        // one for Tier 1.
       })
       .select("id")
       .single();

@@ -36,6 +36,7 @@ type CallerCtx = {
   userId: string;
   memberId: string;
   organisationId: string;
+  crossUserAccess: "self" | "team" | "all";
   isSelf: (targetMemberId: string) => boolean;
   canViewTarget: (target: { memberId: string; teamId: string | null }) => boolean;
   canUpdateTarget: (target: { memberId: string; teamId: string | null }) => boolean;
@@ -55,6 +56,7 @@ async function resolveCaller(): Promise<CallerCtx | null> {
     userId: user.id,
     memberId: ctx.memberId,
     organisationId: ctx.organisationId,
+    crossUserAccess: rights.crossUserAccess,
     isSelf: (tid) => tid === ctx.memberId,
     canViewTarget: (target) => {
       if (target.memberId === ctx.memberId) return true;
@@ -447,9 +449,11 @@ export async function uploadMemberDocument(
     }
     // Past-expiry check removed to allow the retention/status sweeps
     // to be exercised end-to-end during testing.
-    // Self-upload check.
+    // Self-upload check — only enforced for callers whose scope is
+    // 'self' (employees). Admins uploading against their own record
+    // pass through unaffected.
     const isSelf = caller.isSelf(memberId);
-    if (isSelf && !subtype.employee_can_upload) {
+    if (isSelf && caller.crossUserAccess === "self" && !subtype.employee_can_upload) {
       return {
         success: false,
         error: "You can't upload documents of this kind against your own record. Ask HR to upload it.",
@@ -968,7 +972,17 @@ export async function getSubtypesForUpload(
       default_expiry_months: number | null;
       employee_can_upload: boolean;
     }>;
-    const filtered = isSelf ? rows.filter((r) => r.employee_can_upload) : rows;
+    // Org-scope subtypes have their own upload surface at
+    // /documents/organisation — never show them in the per-member
+    // "Add Document" picker.
+    const memberScoped = rows.filter((r) => r.type !== "organisation_document");
+    // Self-upload restriction only applies to callers who can't
+    // update anyone else's docs — i.e. `crossUserAccess = 'self'`.
+    // An admin viewing their own record should see every subtype;
+    // the hidden-flag semantics are about employees, not admins.
+    const filtered = isSelf && caller.crossUserAccess === "self"
+      ? memberScoped.filter((r) => r.employee_can_upload)
+      : memberScoped;
     return {
       success: true,
       subtypes: filtered.map((r) => ({

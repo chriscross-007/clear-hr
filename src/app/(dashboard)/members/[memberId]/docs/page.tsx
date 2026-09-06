@@ -25,9 +25,22 @@ export default async function DocsPage({
   if (!resolved || !resolved.rights.tabs.documents?.view) notFound();
   const canUpdate = resolved.rights.tabs.documents?.update === true;
 
+  // Name used by the "Waiting for photo…" dialog copy so HR can see
+  // which employee they're capturing for without having to remember.
+  const { data: memberRow } = await supabase
+    .from("members")
+    .select("first_name, last_name")
+    .eq("id", memberId)
+    .eq("organisation_id", resolved.ctx.organisationId)
+    .maybeSingle();
+  const memberName = memberRow
+    ? `${memberRow.first_name ?? ""} ${memberRow.last_name ?? ""}`.trim() || "Unknown"
+    : "Unknown";
+
   return (
     <DocsClient
       memberId={memberId}
+      memberName={memberName}
       canUpdate={canUpdate}
       // Per-member Trash follows documents.update — anyone who can
       // delete a member's docs can also restore them.
