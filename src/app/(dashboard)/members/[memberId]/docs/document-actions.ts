@@ -152,7 +152,7 @@ export async function listMemberDocuments(
     const { data, error } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", caller.organisationId)
       .eq("owner_scope", "member")
@@ -175,6 +175,7 @@ export async function listMemberDocuments(
       verified_on: string | null;
       verified_by: string | null;
       next_review_on: string | null;
+      capture_source: "upload" | "photo";
       document_subtype: { name: string; requires_verification: boolean } | { name: string; requires_verification: boolean }[] | null;
       members: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
     };
@@ -212,6 +213,7 @@ export async function listMemberDocuments(
             expiresOn: row.expires_on,
             nextReviewOn: row.next_review_on,
           }),
+          captureSource: row.capture_source ?? "upload",
         };
       });
     return { success: true, rows };
@@ -253,7 +255,7 @@ export async function listTrashedMemberDocuments(
     const { data: docs, error: docsErr } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, owner_id, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, owner_id, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", caller.organisationId)
       .eq("owner_scope", "member")
@@ -276,6 +278,7 @@ export async function listTrashedMemberDocuments(
       verified_on: string | null;
       verified_by: string | null;
       next_review_on: string | null;
+      capture_source: "upload" | "photo";
       owner_id: string | null;
       document_subtype: { name: string; requires_verification: boolean } | { name: string; requires_verification: boolean }[] | null;
       members: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
@@ -317,6 +320,7 @@ export async function listTrashedMemberDocuments(
             expiresOn: d.expires_on,
             nextReviewOn: d.next_review_on,
           }),
+          captureSource: (d.capture_source as "upload" | "photo") ?? "upload",
           queuedAt: q.queued_at as string,
           queuedBy: (q.queued_by as string | null) ?? null,
           forceDeleteReason: (q.force_delete_reason as string | null) ?? null,

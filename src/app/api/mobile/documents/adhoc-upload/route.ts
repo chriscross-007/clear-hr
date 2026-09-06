@@ -147,7 +147,7 @@ export async function POST(request: Request) {
         expires_on: expiresOn,
         retention_class: subtype.retention_class,
         uploaded_by: callerMemberId,
-        // capture_source lives in the audit_log entry below.
+        capture_source: "photo",
       })
       .select("id")
       .single();

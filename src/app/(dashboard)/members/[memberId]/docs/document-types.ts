@@ -25,6 +25,10 @@ export interface MemberDocumentRow {
   uploadedAt: string;
   /** Derived per-row status. Consumers should not recompute. */
   status: DocumentStatus;
+  /** Where the file came from — 'upload' via web file-picker or
+   *  'photo' via the mobile camera flow (either web-queued or
+   *  mobile-initiated ad-hoc). Drives the Source column icon. */
+  captureSource: "upload" | "photo";
 }
 
 export interface TrashedMemberDocumentRow extends MemberDocumentRow {
