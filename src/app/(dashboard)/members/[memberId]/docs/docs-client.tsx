@@ -152,6 +152,9 @@ export function DocsClient({
   const [editing, setEditing] = useState<MemberDocumentRow | null>(null);
   const [deleting, setDeleting] = useState<MemberDocumentRow | null>(null);
   const [verifying, setVerifying] = useState<{ mode: "verify" | "renew"; row: MemberDocumentRow } | null>(null);
+  // Transient success toast shown after a photo upload lands from
+  // the mobile app. Dialog closes → this appears for ~3s.
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -193,6 +196,13 @@ export function DocsClient({
 
   return (
     <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
+      {/* Transient "Received…" toast for photo uploads landing from
+          mobile. Sits above everything for ~3 seconds. */}
+      {toastMessage && (
+        <div className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white shadow-lg">
+          {toastMessage}
+        </div>
+      )}
       <StickyPageHeader>
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-2xl font-bold">
@@ -263,10 +273,14 @@ export function DocsClient({
           memberId={memberId}
           memberName={memberName}
           onClose={() => setUploadOpen(false)}
-          onUploaded={async () => {
+          onUploaded={async (details) => {
             setUploadOpen(false);
             await load();
             router.refresh();
+            if (details?.toastMessage) {
+              setToastMessage(details.toastMessage);
+              setTimeout(() => setToastMessage(null), 3000);
+            }
           }}
         />
       )}
@@ -367,11 +381,13 @@ function DocList({
               </td>
               <td className="px-4 py-2">
                 <div className="min-w-0">
-                  <p className="font-medium truncate">
+                  <p className="font-medium">
                     {TYPE_LABEL[r.type] ?? r.type}
                     {r.subtypeName ? <span className="text-muted-foreground"> / {r.subtypeName}</span> : null}
                   </p>
-                  <p className="text-xs text-muted-foreground">{fmtFileSize(r.fileSize)}</p>
+                  <p className="text-xs text-muted-foreground truncate" title={r.fileName}>
+                    {r.fileName} · {fmtFileSize(r.fileSize)}
+                  </p>
                 </div>
               </td>
               <td className="px-4 py-2">
@@ -446,8 +462,8 @@ function TrashList({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-            <th className="px-4 py-2 font-medium">File</th>
-            <th className="px-4 py-2 font-medium hidden md:table-cell">Subtype</th>
+            <th className="w-8 px-4 py-2 font-medium" title="Source" />
+            <th className="px-4 py-2 font-medium">Document</th>
             <th className="px-4 py-2 font-medium">Queued</th>
             <th className="px-4 py-2 font-medium hidden lg:table-cell">Force-delete reason</th>
             <th className="px-4 py-2 font-medium text-right" />
@@ -456,14 +472,21 @@ function TrashList({
         <tbody>
           {rows.map((r) => (
             <tr key={r.id} className="border-b last:border-b-0">
-              <td className="px-4 py-2">
-                <button type="button" className="flex items-center gap-2 min-w-0 text-left" onClick={() => onView(r)}>
-                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 truncate font-medium">{r.fileName}</span>
-                </button>
+              <td className="px-4 py-2 text-muted-foreground" title={r.captureSource === "photo" ? "Captured on mobile" : "Uploaded from computer"}>
+                {r.captureSource === "photo"
+                  ? <Camera className="h-4 w-4" />
+                  : <UploadIcon className="h-4 w-4" />}
               </td>
-              <td className="px-4 py-2 hidden md:table-cell">
-                {r.subtypeName ?? <span className="text-muted-foreground">—</span>}
+              <td className="px-4 py-2">
+                <button type="button" className="min-w-0 text-left" onClick={() => onView(r)}>
+                  <p className="font-medium">
+                    {TYPE_LABEL[r.type] ?? r.type}
+                    {r.subtypeName ? <span className="text-muted-foreground"> / {r.subtypeName}</span> : null}
+                  </p>
+                  <p className="text-xs text-muted-foreground truncate" title={r.fileName}>
+                    {r.fileName} · {fmtFileSize(r.fileSize)}
+                  </p>
+                </button>
               </td>
               <td className="px-4 py-2 text-muted-foreground">{fmtDateTime(r.queuedAt)}</td>
               <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell max-w-xs truncate">
@@ -585,7 +608,7 @@ function UploadDialog({
   memberId: string;
   memberName: string;
   onClose: () => void;
-  onUploaded: () => Promise<void>;
+  onUploaded: (details?: { toastMessage?: string }) => Promise<void>;
 }) {
   const [subtypes, setSubtypes] = useState<UploadSubtype[]>([]);
   const [subtypeId, setSubtypeId] = useState<string>("");
@@ -651,7 +674,15 @@ function UploadDialog({
     function handleStatus(status: string) {
       if (cancelled) return;
       if (status === "uploaded") {
-        void onUploaded();
+        // Compose the "Received Type / Subtype for {Name}" toast for
+        // the parent to display after the dialog closes.
+        const typeLabel = currentSubtype
+          ? (TYPE_LABEL[currentSubtype.type] ?? currentSubtype.type)
+          : "document";
+        const label = currentSubtype
+          ? `${typeLabel} / ${currentSubtype.name}`
+          : typeLabel;
+        void onUploaded({ toastMessage: `Received ${label} for ${memberName}` });
       } else if (status === "cancelled") {
         onClose();
       } else if (status === "timeout") {
