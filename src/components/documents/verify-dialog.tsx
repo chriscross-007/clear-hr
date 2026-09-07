@@ -30,8 +30,20 @@ interface Props {
   initialNextReviewOn?: string | null;
   /** Rendered in the dialog header. Typically the file name. */
   headerLabel?: string;
+  /** Read-only context shown at the top of the dialog so HR can see
+   *  what they're about to sign off on. */
+  contextSubtype?: string | null;
+  contextExpiresOn?: string | null;
+  contextNote?: string | null;
   onClose: () => void;
   onSaved: () => void | Promise<void>;
+}
+
+function fmtDateReadonly(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso + "T00:00:00Z").toLocaleDateString("en-GB", {
+    day: "2-digit", month: "short", year: "numeric", timeZone: "UTC",
+  });
 }
 
 export function VerifyDialog({
@@ -39,6 +51,9 @@ export function VerifyDialog({
   documentId,
   initialNextReviewOn,
   headerLabel,
+  contextSubtype,
+  contextExpiresOn,
+  contextNote,
   onClose,
   onSaved,
 }: Props) {
@@ -77,6 +92,32 @@ export function VerifyDialog({
 
         <div className="space-y-4">
           {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+
+          {/* Read-only context — mirrors the Edit dialog's field set
+              (Subtype, Expiry, Note) so HR can see what they're
+              verifying without hopping into Edit. */}
+          {(contextSubtype !== undefined || contextExpiresOn !== undefined || contextNote !== undefined) && (
+            <div className="rounded-md border bg-muted/30 p-3 space-y-2">
+              {contextSubtype !== undefined && (
+                <div className="flex items-baseline gap-2">
+                  <Label className="w-24 text-xs text-muted-foreground">Subtype</Label>
+                  <span className="text-sm">{contextSubtype ?? "—"}</span>
+                </div>
+              )}
+              {contextExpiresOn !== undefined && (
+                <div className="flex items-baseline gap-2">
+                  <Label className="w-24 text-xs text-muted-foreground">Expires on</Label>
+                  <span className="text-sm">{fmtDateReadonly(contextExpiresOn)}</span>
+                </div>
+              )}
+              {contextNote !== undefined && contextNote && (
+                <div className="flex items-baseline gap-2">
+                  <Label className="w-24 text-xs text-muted-foreground">Note</Label>
+                  <span className="text-sm whitespace-pre-wrap flex-1">{contextNote}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label>Verified on</Label>

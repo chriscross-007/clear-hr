@@ -240,6 +240,8 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
           documentId={verifying.documentId}
           initialNextReviewOn={verifying.nextReviewOn}
           headerLabel={`${verifying.memberName} — ${verifying.subtypeName}`}
+          contextSubtype={verifying.subtypeName}
+          contextExpiresOn={verifying.expiresOn}
           onClose={() => setVerifying(null)}
           onSaved={async () => {
             setVerifying(null);

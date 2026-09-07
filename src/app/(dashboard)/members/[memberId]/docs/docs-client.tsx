@@ -326,6 +326,9 @@ export function DocsClient({
           documentId={verifying.row.id}
           initialNextReviewOn={verifying.row.nextReviewOn}
           headerLabel={verifying.row.fileName}
+          contextSubtype={verifying.row.subtypeName}
+          contextExpiresOn={verifying.row.expiresOn}
+          contextNote={verifying.row.note}
           onClose={() => setVerifying(null)}
           onSaved={async () => {
             setVerifying(null);
