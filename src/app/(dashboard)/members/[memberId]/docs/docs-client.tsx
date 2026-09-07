@@ -983,6 +983,7 @@ function EditMetadataDialog({
   const [subtypes, setSubtypes] = useState<UploadSubtype[]>([]);
   const [subtypeId, setSubtypeId] = useState<string>(row.subtypeId ?? "");
   const [expiresOn, setExpiresOn] = useState<string>(row.expiresOn ?? "");
+  const [note, setNote] = useState<string>(row.note ?? "");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -1000,6 +1001,7 @@ function EditMetadataDialog({
       const res = await updateMemberDocumentMetadata(row.id, {
         subtypeId: subtypeId || null,
         expiresOn: expiresOn || null,
+        note: note.trim() ? note.trim() : null,
       });
       if (!res.success) { setError(res.error ?? "Failed to save"); return; }
       await onSaved();
@@ -1035,6 +1037,16 @@ function EditMetadataDialog({
           <div className="space-y-2">
             <Label>Expires on</Label>
             <Input type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Note</Label>
+            <Textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value.slice(0, 240))}
+              rows={2}
+              placeholder="Optional — free text, up to 240 characters"
+            />
           </div>
         </div>
 

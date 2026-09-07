@@ -152,7 +152,7 @@ export async function listMemberDocuments(
     const { data, error } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, note, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", caller.organisationId)
       .eq("owner_scope", "member")
@@ -176,6 +176,7 @@ export async function listMemberDocuments(
       verified_by: string | null;
       next_review_on: string | null;
       capture_source: "upload" | "photo";
+      note: string | null;
       document_subtype: { name: string; requires_verification: boolean } | { name: string; requires_verification: boolean }[] | null;
       members: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
     };
@@ -214,6 +215,7 @@ export async function listMemberDocuments(
             nextReviewOn: row.next_review_on,
           }),
           captureSource: row.capture_source ?? "upload",
+          note: row.note ?? null,
         };
       });
     return { success: true, rows };
@@ -255,7 +257,7 @@ export async function listTrashedMemberDocuments(
     const { data: docs, error: docsErr } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, owner_id, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, note, owner_id, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", caller.organisationId)
       .eq("owner_scope", "member")
@@ -279,6 +281,7 @@ export async function listTrashedMemberDocuments(
       verified_by: string | null;
       next_review_on: string | null;
       capture_source: "upload" | "photo";
+      note: string | null;
       owner_id: string | null;
       document_subtype: { name: string; requires_verification: boolean } | { name: string; requires_verification: boolean }[] | null;
       members: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
@@ -321,6 +324,7 @@ export async function listTrashedMemberDocuments(
             nextReviewOn: d.next_review_on,
           }),
           captureSource: (d.capture_source as "upload" | "photo") ?? "upload",
+          note: (d.note as string | null) ?? null,
           queuedAt: q.queued_at as string,
           queuedBy: (q.queued_by as string | null) ?? null,
           forceDeleteReason: (q.force_delete_reason as string | null) ?? null,
@@ -532,7 +536,7 @@ export async function uploadMemberDocument(
 
 export async function updateMemberDocumentMetadata(
   documentId: string,
-  patch: { subtypeId?: string | null; expiresOn?: string | null },
+  patch: { subtypeId?: string | null; expiresOn?: string | null; note?: string | null },
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const caller = await resolveCaller();
@@ -541,7 +545,7 @@ export async function updateMemberDocumentMetadata(
 
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, owner_id, type, subtype_id, expires_on, file_name, document_subtype!subtype_id(name)")
+      .select("id, organisation_id, owner_scope, owner_id, type, subtype_id, expires_on, file_name, note, document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== caller.organisationId || doc.owner_scope !== "member") {
@@ -583,6 +587,10 @@ export async function updateMemberDocumentMetadata(
       // sweeps to be exercised end-to-end during testing.
       updates.expires_on = patch.expiresOn;
     }
+    if (patch.note !== undefined) {
+      const trimmed = patch.note && patch.note.trim() ? patch.note.trim().slice(0, 240) : null;
+      updates.note = trimmed;
+    }
 
     if (Object.keys(updates).length === 1) {
       // Only `updated_at` — nothing changed.
@@ -602,6 +610,9 @@ export async function updateMemberDocumentMetadata(
     }
     if (patch.expiresOn !== undefined && patch.expiresOn !== doc.expires_on) {
       changes.expires_on = { old: doc.expires_on, new: patch.expiresOn };
+    }
+    if (patch.note !== undefined && (updates.note ?? null) !== (doc.note ?? null)) {
+      changes.note = { old: doc.note ?? null, new: updates.note ?? null };
     }
     if (Object.keys(changes).length > 0) {
       const st = doc.document_subtype as unknown as { name?: string } | { name?: string }[] | null;

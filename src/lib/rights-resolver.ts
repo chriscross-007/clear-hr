@@ -221,18 +221,22 @@ export async function getEffectiveRights(
 export async function getEffectiveRightsForUser(
   userId: string
 ): Promise<{ rights: EffectiveRights; ctx: MemberContext } | null> {
-  const supabase = await createClient();
-  const { data: member } = await supabase
+  // Use the admin client for the members lookup — the caller has
+  // already vouched for the `userId` (from a verified session cookie
+  // in web-server context, or a JWT-verified user id in mobile API
+  // routes). The cookie-backed SSR client would fail RLS in mobile
+  // routes where no cookies flow.
+  const admin = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+  const { data: member } = await admin
     .from("members")
     .select("id, organisation_id, team_id, rights_profile_id")
     .eq("user_id", userId)
     .single();
   if (!member?.rights_profile_id) return null;
 
-  const admin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
   const { data: profile } = await admin
     .from("rights_profiles")
     .select(PROFILE_COLUMNS)

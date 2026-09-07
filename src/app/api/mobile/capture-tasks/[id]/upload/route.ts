@@ -34,7 +34,7 @@ export async function POST(
     // 1. Task must exist, be pending, and be owned by caller.
     const { data: task } = await admin
       .from("capture_task")
-      .select("id, status, queued_by_user_id, organisation_id, target_member_id, subtype_id, expires_on, expires_at")
+      .select("id, status, queued_by_user_id, organisation_id, target_member_id, subtype_id, expires_on, expires_at, note")
       .eq("id", taskId)
       .single();
     if (!task || task.queued_by_user_id !== user.id) {
@@ -122,6 +122,7 @@ export async function POST(
         retention_class: subtype.retention_class,
         uploaded_by: callerMemberId,
         capture_source: "photo",
+        note: (task.note as string | null) ?? null,
       })
       .select("id")
       .single();
