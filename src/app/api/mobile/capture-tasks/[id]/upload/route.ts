@@ -6,6 +6,20 @@ const MAX_DOCUMENT_SIZE = 10 * 1024 * 1024;
 const STORAGE_BUCKET = "member-documents";
 
 /**
+ * Compose a display filename for a captured document. Sanitises the
+ * member name + subtype into a safe filename chunk. Same shape as
+ * the ad-hoc route's helper — kept inlined per route rather than
+ * pulled into a shared /lib file (small utility, two callers).
+ */
+function composeCaptureFilename(memberName: string, subtypeName: string, ext: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+  const safe = (s: string) => s.trim().replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  const mem = safe(memberName) || "member";
+  const sub = safe(subtypeName) || "document";
+  return `${mem}_${sub}_${today}${ext}`.slice(0, 255);
+}
+
+/**
  * POST /api/mobile/capture-tasks/:id/upload
  *
  * Multipart body: `file`. Server-side flow:
@@ -82,17 +96,28 @@ export async function POST(
       return NextResponse.json({ error: "Document type not available." }, { status: 500 });
     }
 
-    // 4. Upload bytes.
+    // 4. Compose a human-readable display filename: {FirstLast}_
+    //    {Subtype}_{YYYY-MM-DD}.{ext}. Users see Type / Subtype in the
+    //    grid but this becomes the download filename.
     const uuid = crypto.randomUUID();
     const ext = (() => {
-      if (file.name.includes(".")) return file.name.substring(file.name.lastIndexOf("."));
-      // Derive from content-type as fallback for mobile clients that
-      // don't send a filename.
       if (file.type === "image/jpeg") return ".jpg";
       if (file.type === "image/png") return ".png";
       if (file.type === "image/heic") return ".heic";
+      if (file.name.includes(".")) return file.name.substring(file.name.lastIndexOf("."));
       return "";
     })();
+    const { data: targetMember } = await admin
+      .from("members")
+      .select("first_name, last_name")
+      .eq("id", task.target_member_id as string)
+      .single();
+    const displayName = composeCaptureFilename(
+      `${targetMember?.first_name ?? ""} ${targetMember?.last_name ?? ""}`,
+      subtype.name as string,
+      ext,
+    );
+
     const storagePath = `${organisationId}/${uuid}${ext}`;
     const buffer = Buffer.from(await file.arrayBuffer());
     const { error: uploadError } = await admin.storage
@@ -101,11 +126,6 @@ export async function POST(
     if (uploadError) {
       return NextResponse.json({ error: uploadError.message }, { status: 500 });
     }
-
-    // 5. Document row insert.
-    const displayName = file.name && file.name.length > 0
-      ? file.name.substring(0, 255)
-      : `capture-${uuid}${ext}`;
     const { data: inserted, error: insertError } = await admin
       .from("document")
       .insert({
@@ -157,11 +177,6 @@ export async function POST(
     //
     // Include a separate capture-source annotation in metadata so the
     // audit reader can tell the flow apart from a normal Upload.
-    const { data: targetMember } = await admin
-      .from("members")
-      .select("first_name, last_name")
-      .eq("id", task.target_member_id as string)
-      .single();
     const targetLabel = `${targetMember?.first_name ?? ""} ${targetMember?.last_name ?? ""}`.trim() || "Unknown";
     const { data: callerMember } = await admin
       .from("members")

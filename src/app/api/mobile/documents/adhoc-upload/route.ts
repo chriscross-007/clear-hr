@@ -6,6 +6,18 @@ const MAX_DOCUMENT_SIZE = 10 * 1024 * 1024;
 const STORAGE_BUCKET = "member-documents";
 
 /**
+ * Same helper as the web-queued capture route — inlined per file
+ * rather than shared. Composes {Member}_{Subtype}_{YYYY-MM-DD}.{ext}.
+ */
+function composeCaptureFilename(memberName: string, subtypeName: string, ext: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+  const safe = (s: string) => s.trim().replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  const mem = safe(memberName) || "member";
+  const sub = safe(subtypeName) || "document";
+  return `${mem}_${sub}_${today}${ext}`.slice(0, 255);
+}
+
+/**
  * POST /api/mobile/documents/adhoc-upload
  *
  * Multipart body: `file`, `targetMemberId`, `subtypeId`, `expiresOn?`.
@@ -111,15 +123,26 @@ export async function POST(request: Request) {
       }, { status: 400 });
     }
 
-    // Upload bytes.
+    // Upload bytes + compose a display filename from member + subtype.
     const uuid = crypto.randomUUID();
     const ext = (() => {
-      if (file.name.includes(".")) return file.name.substring(file.name.lastIndexOf("."));
       if (file.type === "image/jpeg") return ".jpg";
       if (file.type === "image/png") return ".png";
       if (file.type === "image/heic") return ".heic";
+      if (file.name.includes(".")) return file.name.substring(file.name.lastIndexOf("."));
       return "";
     })();
+    const { data: targetMember } = await admin
+      .from("members")
+      .select("first_name, last_name")
+      .eq("id", target.id)
+      .single();
+    const displayName = composeCaptureFilename(
+      `${targetMember?.first_name ?? ""} ${targetMember?.last_name ?? ""}`,
+      subtype.name as string,
+      ext,
+    );
+
     const storagePath = `${organisationId}/${uuid}${ext}`;
     const buffer = Buffer.from(await file.arrayBuffer());
     const { error: uploadError } = await admin.storage
@@ -128,10 +151,6 @@ export async function POST(request: Request) {
     if (uploadError) {
       return NextResponse.json({ error: uploadError.message }, { status: 500 });
     }
-
-    const displayName = file.name && file.name.length > 0
-      ? file.name.substring(0, 255)
-      : `capture-${uuid}${ext}`;
     const { data: inserted, error: insertError } = await admin
       .from("document")
       .insert({
@@ -158,12 +177,7 @@ export async function POST(request: Request) {
       }, { status: 500 });
     }
 
-    // Audit.
-    const { data: targetMember } = await admin
-      .from("members")
-      .select("first_name, last_name")
-      .eq("id", target.id)
-      .single();
+    // Audit. `targetMember` was fetched above for the display name.
     const { data: callerMember } = await admin
       .from("members")
       .select("first_name, last_name")
