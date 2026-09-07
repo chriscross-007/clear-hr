@@ -51,7 +51,7 @@ export function SettingsTabs({
     { href: "/settings/rights-profiles", label: "User Rights",       icon: ShieldCheck,   visible: canEditRightsProfiles },
     { href: "/settings/profiles",       label: "Profiles",           icon: IdCard,        visible: canEditOrgSettings },
     { href: "/settings/groups",         label: "Groups",             icon: LayoutGrid,    visible: canManageTeams },
-    { href: "/settings/documents",      label: "Document Subtypes",  icon: FileText,      visible: canEditOrgSettings },
+    { href: "/settings/documents",      label: "Documents",          icon: FileText,      visible: canEditOrgSettings },
     { href: "/settings/backups",        label: "Backups",            icon: Database,      visible: canEditOrgSettings || canManageBilling },
     { href: "/settings/usage",          label: "Usage",              icon: HardDrive,     visible: canEditOrgSettings },
   ];
