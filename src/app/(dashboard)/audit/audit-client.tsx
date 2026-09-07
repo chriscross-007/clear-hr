@@ -391,6 +391,32 @@ function ChangeDetail({ changes }: { changes: Record<string, { old: unknown; new
   );
 }
 
+// Document type enum → human label. Applied when rendering the
+// `type_subtype` metadata so raw values like `organisation_document`
+// come through as "Organisation Document".
+const DOCUMENT_TYPE_LABELS: Record<string, string> = {
+  contract: "Contract",
+  certificate: "Certificate",
+  evidence: "Evidence",
+  attachment: "Attachment",
+  organisation_document: "Organisation Document",
+  // Legacy pre-CLE-210 values, kept for old audit rows.
+  policy: "Policy",
+  handbook: "Handbook",
+  other: "Other",
+};
+
+function prettifyTypeSubtype(raw: unknown): string {
+  if (typeof raw !== "string") return String(raw);
+  // Format is either "type" or "type / subtype".
+  const sep = raw.indexOf(" / ");
+  if (sep === -1) return DOCUMENT_TYPE_LABELS[raw] ?? raw;
+  const type = raw.slice(0, sep);
+  const subtype = raw.slice(sep + 3);
+  const prettyType = DOCUMENT_TYPE_LABELS[type] ?? type;
+  return `${prettyType} / ${subtype}`;
+}
+
 function MetadataDetail({ metadata }: { metadata: Record<string, unknown> }) {
   const entries = Object.entries(metadata).filter(([field]) => !HIDDEN_METADATA_KEYS.has(field));
   if (entries.length === 0) return null;
@@ -399,7 +425,9 @@ function MetadataDetail({ metadata }: { metadata: Record<string, unknown> }) {
       {entries.map(([field, value]) => (
         <div key={field} className="flex gap-2">
           <span className="font-medium min-w-[120px]">{FIELD_LABELS[field] ?? field}:</span>
-          <span>{formatValue(value)}</span>
+          <span>
+            {field === "type_subtype" ? prettifyTypeSubtype(value) : formatValue(value)}
+          </span>
         </div>
       ))}
     </div>
