@@ -13,7 +13,6 @@ import {
   ExternalLink,
   FileText,
   Loader2,
-  Pencil,
   Plus,
   RotateCcw,
   Smartphone,
@@ -68,8 +67,7 @@ import {
 } from "./document-actions";
 import type { MemberDocumentRow, TrashedMemberDocumentRow } from "./document-types";
 import { STATUS_LABEL, STATUS_TONE } from "@/lib/document-status";
-import { ShieldCheck } from "lucide-react";
-import { VerifyDialog } from "@/components/documents/verify-dialog";
+import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { queueCaptureTask, cancelCaptureTask } from "./capture-actions";
 
@@ -158,9 +156,8 @@ export function DocsClient({
   } | null>(null);
 
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [editing, setEditing] = useState<MemberDocumentRow | null>(null);
+  const [detailsDocId, setDetailsDocId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<MemberDocumentRow | null>(null);
-  const [verifying, setVerifying] = useState<{ mode: "verify" | "renew"; row: MemberDocumentRow } | null>(null);
   // Transient success toast shown after a photo upload lands from
   // the mobile app. Dialog closes → this appears for ~3s.
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -265,11 +262,21 @@ export function DocsClient({
         <DocList
           rows={rows}
           canUpdate={canUpdate}
-          onView={handleView}
+          onOpen={(r) => setDetailsDocId(r.id)}
           onDownload={handleDownload}
-          onEdit={(r) => setEditing(r)}
           onDelete={(r) => setDeleting(r)}
-          onVerify={(r) => setVerifying({ mode: r.verifiedOn ? "renew" : "verify", row: r })}
+        />
+      )}
+
+      {detailsDocId && (
+        <DocumentDetailsDialog
+          documentId={detailsDocId}
+          canUpdate={canUpdate}
+          onClose={() => setDetailsDocId(null)}
+          onSaved={async () => {
+            await load();
+            router.refresh();
+          }}
         />
       )}
 
@@ -294,19 +301,6 @@ export function DocsClient({
         />
       )}
 
-      {editing && (
-        <EditMetadataDialog
-          memberId={memberId}
-          row={editing}
-          onClose={() => setEditing(null)}
-          onSaved={async () => {
-            setEditing(null);
-            await load();
-            router.refresh();
-          }}
-        />
-      )}
-
       {deleting && (
         <DeleteDialog
           row={deleting}
@@ -314,24 +308,6 @@ export function DocsClient({
           onClose={() => setDeleting(null)}
           onDeleted={async () => {
             setDeleting(null);
-            await load();
-            router.refresh();
-          }}
-        />
-      )}
-
-      {verifying && (
-        <VerifyDialog
-          mode={verifying.mode}
-          documentId={verifying.row.id}
-          initialNextReviewOn={verifying.row.nextReviewOn}
-          headerLabel={verifying.row.fileName}
-          contextSubtype={verifying.row.subtypeName}
-          contextExpiresOn={verifying.row.expiresOn}
-          contextNote={verifying.row.note}
-          onClose={() => setVerifying(null)}
-          onSaved={async () => {
-            setVerifying(null);
             await load();
             router.refresh();
           }}
@@ -348,19 +324,16 @@ export function DocsClient({
 function DocList({
   rows,
   canUpdate,
-  onView,
+  onOpen,
   onDownload,
-  onEdit,
   onDelete,
-  onVerify,
 }: {
   rows: MemberDocumentRow[];
   canUpdate: boolean;
-  onView: (r: MemberDocumentRow) => void;
+  /** Row click → open the Document Details dialog (§7b.13). */
+  onOpen: (r: MemberDocumentRow) => void;
   onDownload: (r: MemberDocumentRow) => void;
-  onEdit: (r: MemberDocumentRow) => void;
   onDelete: (r: MemberDocumentRow) => void;
-  onVerify: (r: MemberDocumentRow) => void;
 }) {
   if (rows.length === 0) {
     return <p className="text-sm text-muted-foreground py-8 text-center">No documents yet.</p>;
@@ -384,7 +357,7 @@ function DocList({
             <tr
               key={r.id}
               className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
-              onClick={() => onView(r)}
+              onClick={() => onOpen(r)}
             >
               <td className="px-4 py-2 text-muted-foreground" title={r.captureSource === "photo" ? "Captured on mobile" : "Uploaded from computer"}>
                 {r.captureSource === "photo"
@@ -403,10 +376,17 @@ function DocList({
                 </div>
               </td>
               <td className="px-4 py-2">
-                {r.status !== "not_applicable" && (
-                  <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_TONE[r.status].className}`}>
-                    {STATUS_LABEL[r.status]}
-                  </span>
+                {r.statuses.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {r.statuses.map((s) => (
+                      <span
+                        key={s}
+                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_TONE[s].className}`}
+                      >
+                        {STATUS_LABEL[s]}
+                      </span>
+                    ))}
+                  </div>
                 )}
               </td>
               <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">
@@ -423,26 +403,10 @@ function DocList({
                   <Button variant="ghost" size="icon" aria-label="Download" onClick={(e) => { e.stopPropagation(); onDownload(r); }}>
                     <ExternalLink className="h-4 w-4" />
                   </Button>
-                  {canUpdate && r.requiresVerification && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={r.verifiedOn ? "Renew" : "Verify"}
-                      title={r.verifiedOn ? "Renew" : "Verify"}
-                      onClick={(e) => { e.stopPropagation(); onVerify(r); }}
-                    >
-                      <ShieldCheck className={`h-4 w-4 ${r.status === "verified" ? "text-green-600" : "text-amber-600"}`} />
-                    </Button>
-                  )}
                   {canUpdate && (
-                    <>
-                      <Button variant="ghost" size="icon" aria-label="Edit" onClick={(e) => { e.stopPropagation(); onEdit(r); }}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" aria-label="Delete" onClick={(e) => { e.stopPropagation(); onDelete(r); }}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </>
+                    <Button variant="ghost" size="icon" aria-label="Delete" onClick={(e) => { e.stopPropagation(); onDelete(r); }}>
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
                   )}
                 </div>
               </td>
@@ -965,101 +929,6 @@ function UploadDialog({
             </DialogFooter>
           </>
         )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// -------- Edit metadata dialog --------------------------------------------------
-
-function EditMetadataDialog({
-  memberId,
-  row,
-  onClose,
-  onSaved,
-}: {
-  memberId: string;
-  row: MemberDocumentRow;
-  onClose: () => void;
-  onSaved: () => Promise<void>;
-}) {
-  const [subtypes, setSubtypes] = useState<UploadSubtype[]>([]);
-  const [subtypeId, setSubtypeId] = useState<string>(row.subtypeId ?? "");
-  const [expiresOn, setExpiresOn] = useState<string>(row.expiresOn ?? "");
-  const [note, setNote] = useState<string>(row.note ?? "");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  useEffect(() => {
-    (async () => {
-      const res = await getSubtypesForUpload(memberId);
-      if (res.success) {
-        setSubtypes(res.subtypes.filter((s) => s.type === row.type));
-      }
-    })();
-  }, [memberId, row.type]);
-
-  function handleSave() {
-    startTransition(async () => {
-      const res = await updateMemberDocumentMetadata(row.id, {
-        subtypeId: subtypeId || null,
-        expiresOn: expiresOn || null,
-        note: note.trim() ? note.trim() : null,
-      });
-      if (!res.success) { setError(res.error ?? "Failed to save"); return; }
-      await onSaved();
-    });
-  }
-
-  return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Edit metadata</DialogTitle>
-          <DialogDescription>
-            Update the subtype and expiry. The document&apos;s type is fixed and can
-            only be changed by re-uploading.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4">
-          {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
-
-          <div className="space-y-2">
-            <Label>Subtype</Label>
-            <Select value={subtypeId} onValueChange={setSubtypeId}>
-              <SelectTrigger><SelectValue placeholder="Choose a subtype…" /></SelectTrigger>
-              <SelectContent>
-                {subtypes.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Expires on</Label>
-            <Input type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Note</Label>
-            <Textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value.slice(0, 240))}
-              rows={2}
-              placeholder="Optional — free text, up to 240 characters"
-            />
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={pending}>Cancel</Button>
-          <Button onClick={handleSave} disabled={pending}>
-            {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Save
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

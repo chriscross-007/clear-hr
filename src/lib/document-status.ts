@@ -1,10 +1,18 @@
-// CLE-207 — Pure status derivation. Called by list responses and
-// the compliance dashboard so callers see a single truth. No
-// server-only dependencies — safe to import from client components
-// that want to compute status locally on freshly-edited rows.
+// CLE-207 — Pure status derivation. Called by list responses and the
+// compliance dashboard so every surface agrees on what a document's
+// state is. No server-only dependencies — safe to import from client
+// components that want to compute status locally on freshly-edited
+// rows.
+//
+// Since CLE-211 follow-up: a document can carry multiple statuses
+// simultaneously (an unverified passport can be both
+// `pending_verification` and `expiring_soon`). `deriveDocumentStatuses`
+// returns every applicable status. No priority weighting — all
+// applicable statuses are equal citizens; UI decides how to stack
+// their pills and the compliance dashboard filters match any row
+// whose status set includes the picked filter.
 
 export type DocumentStatus =
-  | "not_applicable"
   | "pending_verification"
   | "verified"
   | "expiring_soon"
@@ -27,28 +35,48 @@ export interface StatusInputs {
 const EXPIRING_SOON_WINDOW_DAYS = 30;
 
 /**
- * Derive the display status of a document. Order of precedence:
- *   1. Subtype doesn't require verification → not_applicable.
- *   2. Not yet verified → pending_verification.
- *   3. expires_on ≤ today → expired.
- *   4. next_review_on ≤ today → overdue_review.
- *   5. Either expires_on or next_review_on within 30 days → expiring_soon.
- *   6. Otherwise → verified.
+ * Derive every applicable display status for a document.
+ *
+ * Rules:
+ *   - Subtype doesn't require verification → `[]` (no pills, no
+ *     attention needed).
+ *   - Not yet verified → adds `pending_verification`.
+ *   - `expires_on ≤ today` → adds `expired`.
+ *     Else `expires_on ≤ today + 30 days` → adds `expiring_soon`.
+ *   - `next_review_on ≤ today` → adds `overdue_review`.
+ *     Else `next_review_on ≤ today + 30 days` → adds `expiring_soon`
+ *     (unless already added by the expiry check).
+ *   - If nothing above added anything, → `[verified]`.
+ *
+ * The returned array is ordered by "when it fired" — deterministic
+ * for tests but no weighting is implied. Callers that need a single
+ * label (email subject, screen reader summary) should compose from
+ * the array themselves.
  */
-export function deriveDocumentStatus(inp: StatusInputs): DocumentStatus {
-  if (!inp.requiresVerification) return "not_applicable";
+export function deriveDocumentStatuses(inp: StatusInputs): DocumentStatus[] {
+  if (!inp.requiresVerification) return [];
+
   const today = inp.today ?? new Date().toISOString().slice(0, 10);
-
-  if (!inp.verifiedOn) return "pending_verification";
-
-  if (inp.expiresOn !== null && inp.expiresOn <= today) return "expired";
-  if (inp.nextReviewOn !== null && inp.nextReviewOn <= today) return "overdue_review";
-
   const soon = addDaysIso(today, EXPIRING_SOON_WINDOW_DAYS);
-  if (inp.expiresOn !== null && inp.expiresOn <= soon) return "expiring_soon";
-  if (inp.nextReviewOn !== null && inp.nextReviewOn <= soon) return "expiring_soon";
+  const statuses: DocumentStatus[] = [];
 
-  return "verified";
+  if (!inp.verifiedOn) statuses.push("pending_verification");
+
+  if (inp.expiresOn !== null) {
+    if (inp.expiresOn <= today) statuses.push("expired");
+    else if (inp.expiresOn <= soon) statuses.push("expiring_soon");
+  }
+
+  if (inp.nextReviewOn !== null) {
+    if (inp.nextReviewOn <= today) statuses.push("overdue_review");
+    else if (inp.nextReviewOn <= soon && !statuses.includes("expiring_soon")) {
+      statuses.push("expiring_soon");
+    }
+  }
+
+  if (statuses.length === 0) statuses.push("verified");
+
+  return statuses;
 }
 
 function addDaysIso(iso: string, days: number): string {
@@ -58,7 +86,6 @@ function addDaysIso(iso: string, days: number): string {
 }
 
 export const STATUS_LABEL: Record<DocumentStatus, string> = {
-  not_applicable: "N/A",
   pending_verification: "Pending verification",
   verified: "Verified",
   expiring_soon: "Expiring soon",
@@ -70,7 +97,6 @@ export const STATUS_TONE: Record<DocumentStatus, {
   /** Tailwind classes for the pill background + text colour. */
   className: string;
 }> = {
-  not_applicable: { className: "bg-muted text-muted-foreground" },
   pending_verification: { className: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300" },
   verified: { className: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300" },
   expiring_soon: { className: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300" },

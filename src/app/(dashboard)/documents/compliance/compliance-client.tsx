@@ -4,10 +4,10 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { AlertCircle, ChevronLeft, ChevronRight, ExternalLink, Filter, ShieldCheck, XCircle } from "lucide-react";
+import { AlertCircle, ChevronLeft, ChevronRight, ExternalLink, Filter, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { VerifyDialog } from "@/components/documents/verify-dialog";
+import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
 import {
   Select,
   SelectContent,
@@ -63,7 +63,10 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
   const [statusFilter, setStatusFilter] = useState<Set<DocumentStatus | "not_uploaded">>(new Set());
   const [memberQuery, setMemberQuery] = useState<string>("");
   const [pending, startTransition] = useTransition();
-  const [verifying, setVerifying] = useState<ComplianceRow | null>(null);
+  // §7b.13 — Compliance row click opens the shared Document Details
+  // dialog for real doc rows; synthetic not_uploaded rows route to
+  // the target member's per-member docs page for upload instead.
+  const [detailsDocId, setDetailsDocId] = useState<string | null>(null);
   // Pagination — client-side; row list is already fetched in full.
   // Persist the page-size preference in localStorage so the next visit
   // keeps whatever the user last picked.
@@ -234,19 +237,12 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
         <div className="mt-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
       )}
 
-      {verifying?.documentId && (
-        <VerifyDialog
-          mode={verifying.verifiedOn ? "renew" : "verify"}
-          documentId={verifying.documentId}
-          initialNextReviewOn={verifying.nextReviewOn}
-          headerLabel={`${verifying.memberName} — ${verifying.subtypeName}`}
-          contextSubtype={verifying.subtypeName}
-          contextExpiresOn={verifying.expiresOn}
-          onClose={() => setVerifying(null)}
-          onSaved={async () => {
-            setVerifying(null);
-            await reload();
-          }}
+      {detailsDocId && (
+        <DocumentDetailsDialog
+          documentId={detailsDocId}
+          canUpdate={crossUserAccess !== "self"}
+          onClose={() => setDetailsDocId(null)}
+          onSaved={async () => { await reload(); }}
         />
       )}
 
@@ -270,19 +266,35 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
             </thead>
             <tbody>
               {paged.map((r) => (
-                <tr key={r.key} className="border-b last:border-b-0 hover:bg-muted/30">
+                <tr
+                  key={r.key}
+                  className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
+                  onClick={() => {
+                    if (r.documentId) setDetailsDocId(r.documentId);
+                    else window.location.assign(`/members/${r.memberId}/docs`);
+                  }}
+                >
                   <td className="px-4 py-2 font-medium">
-                    <Link href={`/members/${r.memberId}/docs`} className="hover:underline">
+                    <Link
+                      href={`/members/${r.memberId}/docs`}
+                      className="hover:underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       {r.memberName}
                     </Link>
                   </td>
                   <td className="px-4 py-2">{r.subtypeName}</td>
                   <td className="px-4 py-2">
-                    <span
-                      className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_ALL_TONE[r.status].className}`}
-                    >
-                      {STATUS_ALL_LABEL[r.status]}
-                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {r.statuses.map((s) => (
+                        <span
+                          key={s}
+                          className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_ALL_TONE[s].className}`}
+                        >
+                          {STATUS_ALL_LABEL[s]}
+                        </span>
+                      ))}
+                    </div>
                   </td>
                   <td className="px-4 py-2 text-muted-foreground hidden md:table-cell">
                     {fmtDate(r.expiresOn)}
@@ -300,20 +312,10 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
                   </td>
                   <td className="px-4 py-2 text-right">
                     <div className="flex items-center justify-end gap-1">
-                      {r.documentId && (r.status === "pending_verification" || r.status === "expiring_soon" || r.status === "expired" || r.status === "overdue_review") && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setVerifying(r)}
-                          title={r.status === "pending_verification" ? "Verify" : "Renew"}
-                        >
-                          <ShieldCheck className="mr-1 h-3.5 w-3.5" />
-                          {r.status === "pending_verification" ? "Verify" : "Renew"}
-                        </Button>
-                      )}
                       <Link
                         href={`/members/${r.memberId}/docs`}
                         className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs hover:bg-accent"
+                        onClick={(e) => e.stopPropagation()}
                       >
                         Open <ExternalLink className="h-3 w-3" />
                       </Link>

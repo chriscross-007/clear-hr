@@ -19,7 +19,7 @@ import {
   type MemberDocumentRow,
   type TrashedMemberDocumentRow,
 } from "./document-types";
-import { deriveDocumentStatus } from "@/lib/document-status";
+import { deriveDocumentStatuses } from "@/lib/document-status";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -208,7 +208,7 @@ export async function listMemberDocuments(
           disposalDate: row.disposal_date,
           uploadedBy: uploader,
           uploadedAt: row.uploaded_at,
-          status: deriveDocumentStatus({
+          statuses: deriveDocumentStatuses({
             requiresVerification,
             verifiedOn: row.verified_on,
             expiresOn: row.expires_on,
@@ -221,6 +221,164 @@ export async function listMemberDocuments(
     return { success: true, rows };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred", rows: [] };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Single-document detail fetch — used by the Document Details dialog
+// (§7b.13) so both the per-member grid and the Compliance dashboard
+// route through the same action rather than each shape-shifting their
+// list rows.
+// ---------------------------------------------------------------------------
+
+export interface DocumentDetailContext {
+  row: MemberDocumentRow;
+  targetMemberId: string;
+  targetMemberName: string;
+  uploadedByName: string | null;
+  verifiedByName: string | null;
+  verificationNotes: string | null;
+  isSelf: boolean;
+}
+
+export async function getDocumentDetail(
+  documentId: string,
+): Promise<{ success: true; detail: DocumentDetailContext } | { success: false; error: string }> {
+  try {
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const admin = getAdmin();
+
+    const { data: doc } = await admin
+      .from("document")
+      .select(
+        "id, organisation_id, owner_scope, owner_id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, note, verification_notes, document_subtype!subtype_id(name, requires_verification)",
+      )
+      .eq("id", documentId)
+      .single();
+    if (!doc || doc.organisation_id !== caller.organisationId || doc.owner_scope !== "member" || !doc.owner_id) {
+      return { success: false, error: "Document not found" };
+    }
+    const target = await getTarget(admin, doc.owner_id as string, caller.organisationId);
+    if (!target) return { success: false, error: "Document not found" };
+    if (!caller.canViewTarget({ memberId: target.id, teamId: target.team_id })) {
+      return { success: false, error: "Document not found" };
+    }
+
+    // Two-step hydration for uploader + verifier names.
+    const ids = new Set<string>();
+    if (doc.uploaded_by) ids.add(doc.uploaded_by as string);
+    if (doc.verified_by) ids.add(doc.verified_by as string);
+    let uploaderName: string | null = null;
+    let verifierName: string | null = null;
+    if (ids.size > 0) {
+      const { data: people } = await admin
+        .from("members")
+        .select("id, first_name, last_name")
+        .in("id", Array.from(ids));
+      const nameOf = (id: string | null) => {
+        if (!id) return null;
+        const p = (people ?? []).find((r) => r.id === id) as { first_name?: string; last_name?: string } | undefined;
+        if (!p) return null;
+        const n = `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim();
+        return n || null;
+      };
+      uploaderName = nameOf(doc.uploaded_by as string | null);
+      verifierName = nameOf(doc.verified_by as string | null);
+    }
+
+    const st = doc.document_subtype as unknown as { name?: string; requires_verification?: boolean } | { name?: string; requires_verification?: boolean }[] | null;
+    const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
+    const requiresVerification = stObj?.requires_verification === true;
+
+    const row: MemberDocumentRow = {
+      id: doc.id as string,
+      fileName: doc.file_name as string,
+      fileSize: doc.file_size as number,
+      contentType: doc.content_type as string,
+      type: doc.type as string,
+      subtypeId: (doc.subtype_id as string | null) ?? null,
+      subtypeName: stObj?.name ?? null,
+      requiresVerification,
+      verifiedOn: (doc.verified_on as string | null) ?? null,
+      verifiedBy: (doc.verified_by as string | null) ?? null,
+      nextReviewOn: (doc.next_review_on as string | null) ?? null,
+      expiresOn: (doc.expires_on as string | null) ?? null,
+      retentionClass: (doc.retention_class as string) ?? "other",
+      disposalDate: (doc.disposal_date as string | null) ?? null,
+      uploadedBy: uploaderName ?? "Unknown",
+      uploadedAt: doc.uploaded_at as string,
+      statuses: deriveDocumentStatuses({
+        requiresVerification,
+        verifiedOn: (doc.verified_on as string | null) ?? null,
+        expiresOn: (doc.expires_on as string | null) ?? null,
+        nextReviewOn: (doc.next_review_on as string | null) ?? null,
+      }),
+      captureSource: ((doc.capture_source as "upload" | "photo" | null) ?? "upload"),
+      note: (doc.note as string | null) ?? null,
+    };
+
+    return {
+      success: true,
+      detail: {
+        row,
+        targetMemberId: target.id,
+        targetMemberName: `${target.first_name ?? ""} ${target.last_name ?? ""}`.trim() || "Unknown",
+        uploadedByName: uploaderName,
+        verifiedByName: verifierName,
+        verificationNotes: (doc.verification_notes as string | null) ?? null,
+        isSelf: caller.isSelf(target.id),
+      },
+    };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Audit history for a single document — powers §7b.13 History section.
+// ---------------------------------------------------------------------------
+
+export interface DocumentAuditEntry {
+  id: string;
+  actorName: string;
+  action: string;
+  createdAt: string;
+  metadata: Record<string, unknown> | null;
+  changes: Record<string, unknown> | null;
+}
+
+export async function getDocumentAuditHistory(
+  documentId: string,
+): Promise<{ success: true; entries: DocumentAuditEntry[] } | { success: false; error: string }> {
+  try {
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const admin = getAdmin();
+
+    // Confirm the caller can see this doc before returning its history.
+    const detail = await getDocumentDetail(documentId);
+    if (!detail.success) return { success: false, error: detail.error };
+
+    const { data, error } = await admin
+      .from("audit_log")
+      .select("id, actor_name, action, created_at, metadata, changes")
+      .eq("target_id", documentId)
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) return { success: false, error: error.message };
+
+    const entries: DocumentAuditEntry[] = (data ?? []).map((r) => ({
+      id: r.id as string,
+      actorName: (r.actor_name as string | null) ?? "System",
+      action: r.action as string,
+      createdAt: r.created_at as string,
+      metadata: (r.metadata as Record<string, unknown> | null) ?? null,
+      changes: (r.changes as Record<string, unknown> | null) ?? null,
+    }));
+    return { success: true, entries };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }
 }
 
@@ -317,7 +475,7 @@ export async function listTrashedMemberDocuments(
           disposalDate: d.disposal_date,
           uploadedBy: uploader,
           uploadedAt: d.uploaded_at,
-          status: deriveDocumentStatus({
+          statuses: deriveDocumentStatuses({
             requiresVerification,
             verifiedOn: d.verified_on,
             expiresOn: d.expires_on,

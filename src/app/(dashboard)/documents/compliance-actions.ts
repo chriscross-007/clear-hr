@@ -15,7 +15,7 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { logAudit } from "@/lib/audit";
-import { deriveDocumentStatus, type DocumentStatus } from "@/lib/document-status";
+import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
 
 function getAdmin() {
   return createAdminClient(
@@ -35,7 +35,7 @@ export interface ComplianceRow {
   subtypeName: string;
   subtypeType: string;
   retentionClass: string;
-  status: DocumentStatus | "not_uploaded";
+  statuses: (DocumentStatus | "not_uploaded")[];
   /** Present when the row is backed by a real document. */
   documentId: string | null;
   fileName: string | null;
@@ -158,12 +158,12 @@ export async function getComplianceRows(filters?: {
       const subtype = d.subtype_id ? subtypeById.get(d.subtype_id) : null;
       // Exclude RTW subtypes when the member has opted out.
       if (member.rtw_not_required && subtype?.retention_class === "right_to_work") continue;
-      const status = deriveDocumentStatus({
+      const statuses = deriveDocumentStatuses({
         requiresVerification: subtype?.requires_verification === true,
         verifiedOn: d.verified_on,
         expiresOn: d.expires_on,
         nextReviewOn: d.next_review_on,
-      });
+      }) as (DocumentStatus | "not_uploaded")[];
       rows.push({
         key: `doc:${d.id}`,
         memberId: member.id,
@@ -173,7 +173,7 @@ export async function getComplianceRows(filters?: {
         subtypeName: subtype?.name ?? "—",
         subtypeType: d.type,
         retentionClass: subtype?.retention_class ?? "other",
-        status,
+        statuses,
         documentId: d.id,
         fileName: d.file_name,
         verifiedOn: d.verified_on,
@@ -200,7 +200,7 @@ export async function getComplianceRows(filters?: {
           subtypeName: s.name,
           subtypeType: s.type,
           retentionClass: s.retention_class,
-          status: "not_uploaded",
+          statuses: ["not_uploaded"],
           documentId: null,
           fileName: null,
           verifiedOn: null,
@@ -218,15 +218,25 @@ export async function getComplianceRows(filters?: {
     const wanted = filters?.status ?? (filters?.includeAllStatuses ? null : ATTENTION_STATUSES);
     if (wanted) {
       const set = new Set(wanted);
-      filtered = filtered.filter((r) => set.has(r.status));
+      // Row matches if ANY of its statuses is in the wanted set.
+      filtered = filtered.filter((r) => r.statuses.some((s) => set.has(s)));
     }
 
-    // Sort: expired first, then overdue, then expiring, then pending, then not_uploaded, then verified.
+    // Sort by the row's most-severe status. Row without any status
+    // (e.g. subtype without verification) sorts last.
     const order: Record<string, number> = {
       expired: 1, overdue_review: 2, expiring_soon: 3,
-      pending_verification: 4, not_uploaded: 5, verified: 6, not_applicable: 7,
+      pending_verification: 4, not_uploaded: 5, verified: 6,
     };
-    filtered.sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9)
+    function rowRank(r: ComplianceRow): number {
+      let best = 9;
+      for (const s of r.statuses) {
+        const rank = order[s] ?? 9;
+        if (rank < best) best = rank;
+      }
+      return best;
+    }
+    filtered.sort((a, b) => rowRank(a) - rowRank(b)
       || a.memberName.localeCompare(b.memberName)
       || a.subtypeName.localeCompare(b.subtypeName));
 

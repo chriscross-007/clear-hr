@@ -23,8 +23,10 @@ export interface MemberDocumentRow {
   disposalDate: string | null;
   uploadedBy: string;
   uploadedAt: string;
-  /** Derived per-row status. Consumers should not recompute. */
-  status: DocumentStatus;
+  /** Derived per-row statuses (possibly multiple — CLE-211 follow-up).
+   *  Empty array means "no verification workflow applies". Consumers
+   *  should not recompute — treat this as the single source of truth. */
+  statuses: DocumentStatus[];
   /** Where the file came from — 'upload' via web file-picker or
    *  'photo' via the mobile camera flow (either web-queued or
    *  mobile-initiated ad-hoc). Drives the Source column icon. */
