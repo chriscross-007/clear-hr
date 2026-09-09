@@ -694,7 +694,7 @@ export async function uploadMemberDocument(
 
 export async function updateMemberDocumentMetadata(
   documentId: string,
-  patch: { subtypeId?: string | null; expiresOn?: string | null; note?: string | null },
+  patch: { subtypeId?: string | null; expiresOn?: string | null; nextReviewOn?: string | null; note?: string | null },
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const caller = await resolveCaller();
@@ -703,7 +703,7 @@ export async function updateMemberDocumentMetadata(
 
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, owner_id, type, subtype_id, expires_on, file_name, note, document_subtype!subtype_id(name)")
+      .select("id, organisation_id, owner_scope, owner_id, type, subtype_id, expires_on, next_review_on, file_name, note, document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== caller.organisationId || doc.owner_scope !== "member") {
@@ -745,6 +745,9 @@ export async function updateMemberDocumentMetadata(
       // sweeps to be exercised end-to-end during testing.
       updates.expires_on = patch.expiresOn;
     }
+    if (patch.nextReviewOn !== undefined) {
+      updates.next_review_on = patch.nextReviewOn;
+    }
     if (patch.note !== undefined) {
       const trimmed = patch.note && patch.note.trim() ? patch.note.trim().slice(0, 240) : null;
       updates.note = trimmed;
@@ -768,6 +771,9 @@ export async function updateMemberDocumentMetadata(
     }
     if (patch.expiresOn !== undefined && patch.expiresOn !== doc.expires_on) {
       changes.expires_on = { old: doc.expires_on, new: patch.expiresOn };
+    }
+    if (patch.nextReviewOn !== undefined && patch.nextReviewOn !== doc.next_review_on) {
+      changes.next_review_on = { old: doc.next_review_on, new: patch.nextReviewOn };
     }
     if (patch.note !== undefined && (updates.note ?? null) !== (doc.note ?? null)) {
       changes.note = { old: doc.note ?? null, new: updates.note ?? null };

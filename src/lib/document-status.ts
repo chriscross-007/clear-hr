@@ -17,6 +17,7 @@ export type DocumentStatus =
   | "verified"
   | "expiring_soon"
   | "expired"
+  | "review_due_soon"
   | "overdue_review";
 
 export interface StatusInputs {
@@ -44,8 +45,9 @@ const EXPIRING_SOON_WINDOW_DAYS = 30;
  *   - `expires_on ≤ today` → adds `expired`.
  *     Else `expires_on ≤ today + 30 days` → adds `expiring_soon`.
  *   - `next_review_on ≤ today` → adds `overdue_review`.
- *     Else `next_review_on ≤ today + 30 days` → adds `expiring_soon`
- *     (unless already added by the expiry check).
+ *     Else `next_review_on ≤ today + 30 days` → adds
+ *     `review_due_soon` (kept distinct from `expiring_soon`, which
+ *     is about the document's expiry date, not its review date).
  *   - If nothing above added anything, → `[verified]`.
  *
  * The returned array is ordered by "when it fired" — deterministic
@@ -69,9 +71,7 @@ export function deriveDocumentStatuses(inp: StatusInputs): DocumentStatus[] {
 
   if (inp.nextReviewOn !== null) {
     if (inp.nextReviewOn <= today) statuses.push("overdue_review");
-    else if (inp.nextReviewOn <= soon && !statuses.includes("expiring_soon")) {
-      statuses.push("expiring_soon");
-    }
+    else if (inp.nextReviewOn <= soon) statuses.push("review_due_soon");
   }
 
   if (statuses.length === 0) statuses.push("verified");
@@ -90,6 +90,7 @@ export const STATUS_LABEL: Record<DocumentStatus, string> = {
   verified: "Verified",
   expiring_soon: "Expiring soon",
   expired: "Expired",
+  review_due_soon: "Review due soon",
   overdue_review: "Overdue review",
 };
 
@@ -101,5 +102,6 @@ export const STATUS_TONE: Record<DocumentStatus, {
   verified: { className: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300" },
   expiring_soon: { className: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300" },
   expired: { className: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300" },
+  review_due_soon: { className: "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300" },
   overdue_review: { className: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300" },
 };

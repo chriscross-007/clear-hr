@@ -50,6 +50,7 @@ const ATTENTION_STATUSES: (DocumentStatus | "not_uploaded")[] = [
   "expired",
   "expiring_soon",
   "overdue_review",
+  "review_due_soon",
 ];
 
 /**

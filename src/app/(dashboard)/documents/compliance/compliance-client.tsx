@@ -24,6 +24,7 @@ const STATUS_OPTIONS: (DocumentStatus | "not_uploaded")[] = [
   "expired",
   "overdue_review",
   "expiring_soon",
+  "review_due_soon",
   "pending_verification",
   "not_uploaded",
   "verified",

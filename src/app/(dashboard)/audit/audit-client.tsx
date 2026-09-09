@@ -54,7 +54,7 @@ const ACTION_LABELS: Record<string, string> = {
   "document.uploaded": "Document uploaded",
   "document.viewed": "Document viewed",
   "document.downloaded": "Document downloaded",
-  "document.metadata_updated": "Document metadata updated",
+  "document.metadata_updated": "Document details updated",
   "document.deleted": "Document moved to Trash",
   "document.force_deleted": "Document force-deleted",
   "document.restored": "Document restored from Trash",
