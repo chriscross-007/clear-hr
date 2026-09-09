@@ -182,6 +182,18 @@ export function DocumentDetailsDialog({
       if (aRes.success) setActivity(aRes.items);
       if (urlRes.success) setPreviewUrl(urlRes.url as string);
       else setPreviewError(urlRes.error ?? "Could not load preview");
+
+      // The signed-URL call above writes a `document.viewed` audit row
+      // as a side effect. That write races the parallel
+      // getDocumentActivity fetch, so the "current viewing" wouldn't
+      // otherwise appear in the feed. Refetch once the URL call has
+      // definitely landed so the just-written view row shows up when
+      // the user toggles "Show views/downloads" on.
+      if (urlRes.success) {
+        const a2 = await getDocumentActivity(documentId);
+        if (cancelled) return;
+        if (a2.success) setActivity(a2.items);
+      }
     })();
     return () => { cancelled = true; };
   }, [documentId]);
