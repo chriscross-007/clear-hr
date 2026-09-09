@@ -100,7 +100,13 @@ export default async function DashboardLayout({
   const trialDaysLeft = trialEndsAt
     ? Math.max(0, Math.ceil((trialEndsAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
     : null;
+  // TEMP (CLE-DEMO): trial banner + inline "Trial ends …" pill hidden
+  // for the demo. The trial_ends_at value isn't wired up correctly yet
+  // (renders "0 days" / a fixed date). Re-enable once the billing
+  // follow-up ticket lands.
+  const SHOW_TRIAL_UI = false;
   const showTrialBanner =
+    SHOW_TRIAL_UI &&
     rights.canManageBilling &&
     org?.subscription_status === "trialing" &&
     trialDaysLeft !== null &&
@@ -195,7 +201,7 @@ export default async function DashboardLayout({
                   ) : (
                     <> — {memberCount ?? 0}/{org?.max_employees} {capitalize(pluralize(memberLabel))}</>
                   )}
-                  {org?.subscription_status === "trialing" && trialEndsAt && (
+                  {SHOW_TRIAL_UI && org?.subscription_status === "trialing" && trialEndsAt && (
                     <span className="text-red-600 dark:text-red-400 font-medium"> — Trial ends {trialEndsAt.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</span>
                   )})
                 </span>

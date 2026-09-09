@@ -4,20 +4,23 @@
 //
 // Single source of truth for one document, wide-layout redesign.
 // Header spans full width (4 rows); body splits 50/50 into a Preview
-// pane on the left and a stacked Verify → Review → History column on
-// the right. The only vertically scrolling region is History.
+// pane on the left and a stacked Expiry → Verify → Review → Activity
+// column on the right. The only vertically scrolling region is
+// Activity.
 //
 // Every editable value is behind a small pencil icon that opens a
-// popover with the field-specific control + the shared Note field.
-// All four popovers (Subtype, Expiry, Verify, Review) write to
-// `document.note` for the shared note; History picks up the note diff
-// via the existing `document.metadata_updated` audit shape.
+// popover with the single field-specific control (Subtype / Expiry /
+// Verify / Review). CLE-212: the shared Note field has been removed
+// from all four popovers. Free-text lives in the Activity thread
+// instead — a proper conversation with author + timestamp per message,
+// using the same conversations / conversation_messages tables as
+// Absence Bookings. Activity merges those comments with the audit log.
 //
 // Preview signed URL loads eagerly on mount — trade the click-to-view
 // step for a small upfront fetch.
 
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { Camera, Pencil, Upload as UploadIcon } from "lucide-react";
+import { Camera, Pencil, SendHorizontal, Upload as UploadIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -43,14 +46,15 @@ import {
 import { STATUS_LABEL, STATUS_TONE } from "@/lib/document-status";
 import {
   getDocumentDetail,
-  getDocumentAuditHistory,
+  getDocumentActivity,
+  postDocumentComment,
   updateMemberDocumentMetadata,
   verifyMemberDocument,
   renewMemberDocument,
   getMemberDocumentSignedUrl,
   getSubtypesForUpload,
   type DocumentDetailContext,
-  type DocumentAuditEntry,
+  type DocumentActivityItem,
 } from "@/app/(dashboard)/members/[memberId]/docs/document-actions";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -99,6 +103,47 @@ function actionLabel(action: string): string {
   return action.replace(/^document\./, "").replace(/_/g, " ");
 }
 
+// Friendly labels for the fields that show up in audit `changes` diffs.
+const CHANGE_FIELD_LABEL: Record<string, string> = {
+  subtype_id: "Subtype",
+  expires_on: "Expiry Date",
+  next_review_on: "Next Review Date",
+  verified_on: "Verified On",
+  verified_by: "Verified By",
+  note: "Note",
+  file_name: "Filename",
+};
+
+// Fields whose values are ISO dates (YYYY-MM-DD) and should render as
+// the UK short date. Datetime fields (verified_at etc.) are handled
+// separately by fmtChangeValue's ISO-datetime detection.
+const CHANGE_DATE_FIELDS = new Set([
+  "expires_on",
+  "next_review_on",
+  "verified_on",
+]);
+
+function fmtChangeField(field: string): string {
+  if (CHANGE_FIELD_LABEL[field]) return CHANGE_FIELD_LABEL[field];
+  // Fallback: title-case the snake_case field name.
+  return field
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function fmtChangeValue(field: string, val: unknown): string {
+  if (val === null || val === undefined || val === "") return "—";
+  const s = String(val);
+  if (CHANGE_DATE_FIELDS.has(field) && /^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return fmtDate(s);
+  }
+  // Full ISO datetime (e.g. verified_at).
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) {
+    return fmtDateTime(s);
+  }
+  return s;
+}
+
 export function DocumentDetailsDialog({
   documentId,
   canUpdate,
@@ -106,7 +151,7 @@ export function DocumentDetailsDialog({
   onSaved,
 }: Props) {
   const [detail, setDetail] = useState<DocumentDetailContext | null>(null);
-  const [history, setHistory] = useState<DocumentAuditEntry[] | null>(null);
+  const [activity, setActivity] = useState<DocumentActivityItem[] | null>(null);
   const [subtypes, setSubtypes] = useState<Array<{ id: string; name: string; type: string }>>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -115,7 +160,7 @@ export function DocumentDetailsDialog({
 
   const [showChatty, setShowChatty] = useState(false);
 
-  // Load detail, subtypes, history, preview URL on mount / when
+  // Load detail, subtypes, activity, preview URL on mount / when
   // documentId changes.
   useEffect(() => {
     let cancelled = false;
@@ -125,16 +170,16 @@ export function DocumentDetailsDialog({
       if (!dRes.success) { setLoadError(dRes.error); return; }
       setDetail(dRes.detail);
 
-      const [stRes, hRes, urlRes] = await Promise.all([
+      const [stRes, aRes, urlRes] = await Promise.all([
         getSubtypesForUpload(dRes.detail.targetMemberId),
-        getDocumentAuditHistory(documentId),
+        getDocumentActivity(documentId),
         getMemberDocumentSignedUrl(documentId, "inline"),
       ]);
       if (cancelled) return;
       if (stRes.success) {
         setSubtypes(stRes.subtypes.filter((s) => s.type === dRes.detail.row.type));
       }
-      if (hRes.success) setHistory(hRes.entries);
+      if (aRes.success) setActivity(aRes.items);
       if (urlRes.success) setPreviewUrl(urlRes.url as string);
       else setPreviewError(urlRes.error ?? "Could not load preview");
     })();
@@ -143,21 +188,28 @@ export function DocumentDetailsDialog({
 
   const employeeStripped = detail?.isSelf && !canUpdate;
 
-  const visibleHistory = useMemo(() => {
-    if (!history) return [];
-    if (employeeStripped) return history.filter((e) => !CHATTY_ACTIONS.has(e.action));
-    if (showChatty) return history;
-    return history.filter((e) => !CHATTY_ACTIONS.has(e.action));
-  }, [history, showChatty, employeeStripped]);
+  const visibleActivity = useMemo(() => {
+    if (!activity) return [];
+    const filterChatty = (a: DocumentActivityItem) =>
+      a.kind !== "audit" || !CHATTY_ACTIONS.has(a.entry.action);
+    if (employeeStripped) return activity.filter(filterChatty);
+    if (showChatty) return activity;
+    return activity.filter(filterChatty);
+  }, [activity, showChatty, employeeStripped]);
 
   async function refreshDetailAndHistory() {
-    const [d, h] = await Promise.all([
+    const [d, a] = await Promise.all([
       getDocumentDetail(documentId),
-      getDocumentAuditHistory(documentId),
+      getDocumentActivity(documentId),
     ]);
     if (d.success) setDetail(d.detail);
-    if (h.success) setHistory(h.entries);
+    if (a.success) setActivity(a.items);
     if (onSaved) await onSaved();
+  }
+
+  async function reloadActivity() {
+    const a = await getDocumentActivity(documentId);
+    if (a.success) setActivity(a.items);
   }
 
   return (
@@ -227,7 +279,7 @@ export function DocumentDetailsDialog({
                 </div>
               )}
 
-              {/* Row 4: origin + expiry */}
+              {/* Row 4: origin */}
               <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-sm">
                 <span className="inline-flex items-center gap-1">
                   Original Document{" "}
@@ -236,13 +288,6 @@ export function DocumentDetailsDialog({
                     : <UploadIcon className="inline h-3.5 w-3.5" />}
                   {" "}by <strong>{detail.uploadedByName ?? "Unknown"}</strong>{" "}
                   <span className="text-muted-foreground">{fmtDateTime(detail.row.uploadedAt)}</span>
-                </span>
-                <span className="text-muted-foreground">·</span>
-                <span className="inline-flex items-center gap-1">
-                  Expires <strong>{fmtDateOrNever(detail.row.expiresOn)}</strong>
-                  {canUpdate && !employeeStripped && (
-                    <ExpiryPencil detail={detail} onSaved={refreshDetailAndHistory} />
-                  )}
                 </span>
               </div>
             </DialogHeader>
@@ -274,8 +319,17 @@ export function DocumentDetailsDialog({
                 )}
               </div>
 
-              {/* Right pane — Verify / Review / History */}
+              {/* Right pane — Expiry / Verify / Review / History */}
               <div className="flex flex-col overflow-hidden">
+                {/* Expiry */}
+                <div className="border-b p-4">
+                  <ExpirySection
+                    detail={detail}
+                    canUpdate={canUpdate && !employeeStripped}
+                    onSaved={refreshDetailAndHistory}
+                  />
+                </div>
+
                 {/* Verify */}
                 <div className="border-b p-4">
                   <VerifySection
@@ -294,10 +348,12 @@ export function DocumentDetailsDialog({
                   />
                 </div>
 
-                {/* History — the only scrolling region */}
-                <div className="flex-1 overflow-hidden p-4 flex flex-col">
+                {/* Activity — merged audit + comments feed. The list is
+                    the only scrolling region; the composer stays pinned
+                    below it. */}
+                <div className="flex-1 overflow-hidden p-4 flex flex-col min-h-0">
                   <div className="mb-2 flex items-center justify-between">
-                    <p className="text-sm font-medium">History</p>
+                    <p className="text-base font-semibold">Activity</p>
                     {!employeeStripped && (
                       <label className="flex items-center gap-2 text-xs text-muted-foreground">
                         <input
@@ -310,37 +366,55 @@ export function DocumentDetailsDialog({
                     )}
                   </div>
                   <div className="flex-1 overflow-y-auto">
-                    {history === null ? (
+                    {activity === null ? (
                       <p className="text-xs text-muted-foreground">Loading…</p>
-                    ) : visibleHistory.length === 0 ? (
+                    ) : visibleActivity.length === 0 ? (
                       <p className="text-xs text-muted-foreground">Nothing recorded yet.</p>
                     ) : (
                       <ul className="space-y-2">
-                        {visibleHistory.map((e) => (
-                          <li key={e.id} className="text-xs text-muted-foreground">
-                            <span className="font-medium text-foreground">{e.actorName}</span>
-                            {" · "}
-                            <span className="text-foreground">{actionLabel(e.action)}</span>
-                            {" · "}
-                            <span>{fmtDateTime(e.createdAt)}</span>
-                            {e.changes && Object.keys(e.changes).length > 0 && (
-                              <div className="mt-0.5 pl-3">
-                                {Object.entries(e.changes).map(([field, val]) => {
-                                  const v = val as { old?: unknown; new?: unknown };
-                                  return (
-                                    <div key={field}>
-                                      <span className="font-medium">{field}:</span>{" "}
-                                      <span>{String(v.old ?? "—")} → {String(v.new ?? "—")}</span>
-                                    </div>
-                                  );
-                                })}
+                        {visibleActivity.map((item) =>
+                          item.kind === "audit" ? (
+                            <li key={`a-${item.entry.id}`} className="text-xs text-muted-foreground">
+                              <span className="font-medium text-foreground">{item.entry.actorName}</span>
+                              {" · "}
+                              <span className="text-foreground">{actionLabel(item.entry.action)}</span>
+                              {" · "}
+                              <span>{fmtDateTime(item.entry.createdAt)}</span>
+                              {item.entry.changes && Object.keys(item.entry.changes).length > 0 && (
+                                <div className="mt-0.5 pl-3">
+                                  {Object.entries(item.entry.changes).map(([field, val]) => {
+                                    const v = val as { old?: unknown; new?: unknown };
+                                    return (
+                                      <div key={field}>
+                                        <span className="font-medium">{fmtChangeField(field)}:</span>{" "}
+                                        <span>{fmtChangeValue(field, v.old)} → {fmtChangeValue(field, v.new)}</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </li>
+                          ) : (
+                            <li key={`c-${item.comment.id}`} className="rounded-md border bg-muted/30 p-2">
+                              <div className="flex items-baseline justify-between gap-2 text-xs text-muted-foreground">
+                                <span className="font-medium text-foreground">{item.comment.authorName}</span>
+                                <span>{fmtDateTime(item.comment.createdAt)}</span>
                               </div>
-                            )}
-                          </li>
-                        ))}
+                              <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{item.comment.body}</p>
+                            </li>
+                          ),
+                        )}
                       </ul>
                     )}
                   </div>
+                  {/* Composer — pinned below the scrolling list. Employees
+                      whose view is stripped (own record, no update rights)
+                      don't get a composer. */}
+                  {!employeeStripped && (
+                    <div className="mt-2 shrink-0">
+                      <ActivityComposer documentId={documentId} onPosted={reloadActivity} />
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -352,16 +426,71 @@ export function DocumentDetailsDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Pencil popovers — each edits its own field plus the shared Note.
+// Activity composer — small textarea + send button. Empties on submit.
 // ---------------------------------------------------------------------------
 
-function SharedNoteHint() {
+function ActivityComposer({
+  documentId,
+  onPosted,
+}: {
+  documentId: string;
+  onPosted: () => Promise<void>;
+}) {
+  const [body, setBody] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function send() {
+    const trimmed = body.trim();
+    if (!trimmed || pending) return;
+    setError(null);
+    startTransition(async () => {
+      const res = await postDocumentComment(documentId, trimmed);
+      if (!res.success) { setError(res.error ?? "Could not post comment"); return; }
+      setBody("");
+      await onPosted();
+    });
+  }
+
+  const canSend = body.trim().length > 0 && !pending;
+
   return (
-    <p className="text-[10px] text-muted-foreground">
-      Note is shared across Subtype, Expiry, Verify and Review.
-    </p>
+    <div className="space-y-1">
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      <div className="flex items-end gap-2">
+        <Textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value.slice(0, 2000))}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              send();
+            }
+          }}
+          rows={2}
+          placeholder="Add a comment…"
+          className="min-h-9 resize-none py-2 text-sm"
+        />
+        <Button
+          type="button"
+          size="icon"
+          className="h-9 w-9 shrink-0"
+          onClick={send}
+          disabled={!canSend}
+          aria-label="Post comment"
+          title="Post comment (⌘/Ctrl + Enter)"
+        >
+          <SendHorizontal className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Pencil popovers — each edits its one field. CLE-212: no shared Note.
+// Free-text belongs in the Activity thread.
+// ---------------------------------------------------------------------------
 
 function PencilButton({ onClick, label }: { onClick: () => void; label: string }) {
   return (
@@ -388,7 +517,6 @@ function SubtypePencil({
 }) {
   const [open, setOpen] = useState(false);
   const [subtypeId, setSubtypeId] = useState<string>(detail.row.subtypeId ?? "");
-  const [note, setNote] = useState<string>(detail.row.note ?? "");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -397,7 +525,6 @@ function SubtypePencil({
     startTransition(async () => {
       const res = await updateMemberDocumentMetadata(detail.row.id, {
         subtypeId: subtypeId || null,
-        note: note.trim() ? note.trim() : null,
       });
       if (!res.success) { setError(res.error ?? "Save failed"); return; }
       setOpen(false);
@@ -426,16 +553,6 @@ function SubtypePencil({
             </SelectContent>
           </Select>
         </div>
-        <div className="space-y-1">
-          <Label className="text-xs">Note</Label>
-          <Textarea
-            rows={2}
-            value={note}
-            onChange={(e) => setNote(e.target.value.slice(0, 240))}
-            placeholder="Optional, up to 240 characters"
-          />
-          <SharedNoteHint />
-        </div>
         <div className="flex justify-end gap-2">
           <Button size="sm" variant="outline" onClick={() => setOpen(false)} disabled={pending}>Cancel</Button>
           <Button size="sm" onClick={save} disabled={pending}>Save</Button>
@@ -454,7 +571,6 @@ function ExpiryPencil({
 }) {
   const [open, setOpen] = useState(false);
   const [expiresOn, setExpiresOn] = useState<string>(detail.row.expiresOn ?? "");
-  const [note, setNote] = useState<string>(detail.row.note ?? "");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -463,7 +579,6 @@ function ExpiryPencil({
     startTransition(async () => {
       const res = await updateMemberDocumentMetadata(detail.row.id, {
         expiresOn: expiresOn || null,
-        note: note.trim() ? note.trim() : null,
       });
       if (!res.success) { setError(res.error ?? "Save failed"); return; }
       setOpen(false);
@@ -486,21 +601,36 @@ function ExpiryPencil({
           <Input type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
           <p className="text-[10px] text-muted-foreground">Leave blank if the document has no expiry.</p>
         </div>
-        <div className="space-y-1">
-          <Label className="text-xs">Note</Label>
-          <Textarea
-            rows={2}
-            value={note}
-            onChange={(e) => setNote(e.target.value.slice(0, 240))}
-          />
-          <SharedNoteHint />
-        </div>
         <div className="flex justify-end gap-2">
           <Button size="sm" variant="outline" onClick={() => setOpen(false)} disabled={pending}>Cancel</Button>
           <Button size="sm" onClick={save} disabled={pending}>Save</Button>
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+function ExpirySection({
+  detail,
+  canUpdate,
+  onSaved,
+}: {
+  detail: DocumentDetailContext;
+  canUpdate: boolean;
+  onSaved: () => Promise<void>;
+}) {
+  return (
+    <div>
+      <p className="text-base font-semibold">Expiry</p>
+      <div className="mt-1 flex items-center gap-2 text-sm">
+        <span>
+          Expires <strong>{fmtDateOrNever(detail.row.expiresOn)}</strong>
+        </span>
+        {canUpdate && (
+          <ExpiryPencil detail={detail} onSaved={onSaved} />
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -519,7 +649,7 @@ function VerifySection({
   if (!requires) {
     return (
       <div>
-        <p className="text-sm font-medium">Verify</p>
+        <p className="text-base font-semibold">Verify</p>
         <p className="mt-1 text-sm text-muted-foreground">Verification not required</p>
       </div>
     );
@@ -527,7 +657,7 @@ function VerifySection({
 
   return (
     <div>
-      <p className="text-sm font-medium">Verify</p>
+      <p className="text-base font-semibold">Verify</p>
       <div className="mt-1 flex items-center gap-2 text-sm">
         {verifiedOn ? (
           <span>
@@ -556,7 +686,6 @@ function VerifyPencil({
 }) {
   const [open, setOpen] = useState(false);
   const [verifiedOn, setVerifiedOn] = useState<string>(() => new Date().toISOString().slice(0, 10));
-  const [note, setNote] = useState<string>(detail.row.note ?? "");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -565,10 +694,6 @@ function VerifyPencil({
   function save() {
     setError(null);
     startTransition(async () => {
-      // Fire the formal verify/renew audit event with the date. We
-      // deliberately pass `verificationNotes = null` — the shared note
-      // is written separately via updateMemberDocumentMetadata below
-      // so it lives on the single `note` column.
       const fn = isRenew ? renewMemberDocument : verifyMemberDocument;
       const verifyRes = await fn(detail.row.id, {
         verifiedOn,
@@ -576,20 +701,6 @@ function VerifyPencil({
         nextReviewOn: detail.row.nextReviewOn,
       });
       if (!verifyRes.success) { setError(verifyRes.error ?? "Verify failed"); return; }
-
-      // If the note changed, persist that as a separate metadata edit
-      // so History captures the diff via document.metadata_updated.
-      const noteChanged = (note.trim() || null) !== (detail.row.note ?? null);
-      if (noteChanged) {
-        const metaRes = await updateMemberDocumentMetadata(detail.row.id, {
-          note: note.trim() ? note.trim() : null,
-        });
-        if (!metaRes.success) {
-          setError(metaRes.error ?? "Note save failed");
-          return;
-        }
-      }
-
       setOpen(false);
       await onSaved();
     });
@@ -611,15 +722,6 @@ function VerifyPencil({
         <div className="space-y-1">
           <Label className="text-xs">Verified on</Label>
           <Input type="date" value={verifiedOn} onChange={(e) => setVerifiedOn(e.target.value)} />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs">Note</Label>
-          <Textarea
-            rows={2}
-            value={note}
-            onChange={(e) => setNote(e.target.value.slice(0, 240))}
-          />
-          <SharedNoteHint />
         </div>
         <div className="flex justify-end gap-2">
           <Button size="sm" variant="outline" onClick={() => setOpen(false)} disabled={pending}>Cancel</Button>
@@ -650,7 +752,7 @@ function ReviewSection({
   if (!requires) {
     return (
       <div>
-        <p className="text-sm font-medium">Review</p>
+        <p className="text-base font-semibold">Review</p>
         <p className="mt-1 text-sm text-muted-foreground">Review not required</p>
       </div>
     );
@@ -658,7 +760,7 @@ function ReviewSection({
 
   return (
     <div>
-      <p className="text-sm font-medium">Review</p>
+      <p className="text-base font-semibold">Review</p>
       <div className="mt-1 flex items-center gap-2 text-sm">
         {nextReviewOn ? (
           <span>Review on <strong>{fmtDate(nextReviewOn)}</strong></span>
@@ -682,7 +784,6 @@ function ReviewPencil({
 }) {
   const [open, setOpen] = useState(false);
   const [nextReviewOn, setNextReviewOn] = useState<string>(detail.row.nextReviewOn ?? "");
-  const [note, setNote] = useState<string>(detail.row.note ?? "");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -691,7 +792,6 @@ function ReviewPencil({
     startTransition(async () => {
       const res = await updateMemberDocumentMetadata(detail.row.id, {
         nextReviewOn: nextReviewOn || null,
-        note: note.trim() ? note.trim() : null,
       });
       if (!res.success) { setError(res.error ?? "Save failed"); return; }
       setOpen(false);
@@ -713,15 +813,6 @@ function ReviewPencil({
           <Label className="text-xs">Review on</Label>
           <Input type="date" value={nextReviewOn} onChange={(e) => setNextReviewOn(e.target.value)} />
           <p className="text-[10px] text-muted-foreground">Leave blank to remove the scheduled review.</p>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs">Note</Label>
-          <Textarea
-            rows={2}
-            value={note}
-            onChange={(e) => setNote(e.target.value.slice(0, 240))}
-          />
-          <SharedNoteHint />
         </div>
         <div className="flex justify-end gap-2">
           <Button size="sm" variant="outline" onClick={() => setOpen(false)} disabled={pending}>Cancel</Button>

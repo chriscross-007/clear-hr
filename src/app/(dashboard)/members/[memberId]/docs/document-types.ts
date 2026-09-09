@@ -31,9 +31,6 @@ export interface MemberDocumentRow {
    *  'photo' via the mobile camera flow (either web-queued or
    *  mobile-initiated ad-hoc). Drives the Source column icon. */
   captureSource: "upload" | "photo";
-  /** Free-text note (≤ 240 chars). Set at capture time for the
-   *  Photo path; editable via the metadata dialog. */
-  note: string | null;
 }
 
 export interface TrashedMemberDocumentRow extends MemberDocumentRow {

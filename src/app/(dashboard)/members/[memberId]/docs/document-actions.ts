@@ -152,7 +152,7 @@ export async function listMemberDocuments(
     const { data, error } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, note, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", caller.organisationId)
       .eq("owner_scope", "member")
@@ -176,7 +176,6 @@ export async function listMemberDocuments(
       verified_by: string | null;
       next_review_on: string | null;
       capture_source: "upload" | "photo";
-      note: string | null;
       document_subtype: { name: string; requires_verification: boolean } | { name: string; requires_verification: boolean }[] | null;
       members: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
     };
@@ -215,7 +214,6 @@ export async function listMemberDocuments(
             nextReviewOn: row.next_review_on,
           }),
           captureSource: row.capture_source ?? "upload",
-          note: row.note ?? null,
         };
       });
     return { success: true, rows };
@@ -252,7 +250,7 @@ export async function getDocumentDetail(
     const { data: doc } = await admin
       .from("document")
       .select(
-        "id, organisation_id, owner_scope, owner_id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, note, verification_notes, document_subtype!subtype_id(name, requires_verification)",
+        "id, organisation_id, owner_scope, owner_id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, verification_notes, document_subtype!subtype_id(name, requires_verification)",
       )
       .eq("id", documentId)
       .single();
@@ -315,7 +313,6 @@ export async function getDocumentDetail(
         nextReviewOn: (doc.next_review_on as string | null) ?? null,
       }),
       captureSource: ((doc.capture_source as "upload" | "photo" | null) ?? "upload"),
-      note: (doc.note as string | null) ?? null,
     };
 
     return {
@@ -383,6 +380,203 @@ export async function getDocumentAuditHistory(
 }
 
 // ---------------------------------------------------------------------------
+// Document Activity — CLE-212. Comments live in the same
+// `conversations` / `conversation_messages` tables the Absence Bookings
+// thread uses, keyed by (entity_type='document', entity_id=documentId).
+// The dialog's Activity section calls getDocumentActivity() to get a
+// merged, chronologically sorted feed of audit events + comments.
+// ---------------------------------------------------------------------------
+
+export interface DocumentComment {
+  id: string;
+  authorMemberId: string;
+  authorName: string;
+  body: string;
+  createdAt: string;
+}
+
+export type DocumentActivityItem =
+  | { kind: "audit"; entry: DocumentAuditEntry }
+  | { kind: "comment"; comment: DocumentComment };
+
+/** Lookup (or lazily create) the conversation row for a document. Only
+ *  callers with view rights on the document get an id back. Called by
+ *  the dialog on first mount + before every comment post. */
+export async function getOrCreateDocumentConversation(
+  documentId: string,
+): Promise<{ success: true; conversationId: string } | { success: false; error: string }> {
+  try {
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const admin = getAdmin();
+
+    // View-rights check via getDocumentDetail (already does org-scope +
+    // cross-user-access + owner-scope validation).
+    const detail = await getDocumentDetail(documentId);
+    if (!detail.success) return { success: false, error: detail.error };
+
+    const { data: existing } = await admin
+      .from("conversations")
+      .select("id")
+      .eq("entity_type", "document")
+      .eq("entity_id", documentId)
+      .maybeSingle();
+    if (existing) return { success: true, conversationId: existing.id as string };
+
+    const { data: created, error: insertError } = await admin
+      .from("conversations")
+      .insert({
+        organisation_id: caller.organisationId,
+        entity_type: "document",
+        entity_id: documentId,
+      })
+      .select("id")
+      .single();
+    if (insertError || !created) {
+      return { success: false, error: insertError?.message ?? "Could not open conversation" };
+    }
+    return { success: true, conversationId: created.id as string };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+/** Post a comment on the document's Activity thread. Author = caller.
+ *  Immutable once posted (no edit/delete server actions). */
+export async function postDocumentComment(
+  documentId: string,
+  body: string,
+): Promise<{ success: true; comment: DocumentComment } | { success: false; error: string }> {
+  try {
+    const trimmed = (body ?? "").trim();
+    if (!trimmed) return { success: false, error: "Comment cannot be empty" };
+    if (trimmed.length > 2000) return { success: false, error: "Comment is too long (max 2000 chars)" };
+
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const admin = getAdmin();
+
+    // Reuse the view-check + conversation resolver.
+    const convRes = await getOrCreateDocumentConversation(documentId);
+    if (!convRes.success) return { success: false, error: convRes.error };
+
+    const { data: inserted, error: insertError } = await admin
+      .from("conversation_messages")
+      .insert({
+        conversation_id: convRes.conversationId,
+        author_member_id: caller.memberId,
+        body: trimmed,
+      })
+      .select("id, body, created_at, author_member_id")
+      .single();
+    if (insertError || !inserted) {
+      return { success: false, error: insertError?.message ?? "Could not post comment" };
+    }
+
+    const { data: author } = await admin
+      .from("members")
+      .select("first_name, last_name")
+      .eq("id", caller.memberId)
+      .single();
+    const authorName = `${author?.first_name ?? ""} ${author?.last_name ?? ""}`.trim() || "Unknown";
+
+    return {
+      success: true,
+      comment: {
+        id: inserted.id as string,
+        authorMemberId: inserted.author_member_id as string,
+        authorName,
+        body: inserted.body as string,
+        createdAt: inserted.created_at as string,
+      },
+    };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+/** Merged audit + comment feed for a document, newest first (matches
+ *  the previous history ordering). */
+export async function getDocumentActivity(
+  documentId: string,
+): Promise<{ success: true; items: DocumentActivityItem[] } | { success: false; error: string }> {
+  try {
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const admin = getAdmin();
+
+    const detail = await getDocumentDetail(documentId);
+    if (!detail.success) return { success: false, error: detail.error };
+
+    const [auditRes, convRow] = await Promise.all([
+      admin
+        .from("audit_log")
+        .select("id, actor_name, action, created_at, metadata, changes")
+        .eq("target_id", documentId)
+        .order("created_at", { ascending: false })
+        .limit(200),
+      admin
+        .from("conversations")
+        .select("id")
+        .eq("entity_type", "document")
+        .eq("entity_id", documentId)
+        .maybeSingle(),
+    ]);
+    if (auditRes.error) return { success: false, error: auditRes.error.message };
+
+    const auditItems: DocumentActivityItem[] = (auditRes.data ?? []).map((r) => ({
+      kind: "audit",
+      entry: {
+        id: r.id as string,
+        actorName: (r.actor_name as string | null) ?? "System",
+        action: r.action as string,
+        createdAt: r.created_at as string,
+        metadata: (r.metadata as Record<string, unknown> | null) ?? null,
+        changes: (r.changes as Record<string, unknown> | null) ?? null,
+      },
+    }));
+
+    let commentItems: DocumentActivityItem[] = [];
+    if (convRow.data?.id) {
+      const { data: msgs, error: mErr } = await admin
+        .from("conversation_messages")
+        .select("id, body, created_at, author_member_id, members:author_member_id(first_name, last_name)")
+        .eq("conversation_id", convRow.data.id)
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (mErr) return { success: false, error: mErr.message };
+      commentItems = (msgs ?? []).map((m) => {
+        const author = m.members as unknown as { first_name?: string; last_name?: string } | null;
+        const authorName = `${author?.first_name ?? ""} ${author?.last_name ?? ""}`.trim() || "Unknown";
+        return {
+          kind: "comment" as const,
+          comment: {
+            id: m.id as string,
+            authorMemberId: m.author_member_id as string,
+            authorName,
+            body: m.body as string,
+            createdAt: m.created_at as string,
+          },
+        };
+      });
+    }
+
+    // Merge, sort newest-first. Ties (rare) fall back to a stable order
+    // by placing audit before comment.
+    const items = [...auditItems, ...commentItems].sort((a, b) => {
+      const at = a.kind === "audit" ? a.entry.createdAt : a.comment.createdAt;
+      const bt = b.kind === "audit" ? b.entry.createdAt : b.comment.createdAt;
+      if (at === bt) return a.kind === "audit" ? -1 : 1;
+      return at < bt ? 1 : -1;
+    });
+
+    return { success: true, items };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Trash list
 // ---------------------------------------------------------------------------
 
@@ -415,7 +609,7 @@ export async function listTrashedMemberDocuments(
     const { data: docs, error: docsErr } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, note, owner_id, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, owner_id, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", caller.organisationId)
       .eq("owner_scope", "member")
@@ -439,7 +633,6 @@ export async function listTrashedMemberDocuments(
       verified_by: string | null;
       next_review_on: string | null;
       capture_source: "upload" | "photo";
-      note: string | null;
       owner_id: string | null;
       document_subtype: { name: string; requires_verification: boolean } | { name: string; requires_verification: boolean }[] | null;
       members: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
@@ -482,7 +675,6 @@ export async function listTrashedMemberDocuments(
             nextReviewOn: d.next_review_on,
           }),
           captureSource: (d.capture_source as "upload" | "photo") ?? "upload",
-          note: (d.note as string | null) ?? null,
           queuedAt: q.queued_at as string,
           queuedBy: (q.queued_by as string | null) ?? null,
           forceDeleteReason: (q.force_delete_reason as string | null) ?? null,
@@ -694,7 +886,7 @@ export async function uploadMemberDocument(
 
 export async function updateMemberDocumentMetadata(
   documentId: string,
-  patch: { subtypeId?: string | null; expiresOn?: string | null; nextReviewOn?: string | null; note?: string | null },
+  patch: { subtypeId?: string | null; expiresOn?: string | null; nextReviewOn?: string | null },
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const caller = await resolveCaller();
@@ -703,7 +895,7 @@ export async function updateMemberDocumentMetadata(
 
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, owner_id, type, subtype_id, expires_on, next_review_on, file_name, note, document_subtype!subtype_id(name)")
+      .select("id, organisation_id, owner_scope, owner_id, type, subtype_id, expires_on, next_review_on, file_name, document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== caller.organisationId || doc.owner_scope !== "member") {
@@ -748,10 +940,6 @@ export async function updateMemberDocumentMetadata(
     if (patch.nextReviewOn !== undefined) {
       updates.next_review_on = patch.nextReviewOn;
     }
-    if (patch.note !== undefined) {
-      const trimmed = patch.note && patch.note.trim() ? patch.note.trim().slice(0, 240) : null;
-      updates.note = trimmed;
-    }
 
     if (Object.keys(updates).length === 1) {
       // Only `updated_at` — nothing changed.
@@ -774,9 +962,6 @@ export async function updateMemberDocumentMetadata(
     }
     if (patch.nextReviewOn !== undefined && patch.nextReviewOn !== doc.next_review_on) {
       changes.next_review_on = { old: doc.next_review_on, new: patch.nextReviewOn };
-    }
-    if (patch.note !== undefined && (updates.note ?? null) !== (doc.note ?? null)) {
-      changes.note = { old: doc.note ?? null, new: updates.note ?? null };
     }
     if (Object.keys(changes).length > 0) {
       const st = doc.document_subtype as unknown as { name?: string } | { name?: string }[] | null;

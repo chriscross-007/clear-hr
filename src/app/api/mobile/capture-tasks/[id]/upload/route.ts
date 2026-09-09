@@ -142,7 +142,6 @@ export async function POST(
         retention_class: subtype.retention_class,
         uploaded_by: callerMemberId,
         capture_source: "photo",
-        note: (task.note as string | null) ?? null,
       })
       .select("id")
       .single();
@@ -170,6 +169,36 @@ export async function POST(
       // Realtime consistency problem but not a data loss one. Log and
       // return success; the timeout sweep will clean up the task.
       console.warn("[capture-task upload] task status update failed:", taskError.message);
+    }
+
+    // 6b. CLE-212 — If the queueing HR admin left a note on the task,
+    // seed the new document's Activity thread with it as the first
+    // message. Non-fatal on failure.
+    const taskNote = ((task.note as string | null) ?? "").trim();
+    if (taskNote) {
+      const { data: conv, error: convErr } = await admin
+        .from("conversations")
+        .insert({
+          organisation_id: organisationId,
+          entity_type: "document",
+          entity_id: inserted.id,
+        })
+        .select("id")
+        .single();
+      if (convErr) {
+        console.warn("[capture-task upload] conversation seed failed:", convErr.message);
+      } else if (conv) {
+        const { error: msgErr } = await admin
+          .from("conversation_messages")
+          .insert({
+            conversation_id: conv.id,
+            author_member_id: callerMemberId,
+            body: taskNote,
+          });
+        if (msgErr) {
+          console.warn("[capture-task upload] first-message seed failed:", msgErr.message);
+        }
+      }
     }
 
     // 7. Audit — reuse the existing document.uploaded action shape so
