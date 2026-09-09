@@ -20,7 +20,7 @@
 // step for a small upfront fetch.
 
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { Camera, Pencil, SendHorizontal, Upload as UploadIcon } from "lucide-react";
+import { Camera, Download, Pencil, SendHorizontal, Upload as UploadIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -129,6 +129,50 @@ function fmtChangeField(field: string): string {
   return field
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Fetches a fresh signed URL in `download` mode (which sets
+// Content-Disposition: attachment on the response), triggers the
+// browser's native download flow, then asks the caller to refresh the
+// Activity feed so the just-written `document.downloaded` audit row
+// shows up when the "Show views/downloads" toggle is on.
+//
+// Delivery mechanism is a hidden `<iframe>` pointed at the signed URL.
+// The response carries Content-Disposition: attachment, so the browser
+// starts a download and the iframe's page load "fails" harmlessly.
+// This is more robust than the `<a download>` pattern inside a Radix
+// Dialog — the dialog's focus trap + Next.js's link interception can
+// interfere with a programmatically-clicked anchor.
+async function downloadDocument(
+  documentId: string,
+  _fileName: string,
+  onDone?: () => Promise<void>,
+): Promise<void> {
+  try {
+    const res = await getMemberDocumentSignedUrl(documentId, "download");
+    if (!res.success || !res.url) return;
+
+    const iframe = document.createElement("iframe");
+    iframe.style.display = "none";
+    iframe.src = res.url;
+    document.body.appendChild(iframe);
+    // Remove the iframe after a short delay so we don't leak DOM nodes.
+    // The browser has already started the download by then.
+    window.setTimeout(() => {
+      if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+    }, 4000);
+  } catch {
+    // Network hiccups on the signed-URL server action are non-fatal —
+    // the user can just click again.
+    return;
+  }
+  // Refresh Activity so the freshly-written document.downloaded row
+  // appears when the "Show views/downloads" toggle is on. Failure here
+  // must not surface an error overlay (dev-server flake shouldn't
+  // look like a download failure).
+  try {
+    if (onDone) await onDone();
+  } catch { /* ignore */ }
 }
 
 function fmtChangeValue(field: string, val: unknown): string {
@@ -306,7 +350,7 @@ export function DocumentDetailsDialog({
 
             <div className="grid grid-cols-2 gap-0" style={{ height: "min(70vh, 620px)" }}>
               {/* Left pane — Preview */}
-              <div className="flex items-center justify-center overflow-hidden border-r bg-muted/20">
+              <div className="relative flex items-center justify-center overflow-hidden border-r bg-muted/20 pb-4">
                 {previewError ? (
                   <p className="text-sm text-destructive">{previewError}</p>
                 ) : !previewUrl ? (
@@ -323,11 +367,30 @@ export function DocumentDetailsDialog({
                 ) : (
                   <div className="p-6 text-center text-sm text-muted-foreground">
                     Preview not available for this file type.{" "}
-                    <a href={previewUrl} download={detail.row.fileName} className="underline">
+                    <button
+                      type="button"
+                      onClick={() => void downloadDocument(documentId, detail.row.fileName, reloadActivity)}
+                      className="underline hover:text-foreground"
+                    >
                       Download
-                    </a>{" "}
+                    </button>{" "}
                     instead.
                   </div>
+                )}
+                {/* Floating Download button — always available when there's a
+                    preview URL, positioned top-right of the pane. Fires a
+                    distinct `document.downloaded` audit event so it shows up
+                    in Activity separately from views. */}
+                {previewUrl && (
+                  <button
+                    type="button"
+                    onClick={() => void downloadDocument(documentId, detail.row.fileName, reloadActivity)}
+                    className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-background hover:text-foreground"
+                    aria-label="Download"
+                    title="Download"
+                  >
+                    <Download className="h-4 w-4" />
+                  </button>
                 )}
               </div>
 
