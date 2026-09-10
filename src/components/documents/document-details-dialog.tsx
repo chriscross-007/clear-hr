@@ -775,7 +775,7 @@ function VerifySection({
       <div className="mt-1 flex items-center gap-2 text-sm">
         {verifiedOn ? (
           <span>
-            Verified on <strong>{fmtDate(verifiedOn)}</strong>
+            Last Verified: <strong>{fmtDate(verifiedOn)}</strong>
             {detail.verifiedByName && (
               <span className="text-muted-foreground"> by {detail.verifiedByName}</span>
             )}
@@ -877,7 +877,7 @@ function ReviewSection({
       <p className="text-base font-semibold">Review</p>
       <div className="mt-1 flex items-center gap-2 text-sm">
         {nextReviewOn ? (
-          <span>Review on <strong>{fmtDate(nextReviewOn)}</strong></span>
+          <span>To be reviewed by <strong>{fmtDate(nextReviewOn)}</strong></span>
         ) : (
           <span className="text-muted-foreground">No review scheduled</span>
         )}
@@ -900,8 +900,19 @@ function ReviewPencil({
   const [nextReviewOn, setNextReviewOn] = useState<string>(detail.row.nextReviewOn ?? "");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Match the server-side check in verifyOrRenew — a review date in
+  // the past doesn't make sense (a review is a future commitment).
+  // `min` on the date input is only advisory (some browsers ignore it
+  // for typed input), so we also validate live in `onChange` + block
+  // Save on the invalid state.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const inPast = nextReviewOn.length > 0 && nextReviewOn < todayIso;
 
   function save() {
+    if (inPast) {
+      setError("The review date can't be in the past.");
+      return;
+    }
     setError(null);
     startTransition(async () => {
       const res = await updateMemberDocumentMetadata(detail.row.id, {
@@ -924,13 +935,31 @@ function ReviewPencil({
         <p className="text-sm font-medium">Schedule review</p>
         {error && <div className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">{error}</div>}
         <div className="space-y-1">
-          <Label className="text-xs">Review on</Label>
-          <Input type="date" value={nextReviewOn} onChange={(e) => setNextReviewOn(e.target.value)} />
+          <Label className="text-xs">To be reviewed by</Label>
+          <Input
+            type="date"
+            min={todayIso}
+            value={nextReviewOn}
+            onChange={(e) => {
+              const v = e.target.value;
+              setNextReviewOn(v);
+              // Live feedback the moment the user picks or types
+              // something before today. `min` isn't enough on its own
+              // — some browsers only enforce it on form submission.
+              if (v && v < todayIso) {
+                setError("The review date can't be in the past.");
+              } else {
+                setError(null);
+              }
+            }}
+            aria-invalid={inPast || undefined}
+            className={inPast ? "border-destructive" : undefined}
+          />
           <p className="text-[10px] text-muted-foreground">Leave blank to remove the scheduled review.</p>
         </div>
         <div className="flex justify-end gap-2">
           <Button size="sm" variant="outline" onClick={() => setOpen(false)} disabled={pending}>Cancel</Button>
-          <Button size="sm" onClick={save} disabled={pending}>Save</Button>
+          <Button size="sm" onClick={save} disabled={pending || inPast}>Save</Button>
         </div>
       </PopoverContent>
     </Popover>

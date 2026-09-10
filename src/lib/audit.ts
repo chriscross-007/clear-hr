@@ -30,11 +30,13 @@ export interface AuditEntry {
  * Log an audit trail entry. Fire-and-forget — failures are logged
  * to console but never block the calling action.
  */
-export async function logAudit(entry: AuditEntry): Promise<void> {
+export async function logAudit(
+  entry: AuditEntry,
+): Promise<{ success: true } | { success: false; error: string }> {
   try {
     const { error } = await getAdminClient().from("audit_log").insert({
       organisation_id: entry.organisationId,
-      actor_id: entry.actorId,
+      actor_id: entry.actorId ?? null,
       actor_name: entry.actorName,
       action: entry.action,
       target_type: entry.targetType,
@@ -46,9 +48,13 @@ export async function logAudit(entry: AuditEntry): Promise<void> {
 
     if (error) {
       console.error("Audit log insert failed:", error.message);
+      return { success: false, error: error.message };
     }
+    return { success: true };
   } catch (e) {
-    console.error("Audit log error:", e);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("Audit log error:", msg);
+    return { success: false, error: msg };
   }
 }
 

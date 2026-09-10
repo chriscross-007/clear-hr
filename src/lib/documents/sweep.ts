@@ -2,11 +2,14 @@
 //
 // Two responsibilities:
 //   1. Status sweep — write `document.expired` / `document.review_overdue`
-//      audit rows for any doc whose derived status flipped since the
-//      last sweep. Stateless: fires on the exact day of transition
-//      (expires_on = yesterday, or next_review_on = yesterday). A
-//      missed run means missing audit rows for that day but the
-//      derived status on the row itself is unaffected.
+//      audit rows once per verification cycle for any doc whose live
+//      status has flipped to expired or overdue for review. CLE-212
+//      follow-up: was previously keyed on `expires_on = yesterday` /
+//      `next_review_on = yesterday`, which meant missed sweep days or
+//      backdated dates never generated an audit row. Now keyed on
+//      `≤ today` with a dedupe check against the audit log itself so
+//      each cycle fires exactly one audit row (see
+//      `alreadyAuditedThisCycle`).
 //   2. Disposal sweep — permanently delete any doc past its 30-day
 //      Trash grace: purge storage bytes, delete the `document` row,
 //      remove the `disposal_queue` entry, write `document.purged`
@@ -33,14 +36,34 @@ export interface SweepResult {
   errors: string[];
 }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+// CLE-212 follow-up — "audit once per verification cycle" dedupe.
+// Returns true when the given transition action has already been
+// audited for this document since its most recent verify/renew (i.e.
+// the current verification cycle). Used to stop the sweep firing the
+// same `document.expired` / `document.review_overdue` row more than
+// once for the same state.
+//
+// Semantics: fetch the newest audit row on the doc among {this
+// transition action, document.verified, document.renewed}. If the
+// newest is the transition action, we've already audited this cycle.
+// If the newest is a verify/renew (or nothing matches), we haven't.
+async function alreadyAuditedThisCycle(
+  admin: SupabaseClient,
+  targetId: string,
+  transitionAction: "document.expired" | "document.review_overdue",
+): Promise<boolean> {
+  const { data } = await admin
+    .from("audit_log")
+    .select("action")
+    .eq("target_id", targetId)
+    .in("action", [transitionAction, "document.verified", "document.renewed"])
+    .order("created_at", { ascending: false })
+    .limit(1);
+  return data?.[0]?.action === transitionAction;
 }
 
-function yesterdayIso(): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 const TYPE_DISPLAY: Record<string, string> = {
@@ -64,11 +87,6 @@ export async function runDocumentsSweep(
 ): Promise<SweepResult> {
   const errors: string[] = [];
   const today = opts?.today ?? todayIso();
-  const yesterday = (() => {
-    const d = new Date(today + "T00:00:00Z");
-    d.setUTCDate(d.getUTCDate() - 1);
-    return d.toISOString().slice(0, 10);
-  })();
   const graceCutoff = new Date(Date.now() - GRACE_MS).toISOString();
 
   // Members map — hydrated per-org so we can attach a friendly name
@@ -91,15 +109,21 @@ export async function runDocumentsSweep(
 
   // ---------------------------------------------------------------------------
   // 1. Status sweep — expired
+  //
+  // CLE-212 follow-up. Was "expires_on = yesterday" (fires once on the
+  // transition day, misses everything if the sweep didn't run or the
+  // date was backdated). Now "expires_on ≤ today, once per verification
+  // cycle" — matches the doc's live-derived `expired` status, so the
+  // audit log stays honest about the state the user sees.
   // ---------------------------------------------------------------------------
   let expired = 0;
   {
     let q = admin
       .from("document")
       .select(
-        "id, organisation_id, file_name, type, owner_scope, owner_id, document_subtype!subtype_id(name, requires_verification)",
+        "id, organisation_id, file_name, type, owner_scope, owner_id, expires_on, document_subtype!subtype_id(name, requires_verification)",
       )
-      .eq("expires_on", yesterday)
+      .lte("expires_on", today)
       .not("verified_on", "is", null);
     if (opts?.organisationId) q = q.eq("organisation_id", opts.organisationId);
     const { data, error } = await q;
@@ -113,6 +137,7 @@ export async function runDocumentsSweep(
         const st = row.document_subtype as unknown as { name?: string; requires_verification?: boolean } | { name?: string; requires_verification?: boolean }[] | null;
         const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
         if (!stObj?.requires_verification) continue;
+        if (await alreadyAuditedThisCycle(admin, row.id as string, "document.expired")) continue;
         const member = row.owner_id ? memMap.get(row.owner_id as string) ?? null : null;
         await logAudit({
           organisationId: row.organisation_id as string,
@@ -134,6 +159,11 @@ export async function runDocumentsSweep(
 
   // ---------------------------------------------------------------------------
   // 2. Status sweep — overdue_review
+  //
+  // CLE-212 follow-up. Same shift as expired: was "next_review_on =
+  // yesterday", now "next_review_on ≤ today, once per verification
+  // cycle." Preserves the existing guard that suppresses this event
+  // for docs already expired today (expiry supersedes review).
   // ---------------------------------------------------------------------------
   let overdueReview = 0;
   {
@@ -142,7 +172,7 @@ export async function runDocumentsSweep(
       .select(
         "id, organisation_id, file_name, type, owner_scope, owner_id, expires_on, document_subtype!subtype_id(name, requires_verification)",
       )
-      .eq("next_review_on", yesterday)
+      .lte("next_review_on", today)
       .not("verified_on", "is", null);
     if (opts?.organisationId) q = q.eq("organisation_id", opts.organisationId);
     const { data, error } = await q;
@@ -158,6 +188,7 @@ export async function runDocumentsSweep(
         const st = row.document_subtype as unknown as { name?: string; requires_verification?: boolean } | { name?: string; requires_verification?: boolean }[] | null;
         const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
         if (!stObj?.requires_verification) continue;
+        if (await alreadyAuditedThisCycle(admin, row.id as string, "document.review_overdue")) continue;
         const member = row.owner_id ? memMap.get(row.owner_id as string) ?? null : null;
         await logAudit({
           organisationId: row.organisation_id as string,
@@ -216,7 +247,7 @@ export async function runDocumentsSweep(
             // itself crashes for any reason.
             const st = doc.document_subtype as unknown as { name?: string } | { name?: string }[] | null;
             const stName = Array.isArray(st) ? (st[0]?.name ?? null) : (st?.name ?? null);
-            await logAudit({
+            const auditRes = await logAudit({
               organisationId: doc.organisation_id as string,
               actorId: null as unknown as string,
               actorName: "System (nightly sweep)",
@@ -229,6 +260,14 @@ export async function runDocumentsSweep(
                 queued_at: q.queued_at as string,
               },
             });
+            if (!auditRes.success) {
+              // Surface the DB error to the sweep's debug dashboard —
+              // logAudit only console.errors otherwise, and the audit
+              // gap silently loses visibility on the purge.
+              errors.push(`purge audit ${doc.id}: ${auditRes.error}`);
+              // Keep going — losing an audit row shouldn't stop the
+              // purge itself.
+            }
 
             const { error: dErr } = await admin
               .from("document")
