@@ -56,7 +56,7 @@ const ACTION_LABELS: Record<string, string> = {
   "document.downloaded": "Document downloaded",
   "document.metadata_updated": "Document details updated",
   "document.deleted": "Document moved to Trash",
-  "document.force_deleted": "Document force-deleted",
+  "document.force_deleted": "Document moved to Trash (retention override)",
   "document.restored": "Document restored from Trash",
   "document.purged": "Document permanently deleted",
   "document.expired": "Document expired",
