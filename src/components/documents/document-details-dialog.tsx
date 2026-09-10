@@ -72,6 +72,12 @@ interface Props {
   canUpdate: boolean;
   onClose: () => void;
   onSaved?: () => void | Promise<void>;
+  /** When true, the dialog is fully read-only: pencils are hidden on
+   *  every section, the Activity composer is hidden, and a "In Trash"
+   *  pill sits at the top of the header. Used from the per-member
+   *  Trash list so admins can still review a trashed doc without being
+   *  able to change or comment on it. */
+  readOnly?: boolean;
 }
 
 function fmtDate(iso: string | null): string {
@@ -96,6 +102,10 @@ function fmtFileSize(bytes: number): string {
 }
 const ACTION_LABEL_OVERRIDES: Record<string, string> = {
   "document.metadata_updated": "Details updated",
+  "document.deleted": "Moved to Trash",
+  "document.force_deleted": "Moved to Trash (retention override)",
+  "document.restored": "Restored from Trash",
+  "document.purged": "Permanently deleted",
 };
 
 function actionLabel(action: string): string {
@@ -193,7 +203,12 @@ export function DocumentDetailsDialog({
   canUpdate,
   onClose,
   onSaved,
+  readOnly = false,
 }: Props) {
+  // A read-only opening (from the Trash list) forces every pencil off
+  // and the composer off, regardless of whether the caller would
+  // ordinarily have update rights.
+  const effectiveCanUpdate = canUpdate && !readOnly;
   const [detail, setDetail] = useState<DocumentDetailContext | null>(null);
   const [activity, setActivity] = useState<DocumentActivityItem[] | null>(null);
   const [subtypes, setSubtypes] = useState<Array<{ id: string; name: string; type: string }>>([]);
@@ -307,7 +322,7 @@ export function DocumentDetailsDialog({
                     <span className="text-muted-foreground"> / {detail.row.subtypeName}</span>
                   )}
                 </span>
-                {canUpdate && !employeeStripped && (
+                {effectiveCanUpdate && !employeeStripped && (
                   <SubtypePencil
                     detail={detail}
                     subtypes={subtypes}
@@ -321,9 +336,14 @@ export function DocumentDetailsDialog({
                 Filename: {detail.row.fileName} · {fmtFileSize(detail.row.fileSize)}
               </p>
 
-              {/* Row 3: status pills */}
-              {detail.row.statuses.length > 0 && (
+              {/* Row 3: status pills (+ "In Trash" pill in read-only mode). */}
+              {(detail.row.statuses.length > 0 || readOnly) && (
                 <div className="flex flex-wrap justify-center gap-1">
+                  {readOnly && (
+                    <span className="inline-block rounded-full bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200">
+                      In Trash
+                    </span>
+                  )}
                   {detail.row.statuses.map((s) => (
                     <span
                       key={s}
@@ -400,7 +420,7 @@ export function DocumentDetailsDialog({
                 <div className="border-b p-4">
                   <ExpirySection
                     detail={detail}
-                    canUpdate={canUpdate && !employeeStripped}
+                    canUpdate={effectiveCanUpdate && !employeeStripped}
                     onSaved={refreshDetailAndHistory}
                   />
                 </div>
@@ -409,7 +429,7 @@ export function DocumentDetailsDialog({
                 <div className="border-b p-4">
                   <VerifySection
                     detail={detail}
-                    canUpdate={canUpdate && !employeeStripped}
+                    canUpdate={effectiveCanUpdate && !employeeStripped}
                     onSaved={refreshDetailAndHistory}
                   />
                 </div>
@@ -418,7 +438,7 @@ export function DocumentDetailsDialog({
                 <div className="border-b p-4">
                   <ReviewSection
                     detail={detail}
-                    canUpdate={canUpdate && !employeeStripped}
+                    canUpdate={effectiveCanUpdate && !employeeStripped}
                     onSaved={refreshDetailAndHistory}
                   />
                 </div>
@@ -468,6 +488,24 @@ export function DocumentDetailsDialog({
                                   })}
                                 </div>
                               )}
+                              {(() => {
+                                // Surface a small set of "context" keys from
+                                // audit metadata — the ones that read as
+                                // human-visible detail rather than routing
+                                // plumbing. Currently just the force-delete
+                                // reason, which used to be invisible in the
+                                // Activity feed even though the audit row
+                                // captured it.
+                                const md = item.entry.metadata as Record<string, unknown> | null;
+                                if (!md) return null;
+                                const reason = md.force_delete_reason;
+                                if (typeof reason !== "string" || reason.trim() === "") return null;
+                                return (
+                                  <div className="mt-0.5 pl-3">
+                                    <span className="font-medium">Reason:</span> <span>{reason}</span>
+                                  </div>
+                                );
+                              })()}
                             </li>
                           ) : (
                             <li key={`c-${item.comment.id}`} className="rounded-md border bg-muted/30 p-2">
@@ -482,10 +520,11 @@ export function DocumentDetailsDialog({
                       </ul>
                     )}
                   </div>
-                  {/* Composer — pinned below the scrolling list. Employees
-                      whose view is stripped (own record, no update rights)
-                      don't get a composer. */}
-                  {!employeeStripped && (
+                  {/* Composer — pinned below the scrolling list. Hidden
+                      for employees viewing their own record without
+                      update rights, and for the read-only mode used
+                      when reviewing a trashed doc. */}
+                  {!employeeStripped && !readOnly && (
                     <div className="mt-2 shrink-0">
                       <ActivityComposer documentId={documentId} onPosted={reloadActivity} />
                     </div>

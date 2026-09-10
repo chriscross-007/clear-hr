@@ -157,6 +157,10 @@ export function DocsClient({
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [detailsDocId, setDetailsDocId] = useState<string | null>(null);
+  // When the details dialog was opened from the Trash list it renders
+  // in read-only mode (all pencils + composer hidden, "In Trash" pill
+  // in the header).
+  const [detailsReadOnly, setDetailsReadOnly] = useState(false);
   const [deleting, setDeleting] = useState<MemberDocumentRow | null>(null);
   // Transient success toast shown after a photo upload lands from
   // the mobile app. Dialog closes → this appears for ~3s.
@@ -256,13 +260,22 @@ export function DocsClient({
             await load();
             router.refresh();
           }}
-          onView={(d) => handleView({ ...d } as MemberDocumentRow)}
+          onView={(d) => {
+            // Read-only Document Details dialog — everything the live
+            // dialog offers (Preview / Expiry / Verify / Review /
+            // Activity / Download) except the pencils and composer.
+            setDetailsReadOnly(true);
+            setDetailsDocId(d.id);
+          }}
         />
       ) : (
         <DocList
           rows={rows}
           canUpdate={canUpdate}
-          onOpen={(r) => setDetailsDocId(r.id)}
+          onOpen={(r) => {
+            setDetailsReadOnly(false);
+            setDetailsDocId(r.id);
+          }}
           onDownload={handleDownload}
           onDelete={(r) => setDeleting(r)}
         />
@@ -272,7 +285,11 @@ export function DocsClient({
         <DocumentDetailsDialog
           documentId={detailsDocId}
           canUpdate={canUpdate}
-          onClose={() => setDetailsDocId(null)}
+          readOnly={detailsReadOnly}
+          onClose={() => {
+            setDetailsDocId(null);
+            setDetailsReadOnly(false);
+          }}
           onSaved={async () => {
             await load();
             router.refresh();
@@ -447,22 +464,26 @@ function TrashList({
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.id} className="border-b last:border-b-0">
+            <tr
+              key={r.id}
+              className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
+              onClick={() => onView(r)}
+            >
               <td className="px-4 py-2 text-muted-foreground" title={r.captureSource === "photo" ? "Captured on mobile" : "Uploaded from computer"}>
                 {r.captureSource === "photo"
                   ? <Camera className="h-4 w-4" />
                   : <UploadIcon className="h-4 w-4" />}
               </td>
               <td className="px-4 py-2">
-                <button type="button" className="min-w-0 text-left" onClick={() => onView(r)}>
+                <div className="min-w-0">
                   <p className="font-medium">
                     {TYPE_LABEL[r.type] ?? r.type}
                     {r.subtypeName ? <span className="text-muted-foreground"> / {r.subtypeName}</span> : null}
                   </p>
-                  <p className="text-xs text-muted-foreground truncate" title={r.fileName}>
+                  <p className="text-xs text-muted-foreground truncate">
                     {r.fileName} · {fmtFileSize(r.fileSize)}
                   </p>
-                </button>
+                </div>
               </td>
               <td className="px-4 py-2 text-muted-foreground" title={`Queued at ${fmtDateTime(r.queuedAt)}`}>
                 {fmtDateTime(addDaysIso(r.queuedAt, 30))}
@@ -472,10 +493,19 @@ function TrashList({
               </td>
               <td className="px-4 py-2 text-right">
                 <div className="flex items-center justify-end gap-1">
-                  <Button variant="ghost" size="sm" title="Backdate the queued date (testing helper for the nightly purge sweep)" onClick={() => setBackdating(r)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="Backdate the queued date (testing helper for the nightly purge sweep)"
+                    onClick={(e) => { e.stopPropagation(); setBackdating(r); }}
+                  >
                     Backdate
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => onRestore(r.id)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => { e.stopPropagation(); void onRestore(r.id); }}
+                  >
                     <Undo2 className="mr-1.5 h-3.5 w-3.5" />
                     Restore
                   </Button>

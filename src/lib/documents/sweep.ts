@@ -207,15 +207,13 @@ export async function runDocumentsSweep(
               continue;
             }
 
-            const { error: dErr } = await admin
-              .from("document")
-              .delete()
-              .eq("id", doc.id as string);
-            if (dErr) {
-              errors.push(`purge document ${doc.id}: ${dErr.message}`);
-              continue;
-            }
-
+            // Write the audit row BEFORE deleting the document. If
+            // `audit_log` carries a soft/hard reference to `document.id`
+            // (or a trigger reads the row), inserting after the delete
+            // silently fails inside logAudit's fire-and-forget catch
+            // and the purge event never surfaces on the audit page.
+            // Writing first also preserves the trail if the delete
+            // itself crashes for any reason.
             const st = doc.document_subtype as unknown as { name?: string } | { name?: string }[] | null;
             const stName = Array.isArray(st) ? (st[0]?.name ?? null) : (st?.name ?? null);
             await logAudit({
@@ -231,6 +229,15 @@ export async function runDocumentsSweep(
                 queued_at: q.queued_at as string,
               },
             });
+
+            const { error: dErr } = await admin
+              .from("document")
+              .delete()
+              .eq("id", doc.id as string);
+            if (dErr) {
+              errors.push(`purge document ${doc.id}: ${dErr.message}`);
+              continue;
+            }
           }
 
           // Remove the queue row regardless of doc presence (belt-and-braces
