@@ -62,6 +62,7 @@ export interface DocumentSubtypeDto {
   requiresVerification: boolean;
   reviewPeriodMonths: number | null;
   expectedForEveryMember: boolean;
+  trackablePerMember: boolean;
   requiresSignature: boolean;
 }
 
@@ -75,5 +76,6 @@ export interface DocumentSubtypeWritePayload {
   requiresVerification: boolean;
   reviewPeriodMonths: number | null;
   expectedForEveryMember: boolean;
+  trackablePerMember: boolean;
   requiresSignature: boolean;
 }

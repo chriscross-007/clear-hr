@@ -5,7 +5,7 @@
 // docs-client, but the underlying storage bucket + row now live on
 // the new `document` table.
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Calendar,
@@ -15,7 +15,6 @@ import {
   Loader2,
   Plus,
   RotateCcw,
-  Smartphone,
   Trash2,
   Undo2,
   Upload as UploadIcon,
@@ -42,25 +41,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 import {
   listMemberDocuments,
   listTrashedMemberDocuments,
   getMemberDocumentSignedUrl,
-  uploadMemberDocument,
   updateMemberDocumentMetadata,
   softDeleteMemberDocument,
   restoreMemberDocument,
-  getSubtypesForUpload,
   verifyMemberDocument,
   renewMemberDocument,
   backdateDisposalQueue,
@@ -68,19 +56,7 @@ import {
 import type { MemberDocumentRow, TrashedMemberDocumentRow } from "./document-types";
 import { STATUS_LABEL, STATUS_TONE } from "@/lib/document-status";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
-import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { queueCaptureTask, cancelCaptureTask } from "./capture-actions";
-
-type UploadSubtype = {
-  id: string;
-  type: string;
-  name: string;
-  retentionClass: string;
-  expiryRequired: boolean;
-  defaultExpiryMonths: number | null;
-  employeeCanUpload: boolean;
-};
-
+import { NewMemberDocumentDialog } from "@/components/documents/new-document-dialog";
 const TYPE_LABEL: Record<string, string> = {
   contract: "Contract",
   certificate: "Certificate",
@@ -302,18 +278,19 @@ export function DocsClient({
       )}
 
       {uploadOpen && (
-        <UploadDialog
+        <NewMemberDocumentDialog
           memberId={memberId}
           memberName={memberName}
           onClose={() => setUploadOpen(false)}
-          onUploaded={async (details) => {
+          onCreated={async (newDocId) => {
+            // Swap the "new doc" dialog for the full details dialog
+            // in the same tick — from the user's perspective the
+            // same surface just gained a file.
             setUploadOpen(false);
+            setDetailsReadOnly(false);
+            setDetailsDocId(newDocId);
             await load();
             router.refresh();
-            if (details?.toastMessage) {
-              setToastMessage(details.toastMessage);
-              setTimeout(() => setToastMessage(null), 3000);
-            }
           }}
         />
       )}
@@ -600,365 +577,6 @@ function ViewerDialog({
             <iframe src={viewer.url} title={viewer.fileName} className="h-[70vh] w-full" />
           )}
         </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// -------- Upload dialog --------------------------------------------------
-
-function UploadDialog({
-  memberId,
-  memberName,
-  onClose,
-  onUploaded,
-}: {
-  memberId: string;
-  memberName: string;
-  onClose: () => void;
-  onUploaded: (details?: { toastMessage?: string }) => Promise<void>;
-}) {
-  const [subtypes, setSubtypes] = useState<UploadSubtype[]>([]);
-  const [subtypeId, setSubtypeId] = useState<string>("");
-  const [expiresOn, setExpiresOn] = useState<string>("");
-  const [note, setNote] = useState<string>("");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-  // Hidden file input triggered by the Upload button — file picker
-  // only opens once the caller has committed to the Upload path, so
-  // it doesn't clutter the initial form.
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  // CLE-211 — two-mode dialog. `form` is the metadata form + three
-  // footer buttons (Cancel / Upload / Photo). `waiting` is the state
-  // after Photo has queued a capture_task; a Realtime subscription
-  // on the task row drives the transition to closed (uploaded /
-  // cancelled / timeout).
-  const [mode, setMode] = useState<"form" | "waiting">("form");
-  const [captureTaskId, setCaptureTaskId] = useState<string | null>(null);
-  const [waitingMessage, setWaitingMessage] = useState<string>("");
-
-  useEffect(() => {
-    (async () => {
-      const res = await getSubtypesForUpload(memberId);
-      if (res.success) {
-        setSubtypes(res.subtypes);
-      } else {
-        setError(res.error ?? "Failed to load subtypes");
-      }
-    })();
-  }, [memberId]);
-
-  const currentSubtype = useMemo(
-    () => subtypes.find((s) => s.id === subtypeId) ?? null,
-    [subtypeId, subtypes],
-  );
-  const expiryRequired = currentSubtype?.expiryRequired ?? false;
-
-  // Pre-fill expiry from subtype default when the user picks one.
-  useEffect(() => {
-    if (currentSubtype?.defaultExpiryMonths && !expiresOn) {
-      const d = new Date();
-      d.setUTCMonth(d.getUTCMonth() + currentSubtype.defaultExpiryMonths);
-      setExpiresOn(d.toISOString().slice(0, 10));
-    }
-  }, [currentSubtype?.defaultExpiryMonths]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Realtime subscription on the queued capture task. Fires when the
-  // mobile app uploads, cancels, or the timeout sweep flips it.
-  //
-  // Realtime respects RLS, so the browser socket needs the caller's
-  // JWT to evaluate `queued_by_user_id = auth.uid()`. `setAuth` pins
-  // the token on the realtime client explicitly — newer supabase-js
-  // pulls it from the auth session, but doing it up-front avoids a
-  // race where the subscription opens before the auth exchange
-  // completes. Also polls the task status every 3 s as a belt-and-
-  // braces fallback for the Realtime event landing.
-  useEffect(() => {
-    if (mode !== "waiting" || !captureTaskId) return;
-    const supabase = createSupabaseBrowserClient();
-
-    let cancelled = false;
-
-    function handleStatus(status: string) {
-      if (cancelled) return;
-      if (status === "uploaded") {
-        // Compose the "Received Type / Subtype for {Name}" toast for
-        // the parent to display after the dialog closes.
-        const typeLabel = currentSubtype
-          ? (TYPE_LABEL[currentSubtype.type] ?? currentSubtype.type)
-          : "document";
-        const label = currentSubtype
-          ? `${typeLabel} / ${currentSubtype.name}`
-          : typeLabel;
-        void onUploaded({ toastMessage: `Received ${label} for ${memberName}` });
-      } else if (status === "cancelled") {
-        onClose();
-      } else if (status === "timeout") {
-        setWaitingMessage("This request timed out. Try again when you're ready to take the photo.");
-        setMode("form");
-        setCaptureTaskId(null);
-      }
-    }
-
-    (async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.access_token) {
-        supabase.realtime.setAuth(session.access_token);
-      }
-    })();
-
-    const channel = supabase
-      .channel(`capture_task:${captureTaskId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "capture_task",
-          filter: `id=eq.${captureTaskId}`,
-        },
-        (payload) => {
-          const row = payload.new as { status?: string } | null;
-          if (row?.status) handleStatus(row.status);
-        },
-      )
-      .subscribe();
-
-    // Fallback poll every 3 s in case Realtime doesn't deliver the
-    // event (some Realtime + RLS + REPLICA IDENTITY edge cases). Cheap
-    // — one indexed row lookup per tick, only while the dialog is
-    // in `waiting` mode.
-    const pollInterval = setInterval(async () => {
-      if (cancelled) return;
-      const { data } = await supabase
-        .from("capture_task")
-        .select("status")
-        .eq("id", captureTaskId)
-        .single();
-      if (data?.status && data.status !== "pending") {
-        handleStatus(data.status as string);
-      }
-    }, 3000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(pollInterval);
-      void supabase.removeChannel(channel);
-    };
-  }, [mode, captureTaskId, onUploaded, onClose]);
-
-  // Cleanup: if the user closes the dialog while a task is pending,
-  // cancel it server-side so it doesn't hang around.
-  useEffect(() => {
-    return () => {
-      if (captureTaskId && mode === "waiting") {
-        void cancelCaptureTask(captureTaskId);
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Upload path: click Upload → open OS file picker via hidden input →
-  // as soon as the user selects a file, submit immediately. Metadata
-  // is already committed in state at this point.
-  function handleUploadClick() {
-    if (!subtypeId) { setError("Choose a subtype"); return; }
-    if (expiryRequired && !expiresOn) { setError("Expiry date is required for this subtype"); return; }
-    setError(null);
-    fileInputRef.current?.click();
-  }
-
-  function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
-    const chosen = e.target.files?.[0] ?? null;
-    // Reset the input so re-selecting the same file re-triggers change.
-    e.target.value = "";
-    if (!chosen) return;
-    setError(null);
-    const fd = new FormData();
-    fd.set("file", chosen);
-    fd.set("subtypeId", subtypeId);
-    if (expiresOn) fd.set("expiresOn", expiresOn);
-    startTransition(async () => {
-      const res = await uploadMemberDocument(memberId, fd);
-      if (!res.success) {
-        setError(res.error ?? "Upload failed");
-        return;
-      }
-      await onUploaded();
-    });
-  }
-
-  function handlePhoto() {
-    if (!subtypeId) { setError("Choose a subtype"); return; }
-    if (expiryRequired && !expiresOn) { setError("Expiry date is required for this subtype"); return; }
-    setError(null);
-    setWaitingMessage("");
-    startTransition(async () => {
-      const res = await queueCaptureTask(
-        memberId,
-        subtypeId,
-        expiresOn || null,
-        note.trim() || null,
-      );
-      if (!res.success) {
-        setError(res.error);
-        return;
-      }
-      setCaptureTaskId(res.taskId);
-      setMode("waiting");
-    });
-  }
-
-  async function handleWaitingCancel() {
-    if (captureTaskId) {
-      await cancelCaptureTask(captureTaskId);
-    }
-    onClose();
-  }
-
-  // Group subtypes by type for the picker.
-  const grouped = subtypes.reduce<Record<string, UploadSubtype[]>>((acc, s) => {
-    (acc[s.type] ??= []).push(s);
-    return acc;
-  }, {});
-
-  // Metadata complete? Enables both Upload and Photo. Uploader still
-  // has to pick a file in the OS dialog after clicking Upload.
-  const metadataReady = subtypeId && (!expiryRequired || !!expiresOn);
-
-  return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>{mode === "waiting" ? "Waiting for photo…" : "Add document"}</DialogTitle>
-          <DialogDescription>
-            {mode === "waiting"
-              ? "Open ClearHR on your phone and take the photo. This dialog closes when the photo arrives."
-              : "Choose a subtype, then either Upload a file from this computer or take a Photo on your phone."}
-          </DialogDescription>
-        </DialogHeader>
-
-        {mode === "waiting" ? (
-          <div className="space-y-4">
-            <div className="flex flex-col items-center gap-3 rounded-md border bg-muted/30 p-6">
-              <Smartphone className="h-10 w-10 text-muted-foreground" />
-              <div className="text-center">
-                <p className="text-sm">
-                  Take a photo of{" "}
-                  <strong>{memberName}</strong>&apos;s{" "}
-                  <strong>{currentSubtype?.name ?? "document"}</strong>
-                </p>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Open ClearHR on your phone — the capture task is at the top of the app.
-                </p>
-              </div>
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={handleWaitingCancel}>Cancel</Button>
-            </DialogFooter>
-          </div>
-        ) : (
-          <>
-            <div className="space-y-4">
-              {error && (
-                <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
-              )}
-              {waitingMessage && !error && (
-                <div className="rounded-md bg-amber-100 p-3 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
-                  {waitingMessage}
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <Label>Subtype</Label>
-                {/* Radix Select needs SelectItem children to be inside
-                    SelectGroup (or direct SelectContent children) —
-                    wrapping in a <div> silently drops items after the
-                    first group, which was truncating the list. */}
-                <Select value={subtypeId} onValueChange={setSubtypeId}>
-                  <SelectTrigger><SelectValue placeholder="Choose a subtype…" /></SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(grouped).map(([type, list]) => (
-                      <SelectGroup key={type}>
-                        <SelectLabel className="text-[10px] font-semibold uppercase text-muted-foreground">
-                          {TYPE_LABEL[type] ?? type}
-                        </SelectLabel>
-                        {list.map((s) => (
-                          <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                        ))}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label>
-                  Expires on
-                  {expiryRequired && <span className="ml-1 text-destructive">*</span>}
-                </Label>
-                <Input
-                  type="date"
-                  value={expiresOn}
-                  onChange={(e) => setExpiresOn(e.target.value)}
-                />
-                {!expiryRequired && (
-                  <p className="text-xs text-muted-foreground">Optional for this subtype.</p>
-                )}
-              </div>
-
-              {/* Hidden file input — opened by the Upload button
-                  after metadata is complete. Nothing visible until the
-                  caller commits to the Upload path. */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain"
-                className="hidden"
-                onChange={handleFileChosen}
-              />
-
-              {/* Optional note — only meaningful for the Photo path. */}
-              {subtypeId && (
-                <div className="space-y-2">
-                  <Label>Note for the photo (optional)</Label>
-                  <Textarea
-                    value={note}
-                    onChange={(e) => setNote(e.target.value.slice(0, 240))}
-                    placeholder="e.g. both pages of the passport"
-                    rows={2}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Only shown in the mobile app when you use Photo — ignored for Upload.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <DialogFooter className="flex-wrap gap-2 sm:flex-nowrap">
-              <Button variant="outline" onClick={onClose} disabled={pending}>Cancel</Button>
-              <Button
-                onClick={handlePhoto}
-                disabled={pending || !metadataReady}
-                title="Take the photo on your paired mobile app"
-              >
-                {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                <Camera className="mr-1.5 h-4 w-4" />
-                Photo
-              </Button>
-              <Button
-                onClick={handleUploadClick}
-                disabled={pending || !metadataReady}
-                title="Pick a file from this computer"
-              >
-                {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                <UploadIcon className="mr-1.5 h-4 w-4" />
-                Upload
-              </Button>
-            </DialogFooter>
-          </>
-        )}
       </DialogContent>
     </Dialog>
   );

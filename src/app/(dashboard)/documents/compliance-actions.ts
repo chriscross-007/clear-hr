@@ -183,10 +183,44 @@ export async function getComplianceRows(filters?: {
       });
     }
 
-    // Synthetic not_uploaded rows for expected-for-every-member subtypes.
-    const expectedSubtypes = subtypes.filter((s) => s.expected_for_every_member);
-    for (const s of expectedSubtypes) {
-      for (const m of members) {
+    // Synthetic not_uploaded rows.
+    //
+    // CLE-213 — the "expected" set for a given member is the union of
+    // (a) org-wide subtypes flagged `expected_for_every_member`, and
+    // (b) per-member entries in `member_expected_document`. Both feed
+    // the same not_uploaded synthesis; dedupe on (memberId, subtypeId)
+    // so a subtype required by both sources appears once.
+    const orgWideExpectedIds = new Set(
+      subtypes.filter((s) => s.expected_for_every_member).map((s) => s.id),
+    );
+
+    // Per-member expected rows for the in-scope members.
+    const perMemberExpected: Map<string, Set<string>> = new Map();
+    if (memberIds.length > 0) {
+      const { data: expectedRows } = await admin
+        .from("member_expected_document")
+        .select("member_id, subtype_id")
+        .eq("organisation_id", ctx.organisationId)
+        .in("member_id", memberIds);
+      for (const r of (expectedRows ?? []) as Array<{ member_id: string; subtype_id: string }>) {
+        let set = perMemberExpected.get(r.member_id);
+        if (!set) { set = new Set(); perMemberExpected.set(r.member_id, set); }
+        set.add(r.subtype_id);
+      }
+    }
+
+    for (const m of members) {
+      // Effective expected set = org-wide ∪ per-member.
+      const expectedIds = new Set<string>(orgWideExpectedIds);
+      const perMember = perMemberExpected.get(m.id);
+      if (perMember) for (const id of perMember) expectedIds.add(id);
+      if (expectedIds.size === 0) continue;
+
+      for (const subtypeId of expectedIds) {
+        const s = subtypeById.get(subtypeId);
+        // A per-member expectation on a subtype that no longer exists
+        // in the org (deleted after assignment) — skip.
+        if (!s) continue;
         // RTW opt-out for RTW subtypes.
         if (m.rtw_not_required && s.retention_class === "right_to_work") continue;
         // Does this member have any active doc of this subtype?

@@ -19,7 +19,7 @@ import {
   type MemberDocumentRow,
   type TrashedMemberDocumentRow,
 } from "./document-types";
-import { deriveDocumentStatuses } from "@/lib/document-status";
+import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1226,25 +1226,31 @@ async function verifyOrRenew(
     if (doc.expires_on !== null && (doc.expires_on as string) < today) {
       return { success: false, error: "This document has already expired. Upload a current one first." };
     }
-    let nextReviewOn: string | null = input.nextReviewOn ?? null;
-    if (nextReviewOn === null && stObj.review_period_months !== null) {
+    // CLE-212 follow-up — verify/renew is the moment the review cycle
+    // resets. When the subtype has a `review_period_months`, always
+    // recompute `next_review_on` from the new verification date; any
+    // inbound value (including a stale one the dialog might resend)
+    // is deliberately ignored. Subtypes with no review period leave
+    // the existing `next_review_on` alone — those deadlines are
+    // manually managed via the Review pencil, so verify/renew does
+    // not touch the column at all.
+    const updates: Record<string, unknown> = {
+      verified_on: verifiedOn,
+      verified_by: caller.memberId,
+      verification_notes: input.verificationNotes ?? null,
+      updated_at: new Date().toISOString(),
+    };
+    let nextReviewOn: string | null = null;
+    if (stObj.review_period_months !== null) {
       const d = new Date(verifiedOn + "T00:00:00Z");
       d.setUTCMonth(d.getUTCMonth() + Number(stObj.review_period_months));
       nextReviewOn = d.toISOString().slice(0, 10);
-    }
-    if (nextReviewOn !== null && nextReviewOn < today) {
-      return { success: false, error: "The next-review date can't be in the past." };
+      updates.next_review_on = nextReviewOn;
     }
 
     const { error } = await admin
       .from("document")
-      .update({
-        verified_on: verifiedOn,
-        verified_by: caller.memberId,
-        verification_notes: input.verificationNotes ?? null,
-        next_review_on: nextReviewOn,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updates)
       .eq("id", documentId)
       .eq("organisation_id", caller.organisationId);
     if (error) return { success: false, error: error.message };
@@ -1261,7 +1267,10 @@ async function verifyOrRenew(
         member: memberDisplay(target),
         type_subtype: typeSubtypeLabel(doc.type as string, stObj.name),
         verified_on: verifiedOn,
-        next_review_on: nextReviewOn,
+        // Only record next_review_on when we actually touched it —
+        // i.e. the subtype has a review period. Otherwise the doc's
+        // manually-managed deadline is untouched by verify/renew.
+        ...(nextReviewOn !== null ? { next_review_on: nextReviewOn } : {}),
         // verification_notes intentionally omitted — never in audit.
       },
     });
@@ -1361,5 +1370,399 @@ export async function getSubtypesForUpload(
     };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred", subtypes: [] };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CLE-213 — Required documents per member.
+// ---------------------------------------------------------------------------
+
+export interface TrackableSubtype {
+  id: string;
+  type: string;
+  name: string;
+}
+
+/**
+ * Every subtype in the caller's org with `trackable_per_member = true`.
+ * Powers the Employment tab's Required Documents picker.
+ */
+export async function listTrackablePerMemberSubtypes(): Promise<
+  { success: true; subtypes: TrackableSubtype[] } | { success: false; error: string }
+> {
+  try {
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const admin = getAdmin();
+    const { data, error } = await admin
+      .from("document_subtype")
+      .select("id, type, name, sort_order")
+      .eq("organisation_id", caller.organisationId)
+      .eq("trackable_per_member", true)
+      .order("type", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true });
+    if (error) return { success: false, error: error.message };
+    const rows = (data ?? []) as Array<{ id: string; type: string; name: string }>;
+    return {
+      success: true,
+      subtypes: rows.map((r) => ({ id: r.id, type: r.type, name: r.name })),
+    };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+/**
+ * Subtype IDs currently marked as expected for a specific member.
+ * Independent of the trackable_per_member flag — a subtype that used
+ * to be trackable but has since had its flag turned off can still
+ * appear here (existing assignments are preserved by design).
+ */
+export async function getMemberExpectedDocuments(
+  memberId: string,
+): Promise<
+  { success: true; subtypeIds: string[] } | { success: false; error: string }
+> {
+  try {
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const admin = getAdmin();
+    const target = await getTarget(admin, memberId, caller.organisationId);
+    if (!target) return { success: false, error: "Member not found" };
+    if (!caller.canViewTarget({ memberId: target.id, teamId: target.team_id })) {
+      return { success: false, error: "Member not found" };
+    }
+    const { data, error } = await admin
+      .from("member_expected_document")
+      .select("subtype_id")
+      .eq("member_id", memberId)
+      .eq("organisation_id", caller.organisationId);
+    if (error) return { success: false, error: error.message };
+    return {
+      success: true,
+      subtypeIds: (data ?? []).map((r) => r.subtype_id as string),
+    };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+export interface RequiredDocumentRow {
+  subtypeId: string;
+  subtypeName: string;
+  subtypeType: string;
+  /** True when the subtype's `trackable_per_member` flag is currently
+   *  on. False = legacy assignment (flag toggled off after
+   *  assignment). UI can dim / mark these accordingly. */
+  isTrackableNow: boolean;
+  /** True when this subtype is also expected of every member in the
+   *  org (`expected_for_every_member` = true). Signals to the UI
+   *  that removing the per-member assignment won't stop the row
+   *  showing up on the compliance dashboard. */
+  isOrgWideExpected: boolean;
+  /** True when the row is present via `member_expected_document`
+   *  (i.e. HR added it explicitly for this member). Rows that are
+   *  only org-wide-expected but not per-member-assigned are false.
+   *  Drives whether the per-row remove button shows. */
+  assignedPerMember: boolean;
+  /** Newest active document of this subtype for the member, if any.
+   *  null when the member hasn't uploaded one — status will contain
+   *  "not_uploaded" instead. */
+  documentId: string | null;
+  fileName: string | null;
+  verifiedOn: string | null;
+  expiresOn: string | null;
+  nextReviewOn: string | null;
+  statuses: (DocumentStatus | "not_uploaded")[];
+}
+
+/**
+ * Rich view of a member's required documents: expected subtype +
+ * status derivation from the matching (newest active) doc, plus
+ * flags for the UI. Powers the Required Documents card's table
+ * layout. Union of per-member expectations and org-wide
+ * `expected_for_every_member` — mirrors the compliance dashboard's
+ * additive rule.
+ */
+export async function getMemberRequiredDocumentRows(
+  memberId: string,
+): Promise<
+  { success: true; rows: RequiredDocumentRow[] } | { success: false; error: string }
+> {
+  try {
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const admin = getAdmin();
+    const target = await getTarget(admin, memberId, caller.organisationId);
+    if (!target) return { success: false, error: "Member not found" };
+    if (!caller.canViewTarget({ memberId: target.id, teamId: target.team_id })) {
+      return { success: false, error: "Member not found" };
+    }
+
+    // Per-member expected subtype IDs.
+    const { data: expectedRows, error: eErr } = await admin
+      .from("member_expected_document")
+      .select("subtype_id")
+      .eq("member_id", memberId)
+      .eq("organisation_id", caller.organisationId);
+    if (eErr) return { success: false, error: eErr.message };
+    const perMemberIds = new Set<string>(
+      (expectedRows ?? []).map((r) => r.subtype_id as string),
+    );
+
+    // Org-wide subtypes (needed both to hydrate the per-member rows
+    // and to add org-wide `expected_for_every_member` entries into
+    // the union).
+    const { data: subtypeRows, error: sErr } = await admin
+      .from("document_subtype")
+      .select(
+        "id, type, name, retention_class, requires_verification, expected_for_every_member, trackable_per_member",
+      )
+      .eq("organisation_id", caller.organisationId);
+    if (sErr) return { success: false, error: sErr.message };
+    type SubtypeRow = {
+      id: string;
+      type: string;
+      name: string;
+      retention_class: string;
+      requires_verification: boolean;
+      expected_for_every_member: boolean;
+      trackable_per_member: boolean;
+    };
+    const subtypes = (subtypeRows ?? []) as unknown as SubtypeRow[];
+    const subtypeById = new Map(subtypes.map((s) => [s.id, s]));
+
+    // Effective expected set for this member = per-member ∪ org-wide.
+    // RTW opt-out honored: exclude right_to_work subtypes when the
+    // member has `rtw_not_required` set.
+    const effectiveIds = new Set<string>(perMemberIds);
+    for (const s of subtypes) {
+      if (s.expected_for_every_member) effectiveIds.add(s.id);
+    }
+    const { data: memberRow } = await admin
+      .from("members")
+      .select("rtw_not_required")
+      .eq("id", memberId)
+      .eq("organisation_id", caller.organisationId)
+      .single();
+    const rtwOptedOut = ((memberRow as { rtw_not_required?: boolean } | null)?.rtw_not_required) === true;
+
+    // Active docs for this member. Excludes trashed (in disposal_queue)
+    // and past-disposal_date rows — same rules the docs page uses.
+    const { data: docRows } = await admin
+      .from("document")
+      .select("id, subtype_id, file_name, uploaded_at, expires_on, next_review_on, verified_on, disposal_date")
+      .eq("organisation_id", caller.organisationId)
+      .eq("owner_scope", "member")
+      .eq("owner_id", memberId);
+    type Doc = {
+      id: string;
+      subtype_id: string | null;
+      file_name: string;
+      uploaded_at: string;
+      expires_on: string | null;
+      next_review_on: string | null;
+      verified_on: string | null;
+      disposal_date: string | null;
+    };
+    const docs = ((docRows ?? []) as unknown as Doc[]);
+    const { data: queuedRows } = await admin
+      .from("disposal_queue")
+      .select("document_id")
+      .eq("organisation_id", caller.organisationId);
+    const queued = new Set<string>((queuedRows ?? []).map((r) => r.document_id as string));
+    const today = new Date().toISOString().slice(0, 10);
+    const activeDocs = docs
+      .filter((d) => !queued.has(d.id))
+      .filter((d) => d.disposal_date === null || d.disposal_date > today);
+
+    // Group active docs by subtype_id, newest-first.
+    const bySubtype: Map<string, Doc[]> = new Map();
+    for (const d of activeDocs) {
+      if (!d.subtype_id) continue;
+      const list = bySubtype.get(d.subtype_id) ?? [];
+      list.push(d);
+      bySubtype.set(d.subtype_id, list);
+    }
+    for (const list of bySubtype.values()) {
+      list.sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1));
+    }
+
+    const rows: RequiredDocumentRow[] = [];
+    for (const subtypeId of effectiveIds) {
+      const s = subtypeById.get(subtypeId);
+      if (!s) continue;
+      if (rtwOptedOut && s.retention_class === "right_to_work") continue;
+      const newest = bySubtype.get(subtypeId)?.[0] ?? null;
+      const statuses = newest
+        ? (deriveDocumentStatuses({
+            requiresVerification: s.requires_verification === true,
+            verifiedOn: newest.verified_on,
+            expiresOn: newest.expires_on,
+            nextReviewOn: newest.next_review_on,
+          }) as (DocumentStatus | "not_uploaded")[])
+        : (["not_uploaded"] as (DocumentStatus | "not_uploaded")[]);
+      rows.push({
+        subtypeId: s.id,
+        subtypeName: s.name,
+        subtypeType: s.type,
+        isTrackableNow: s.trackable_per_member,
+        isOrgWideExpected: s.expected_for_every_member,
+        assignedPerMember: perMemberIds.has(s.id),
+        documentId: newest?.id ?? null,
+        fileName: newest?.file_name ?? null,
+        verifiedOn: newest?.verified_on ?? null,
+        expiresOn: newest?.expires_on ?? null,
+        nextReviewOn: newest?.next_review_on ?? null,
+        statuses,
+      });
+    }
+
+    // Sort — type → subtype name — so the UI is stable and readable.
+    rows.sort((a, b) => {
+      if (a.subtypeType !== b.subtypeType) return a.subtypeType < b.subtypeType ? -1 : 1;
+      return a.subtypeName.localeCompare(b.subtypeName);
+    });
+
+    return { success: true, rows };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+/**
+ * Atomically replace a member's expected-doc list with the given
+ * set of subtype IDs. Diffs against the current state and writes
+ * per-row audit entries so HR has a trail of who changed what.
+ */
+export async function setMemberExpectedDocuments(
+  memberId: string,
+  subtypeIds: string[],
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const admin = getAdmin();
+
+    const target = await getTarget(admin, memberId, caller.organisationId);
+    if (!target) return { success: false, error: "Member not found" };
+    if (!caller.canUpdateTarget({ memberId: target.id, teamId: target.team_id })) {
+      return { success: false, error: "You don't have permission to change this member's documents." };
+    }
+
+    // Sanity-check that every incoming subtype belongs to the same
+    // org. Also fetch the display names so the audit entries are
+    // human-readable without a further lookup.
+    const uniqIncoming = Array.from(new Set(subtypeIds));
+    let incomingMeta: Array<{ id: string; name: string; type: string }> = [];
+    if (uniqIncoming.length > 0) {
+      const { data: subs, error: sErr } = await admin
+        .from("document_subtype")
+        .select("id, name, type")
+        .eq("organisation_id", caller.organisationId)
+        .in("id", uniqIncoming);
+      if (sErr) return { success: false, error: sErr.message };
+      incomingMeta = (subs ?? []) as Array<{ id: string; name: string; type: string }>;
+      if (incomingMeta.length !== uniqIncoming.length) {
+        return { success: false, error: "One or more subtypes are not available in this organisation." };
+      }
+    }
+
+    // Load current set so we can diff.
+    const { data: currentRows, error: cErr } = await admin
+      .from("member_expected_document")
+      .select("subtype_id")
+      .eq("member_id", memberId)
+      .eq("organisation_id", caller.organisationId);
+    if (cErr) return { success: false, error: cErr.message };
+    const currentSet = new Set((currentRows ?? []).map((r) => r.subtype_id as string));
+    const nextSet = new Set(uniqIncoming);
+
+    const toAdd = uniqIncoming.filter((id) => !currentSet.has(id));
+    const toRemove = Array.from(currentSet).filter((id) => !nextSet.has(id));
+
+    if (toAdd.length === 0 && toRemove.length === 0) {
+      return { success: true }; // no-op
+    }
+
+    // Deletes first, then inserts, so a subtype swapped in and out
+    // never fails the unique constraint mid-operation.
+    if (toRemove.length > 0) {
+      const { error: dErr } = await admin
+        .from("member_expected_document")
+        .delete()
+        .eq("member_id", memberId)
+        .eq("organisation_id", caller.organisationId)
+        .in("subtype_id", toRemove);
+      if (dErr) return { success: false, error: dErr.message };
+    }
+    if (toAdd.length > 0) {
+      const { error: iErr } = await admin.from("member_expected_document").insert(
+        toAdd.map((subtypeId) => ({
+          organisation_id: caller.organisationId,
+          member_id: memberId,
+          subtype_id: subtypeId,
+          added_by: caller.memberId,
+        })),
+      );
+      if (iErr) return { success: false, error: iErr.message };
+    }
+
+    // Audit — one row per direction, listing the affected subtypes
+    // by their type/subtype label so the audit page reads naturally.
+    const nameOf = (id: string) => {
+      const m = incomingMeta.find((x) => x.id === id);
+      // For removals the subtype might not be in incomingMeta;
+      // fall back to a stub label — the audit still records the ID.
+      return m ? typeSubtypeLabel(m.type, m.name) : id;
+    };
+    const targetLabel = memberDisplay(target);
+
+    if (toAdd.length > 0) {
+      await logAudit({
+        organisationId: caller.organisationId,
+        actorId: caller.memberId,
+        actorName: await callerName(admin, caller.memberId),
+        action: "member.expected_documents_added",
+        targetType: "member",
+        targetId: memberId,
+        targetLabel,
+        metadata: {
+          subtypes: toAdd.map(nameOf),
+        },
+      });
+    }
+    if (toRemove.length > 0) {
+      // For removes, hydrate names from the DB — the removed subtypes
+      // aren't in incomingMeta.
+      const { data: removedMeta } = await admin
+        .from("document_subtype")
+        .select("id, name, type")
+        .in("id", toRemove);
+      const removedRows = (removedMeta ?? []) as Array<{ id: string; name: string; type: string }>;
+      await logAudit({
+        organisationId: caller.organisationId,
+        actorId: caller.memberId,
+        actorName: await callerName(admin, caller.memberId),
+        action: "member.expected_documents_removed",
+        targetType: "member",
+        targetId: memberId,
+        targetLabel,
+        metadata: {
+          subtypes: toRemove.map((id) => {
+            const m = removedRows.find((x) => x.id === id);
+            return m ? typeSubtypeLabel(m.type, m.name) : id;
+          }),
+        },
+      });
+    }
+
+    revalidatePath(`/members/${memberId}/employment`);
+    revalidatePath(`/members/${memberId}/docs`);
+    revalidatePath(`/documents/compliance`);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }
 }

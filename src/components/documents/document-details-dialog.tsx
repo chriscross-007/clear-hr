@@ -809,10 +809,15 @@ function VerifyPencil({
     setError(null);
     startTransition(async () => {
       const fn = isRenew ? renewMemberDocument : verifyMemberDocument;
+      // Deliberately not sending nextReviewOn — verify/renew is the
+      // cycle reset, and the server recomputes next_review_on from
+      // the subtype's review_period_months (or leaves it alone for
+      // subtypes without a period). Sending the current value here
+      // used to suppress the recompute and leave a stale review-by
+      // date on the doc.
       const verifyRes = await fn(detail.row.id, {
         verifiedOn,
         verificationNotes: null,
-        nextReviewOn: detail.row.nextReviewOn,
       });
       if (!verifyRes.success) { setError(verifyRes.error ?? "Verify failed"); return; }
       setOpen(false);

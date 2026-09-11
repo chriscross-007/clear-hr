@@ -4,7 +4,7 @@
 // per-row edit / delete; add-new via the "Add subtype" button at the
 // top of each type section.
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Trash2, Loader2, ShieldCheck, Users, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -82,6 +82,7 @@ function emptyPayload(type: DocumentType): DocumentSubtypeWritePayload {
     requiresVerification: false,
     reviewPeriodMonths: null,
     expectedForEveryMember: false,
+    trackablePerMember: false,
     requiresSignature: false,
   };
 }
@@ -97,6 +98,7 @@ function dtoToPayload(dto: DocumentSubtypeDto): DocumentSubtypeWritePayload {
     requiresVerification: dto.requiresVerification,
     reviewPeriodMonths: dto.reviewPeriodMonths,
     expectedForEveryMember: dto.expectedForEveryMember,
+    trackablePerMember: dto.trackablePerMember,
     requiresSignature: dto.requiresSignature,
   };
 }
@@ -107,7 +109,11 @@ export function DocumentSubtypesClient({
   initialSubtypes: DocumentSubtypeDto[];
 }) {
   const router = useRouter();
-  const [subtypes] = useState<DocumentSubtypeDto[]>(initialSubtypes);
+  const [subtypes, setSubtypes] = useState<DocumentSubtypeDto[]>(initialSubtypes);
+  // Resync when the server rerenders (router.refresh() after a save).
+  // Without this the useState snapshot from first mount would stick
+  // and the list wouldn't reflect the new / edited subtype.
+  useEffect(() => { setSubtypes(initialSubtypes); }, [initialSubtypes]);
   const [editing, setEditing] = useState<{ mode: "create" | "edit"; id?: string; payload: DocumentSubtypeWritePayload } | null>(null);
   const [deleting, setDeleting] = useState<DocumentSubtypeDto | null>(null);
   const [deleteInFlight, setDeleteInFlight] = useState(false);
@@ -335,6 +341,7 @@ function SubtypeEditorDialog({
           employeeCanUpload: false,
           requiresVerification: false,
           expectedForEveryMember: false,
+          trackablePerMember: false,
           reviewPeriodMonths: null,
           // Retention class is a GDPR concept — how long personal-data
           // records survive after an employee leaves. Org docs have no
@@ -359,7 +366,11 @@ function SubtypeEditorDialog({
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>{mode === "create" ? "New subtype" : "Edit subtype"}</DialogTitle>
+          <DialogTitle>
+            {mode === "create"
+              ? `New Subtype under ${TYPE_LABEL[payload.type] ?? payload.type}`
+              : "Edit subtype"}
+          </DialogTitle>
           <DialogDescription>
             Governs upload rules, verification, expiry and retention for documents
             classified under this subtype.
@@ -425,6 +436,12 @@ function SubtypeEditorDialog({
                   description="Members with no active doc of this subtype surface on the compliance dashboard."
                   value={payload.expectedForEveryMember}
                   onChange={(v) => update("expectedForEveryMember", v)}
+                />
+                <FlagRow
+                  label="Trackable per member"
+                  description="Available in the Required Documents picker on the Employment tab so specific members can be marked as needing this."
+                  value={payload.trackablePerMember}
+                  onChange={(v) => update("trackablePerMember", v)}
                 />
               </>
             )}
