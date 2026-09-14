@@ -796,14 +796,23 @@ export async function uploadMemberDocument(
     const { data: subtype } = await admin
       .from("document_subtype")
       .select(
-        "id, type, name, retention_class, expiry_required, employee_can_upload",
+        "id, type, name, retention_class, expiry_required, default_expiry_months, employee_can_upload",
       )
       .eq("id", subtypeId)
       .eq("organisation_id", caller.organisationId)
       .single();
     if (!subtype) return { success: false, error: "That document type is not available." };
-    if (subtype.expiry_required && !expiresOn) {
-      return { success: false, error: "This document type needs an expiry date." };
+    // CLE-214 — expiry is set post-upload via the Expiry pencil in
+    // the details dialog. If the subtype flags expiry as required and
+    // the caller didn't supply one, auto-derive from
+    // `default_expiry_months` when available, otherwise let the row
+    // land with expires_on = null and rely on the pencil + compliance
+    // dashboard to surface the missing date.
+    let effectiveExpiresOn = expiresOn;
+    if (subtype.expiry_required && !effectiveExpiresOn && subtype.default_expiry_months) {
+      const d = new Date();
+      d.setUTCMonth(d.getUTCMonth() + Number(subtype.default_expiry_months));
+      effectiveExpiresOn = d.toISOString().slice(0, 10);
     }
     // Past-expiry check removed to allow the retention/status sweeps
     // to be exercised end-to-end during testing.
@@ -846,7 +855,7 @@ export async function uploadMemberDocument(
         content_type: file.type,
         type: subtype.type,
         subtype_id: subtype.id,
-        expires_on: expiresOn,
+        expires_on: effectiveExpiresOn,
         retention_class: subtype.retention_class,
         uploaded_by: caller.memberId,
       })
@@ -1386,6 +1395,11 @@ export interface TrackableSubtype {
 /**
  * Every subtype in the caller's org with `trackable_per_member = true`.
  * Powers the Employment tab's Required Documents picker.
+ *
+ * CLE-215 — RTW-class subtypes (`retention_class = 'right_to_work'`)
+ * are excluded here even when their trackable flag is on. RTW is
+ * covered by the aggregate "Right to Work" row on the card and
+ * shouldn't appear as an individually-pickable per-member item.
  */
 export async function listTrackablePerMemberSubtypes(): Promise<
   { success: true; subtypes: TrackableSubtype[] } | { success: false; error: string }
@@ -1399,6 +1413,38 @@ export async function listTrackablePerMemberSubtypes(): Promise<
       .select("id, type, name, sort_order")
       .eq("organisation_id", caller.organisationId)
       .eq("trackable_per_member", true)
+      .neq("retention_class", "right_to_work")
+      .order("type", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true });
+    if (error) return { success: false, error: error.message };
+    const rows = (data ?? []) as Array<{ id: string; type: string; name: string }>;
+    return {
+      success: true,
+      subtypes: rows.map((r) => ({ id: r.id, type: r.type, name: r.name })),
+    };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+/**
+ * CLE-215 — Subtypes valid for satisfying RTW. Any subtype in the
+ * caller's org whose `retention_class = 'right_to_work'`. Feeds the
+ * restricted picker on the RTW aggregate row's "+ Add" button.
+ */
+export async function listRtwSubtypes(): Promise<
+  { success: true; subtypes: TrackableSubtype[] } | { success: false; error: string }
+> {
+  try {
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const admin = getAdmin();
+    const { data, error } = await admin
+      .from("document_subtype")
+      .select("id, type, name, sort_order")
+      .eq("organisation_id", caller.organisationId)
+      .eq("retention_class", "right_to_work")
       .order("type", { ascending: true })
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true });
@@ -1448,6 +1494,17 @@ export async function getMemberExpectedDocuments(
   }
 }
 
+/** CLE-215 — a single non-expired RTW-class document surfaced on
+ *  the aggregate RTW row so admins can click through to it. */
+export interface RtwEvidenceDoc {
+  documentId: string;
+  subtypeName: string;
+  subtypeType: string;
+  fileName: string;
+  verifiedOn: string | null;
+  expiresOn: string | null;
+}
+
 export interface RequiredDocumentRow {
   subtypeId: string;
   subtypeName: string;
@@ -1456,16 +1513,24 @@ export interface RequiredDocumentRow {
    *  on. False = legacy assignment (flag toggled off after
    *  assignment). UI can dim / mark these accordingly. */
   isTrackableNow: boolean;
-  /** True when this subtype is also expected of every member in the
-   *  org (`expected_for_every_member` = true). Signals to the UI
-   *  that removing the per-member assignment won't stop the row
-   *  showing up on the compliance dashboard. */
+  /** CLE-215 — deprecated. `expected_for_every_member` was dropped;
+   *  this now always reports false and can be removed in a follow-
+   *  up sweep. Kept in the shape for now so downstream consumers
+   *  don't break mid-migration. */
   isOrgWideExpected: boolean;
   /** True when the row is present via `member_expected_document`
    *  (i.e. HR added it explicitly for this member). Rows that are
-   *  only org-wide-expected but not per-member-assigned are false.
-   *  Drives whether the per-row remove button shows. */
+   *  synthetic (like the RTW aggregate) are false. Drives whether
+   *  the per-row remove button shows. */
   assignedPerMember: boolean;
+  /** CLE-215 — true for the synthetic "Right to Work" aggregate row
+   *  the card renders at the top when the member's RTW is required.
+   *  Non-RTW rows leave this false. */
+  isRtwAggregate?: boolean;
+  /** Populated only on the RTW aggregate row: newest non-expired
+   *  doc per RTW-class subtype the member has. Empty when the
+   *  aggregate is `not_uploaded`. */
+  rtwDocs?: RtwEvidenceDoc[];
   /** Newest active document of this subtype for the member, if any.
    *  null when the member hasn't uploaded one — status will contain
    *  "not_uploaded" instead. */
@@ -1511,13 +1576,16 @@ export async function getMemberRequiredDocumentRows(
       (expectedRows ?? []).map((r) => r.subtype_id as string),
     );
 
-    // Org-wide subtypes (needed both to hydrate the per-member rows
-    // and to add org-wide `expected_for_every_member` entries into
-    // the union).
+    // Org-wide subtype metadata. Used to (a) hydrate per-member rows
+    // and (b) find the RTW-class subtypes for the aggregate row.
+    // CLE-215 — `expected_for_every_member` column has been dropped;
+    // per-member expectations now come solely from
+    // `member_expected_document`, and RTW-class subtypes are
+    // aggregated via the RTW row rather than surfaced individually.
     const { data: subtypeRows, error: sErr } = await admin
       .from("document_subtype")
       .select(
-        "id, type, name, retention_class, requires_verification, expected_for_every_member, trackable_per_member",
+        "id, type, name, retention_class, requires_verification, trackable_per_member",
       )
       .eq("organisation_id", caller.organisationId);
     if (sErr) return { success: false, error: sErr.message };
@@ -1527,18 +1595,19 @@ export async function getMemberRequiredDocumentRows(
       name: string;
       retention_class: string;
       requires_verification: boolean;
-      expected_for_every_member: boolean;
       trackable_per_member: boolean;
     };
     const subtypes = (subtypeRows ?? []) as unknown as SubtypeRow[];
     const subtypeById = new Map(subtypes.map((s) => [s.id, s]));
 
-    // Effective expected set for this member = per-member ∪ org-wide.
-    // RTW opt-out honored: exclude right_to_work subtypes when the
-    // member has `rtw_not_required` set.
-    const effectiveIds = new Set<string>(perMemberIds);
-    for (const s of subtypes) {
-      if (s.expected_for_every_member) effectiveIds.add(s.id);
+    // The set of subtype ids to render as their own rows.
+    // Per-member assigned subtypes, minus any that are RTW-class
+    // (those roll into the aggregate row).
+    const effectiveIds = new Set<string>();
+    for (const id of perMemberIds) {
+      const s = subtypeById.get(id);
+      if (s && s.retention_class === "right_to_work") continue;
+      effectiveIds.add(id);
     }
     const { data: memberRow } = await admin
       .from("members")
@@ -1593,7 +1662,6 @@ export async function getMemberRequiredDocumentRows(
     for (const subtypeId of effectiveIds) {
       const s = subtypeById.get(subtypeId);
       if (!s) continue;
-      if (rtwOptedOut && s.retention_class === "right_to_work") continue;
       const newest = bySubtype.get(subtypeId)?.[0] ?? null;
       const statuses = newest
         ? (deriveDocumentStatuses({
@@ -1608,7 +1676,7 @@ export async function getMemberRequiredDocumentRows(
         subtypeName: s.name,
         subtypeType: s.type,
         isTrackableNow: s.trackable_per_member,
-        isOrgWideExpected: s.expected_for_every_member,
+        isOrgWideExpected: false,
         assignedPerMember: perMemberIds.has(s.id),
         documentId: newest?.id ?? null,
         fileName: newest?.file_name ?? null,
@@ -1624,6 +1692,75 @@ export async function getMemberRequiredDocumentRows(
       if (a.subtypeType !== b.subtypeType) return a.subtypeType < b.subtypeType ? -1 : 1;
       return a.subtypeName.localeCompare(b.subtypeName);
     });
+
+    // CLE-215 — RTW aggregate row.
+    //
+    // Prepend a single synthetic row summarising all Right-to-Work
+    // evidence for members who need RTW (rtw_not_required = false).
+    // Any subtype with `retention_class = 'right_to_work'` counts;
+    // the row lists the newest non-expired doc per qualifying
+    // subtype. Status derivation:
+    //   * No non-expired qualifying doc → `not_uploaded`.
+    //   * At least one → verify each; if any is not yet verified,
+    //     status includes `pending_verification`; if any is expiring
+    //     within 30 days, `expiring_soon`; if all are verified and
+    //     none expiring, `verified`.
+    if (!rtwOptedOut) {
+      const rtwSubtypeIds = subtypes
+        .filter((s) => s.retention_class === "right_to_work")
+        .map((s) => s.id);
+      const rtwEvidenceDocs: RtwEvidenceDoc[] = [];
+      const soonIso = (() => {
+        const d = new Date(today + "T00:00:00Z");
+        d.setUTCDate(d.getUTCDate() + 30);
+        return d.toISOString().slice(0, 10);
+      })();
+      let anyPending = false;
+      let anyExpiring = false;
+      for (const sid of rtwSubtypeIds) {
+        const list = bySubtype.get(sid);
+        if (!list || list.length === 0) continue;
+        // Newest of that subtype. Skip if already expired.
+        const newest = list[0];
+        if (newest.expires_on !== null && newest.expires_on <= today) continue;
+        const s = subtypeById.get(sid);
+        if (!s) continue;
+        rtwEvidenceDocs.push({
+          documentId: newest.id,
+          subtypeName: s.name,
+          subtypeType: s.type,
+          fileName: newest.file_name,
+          verifiedOn: newest.verified_on,
+          expiresOn: newest.expires_on,
+        });
+        if (!newest.verified_on) anyPending = true;
+        if (newest.expires_on !== null && newest.expires_on <= soonIso) anyExpiring = true;
+      }
+      const rtwStatuses: (DocumentStatus | "not_uploaded")[] = [];
+      if (rtwEvidenceDocs.length === 0) {
+        rtwStatuses.push("not_uploaded");
+      } else {
+        if (anyPending) rtwStatuses.push("pending_verification");
+        if (anyExpiring) rtwStatuses.push("expiring_soon");
+        if (!anyPending && !anyExpiring) rtwStatuses.push("verified");
+      }
+      rows.unshift({
+        subtypeId: "rtw-aggregate",
+        subtypeName: "Right to Work evidence",
+        subtypeType: "evidence",
+        isTrackableNow: false,
+        isOrgWideExpected: true,
+        assignedPerMember: false,
+        isRtwAggregate: true,
+        rtwDocs: rtwEvidenceDocs,
+        documentId: null,
+        fileName: null,
+        verifiedOn: null,
+        expiresOn: null,
+        nextReviewOn: null,
+        statuses: rtwStatuses,
+      });
+    }
 
     return { success: true, rows };
   } catch (e) {

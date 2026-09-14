@@ -89,6 +89,10 @@ export function RequiredDocumentsCard({
   // Preset subtype for a new-doc dialog. Set when the user clicks a
   // not_uploaded row — the dialog opens with the subtype pre-locked.
   const [newDocSubtypeId, setNewDocSubtypeId] = useState<string | null>(null);
+  // CLE-215 — RTW aggregate row's "+ Add" opens the new-doc dialog
+  // in rtwOnly mode. Separate state because there's no preset
+  // subtype; the user picks one from the restricted list.
+  const [rtwAdding, setRtwAdding] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -171,6 +175,74 @@ export function RequiredDocumentsCard({
                   </thead>
                   <tbody>
                     {rows.map((r) => {
+                      // CLE-215 — RTW aggregate row uses its own
+                      // rendering path: a single row whose Subtype
+                      // cell lists every non-expired qualifying doc
+                      // as a clickable chip.
+                      if (r.isRtwAggregate) {
+                        const canAddRtw = canEdit;
+                        return (
+                          <tr key="rtw-aggregate" className="border-b last:border-b-0">
+                            <td className="px-3 py-2">
+                              <p className="font-medium">Right to Work evidence</p>
+                              {r.rtwDocs && r.rtwDocs.length > 0 ? (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {r.rtwDocs.map((d) => (
+                                    <button
+                                      key={d.documentId}
+                                      type="button"
+                                      onClick={() => setDetailsDocId(d.documentId)}
+                                      className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-xs hover:bg-muted"
+                                      title={d.fileName}
+                                    >
+                                      {subtypeLabel(d.subtypeType, d.subtypeName)}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="mt-0.5 text-xs text-muted-foreground italic">
+                                  No qualifying doc uploaded.
+                                </p>
+                              )}
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex flex-wrap gap-1">
+                                {r.statuses.map((s) => (
+                                  <span
+                                    key={s}
+                                    className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
+                                      s === "not_uploaded"
+                                        ? NOT_UPLOADED_TONE
+                                        : STATUS_TONE[s as DocumentStatus].className
+                                    }`}
+                                  >
+                                    {s === "not_uploaded" ? "Not uploaded" : STATUS_LABEL[s as DocumentStatus]}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">—</td>
+                            <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">—</td>
+                            {canEdit && (
+                              <td className="px-2 py-2 text-right">
+                                {canAddRtw && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setRtwAdding(true)}
+                                    disabled={pending}
+                                    className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                                    aria-label="Add RTW evidence"
+                                    title="Add RTW evidence"
+                                  >
+                                    <Plus className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      }
+
                       const hasDoc = r.documentId !== null;
                       // Not-uploaded rows are also clickable — they
                       // open the New Document dialog with the row's
@@ -228,7 +300,7 @@ export function RequiredDocumentsCard({
                           </td>
                           {canEdit && (
                             <td className="px-2 py-2 text-right">
-                              {r.assignedPerMember ? (
+                              {r.assignedPerMember && (
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -236,20 +308,12 @@ export function RequiredDocumentsCard({
                                     removeSubtype(r.subtypeId);
                                   }}
                                   disabled={pending}
-                                  className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                                  className="inline-flex h-6 w-6 items-center justify-center rounded text-destructive hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
                                   aria-label={`Remove ${subtypeLabel(r.subtypeType, r.subtypeName)}`}
                                   title="Remove from this member's required docs"
                                 >
                                   <Minus className="h-3.5 w-3.5" />
                                 </button>
-                              ) : (
-                                // Org-wide-only row: no minus. Small hint on hover.
-                                <span
-                                  className="text-[10px] text-muted-foreground"
-                                  title="Required of every member in the organisation. Manage on the subtype itself."
-                                >
-                                  Org-wide
-                                </span>
                               )}
                             </td>
                           )}
@@ -321,6 +385,20 @@ export function RequiredDocumentsCard({
             // so the transition looks like the same surface just
             // gained a file.
             setNewDocSubtypeId(null);
+            setDetailsDocId(newDocId);
+            await load();
+          }}
+        />
+      )}
+
+      {rtwAdding && (
+        <NewMemberDocumentDialog
+          memberId={memberId}
+          memberName={memberName}
+          rtwOnly
+          onClose={() => setRtwAdding(false)}
+          onCreated={async (newDocId) => {
+            setRtwAdding(false);
             setDetailsDocId(newDocId);
             await load();
           }}

@@ -35,6 +35,7 @@ import { Label } from "@/components/ui/label";
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   getSubtypesForUpload,
+  listRtwSubtypes,
   uploadMemberDocument,
 } from "@/app/(dashboard)/members/[memberId]/docs/document-actions";
 import {
@@ -66,6 +67,11 @@ interface Props {
    *  Used by the Required Documents card so clicking a not_uploaded
    *  row skips the subtype-picking step. */
   presetSubtypeId?: string | null;
+  /** CLE-215 — when true, the subtype picker is restricted to
+   *  subtypes whose `retention_class = 'right_to_work'`. Used when
+   *  the dialog is opened from the RTW aggregate row's "+ Add"
+   *  button so admins can only upload valid RTW evidence. */
+  rtwOnly?: boolean;
   onClose: () => void;
   /** Fires with the new document's id once upload/photo lands. The
    *  caller closes this dialog and typically opens
@@ -78,6 +84,7 @@ export function NewMemberDocumentDialog({
   memberId,
   memberName,
   presetSubtypeId = null,
+  rtwOnly = false,
   onClose,
   onCreated,
 }: Props) {
@@ -91,14 +98,32 @@ export function NewMemberDocumentDialog({
   const [subtypePickerOpen, setSubtypePickerOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Load subtypes on mount.
+  // Load subtypes on mount. `rtwOnly` mode swaps the picker for
+  // just the RTW-class subtypes.
   useEffect(() => {
     (async () => {
+      if (rtwOnly) {
+        const res = await listRtwSubtypes();
+        if (!res.success) { setSubtypeError(res.error); return; }
+        // Shape the RTW list into the fuller subtype shape the
+        // picker expects. Retention class + flags are known: they
+        // don't feed the picker UI directly, so stub them.
+        setSubtypes(res.subtypes.map((s) => ({
+          id: s.id,
+          type: s.type,
+          name: s.name,
+          retentionClass: "right_to_work",
+          expiryRequired: false,
+          defaultExpiryMonths: null,
+          employeeCanUpload: false,
+        })));
+        return;
+      }
       const res = await getSubtypesForUpload(memberId);
       if (res.success) setSubtypes(res.subtypes);
       else setSubtypeError(res.error ?? "Failed to load subtypes");
     })();
-  }, [memberId]);
+  }, [memberId, rtwOnly]);
 
   const currentSubtype = useMemo(
     () => subtypes.find((s) => s.id === subtypeId) ?? null,

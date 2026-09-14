@@ -6,7 +6,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2, Loader2, ShieldCheck, Users, Clock } from "lucide-react";
+import { Plus, Trash2, Loader2, ShieldCheck, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -81,7 +81,6 @@ function emptyPayload(type: DocumentType): DocumentSubtypeWritePayload {
     defaultExpiryMonths: null,
     requiresVerification: false,
     reviewPeriodMonths: null,
-    expectedForEveryMember: false,
     trackablePerMember: false,
     requiresSignature: false,
   };
@@ -97,7 +96,6 @@ function dtoToPayload(dto: DocumentSubtypeDto): DocumentSubtypeWritePayload {
     defaultExpiryMonths: dto.defaultExpiryMonths,
     requiresVerification: dto.requiresVerification,
     reviewPeriodMonths: dto.reviewPeriodMonths,
-    expectedForEveryMember: dto.expectedForEveryMember,
     trackablePerMember: dto.trackablePerMember,
     requiresSignature: dto.requiresSignature,
   };
@@ -193,11 +191,6 @@ export function DocumentSubtypesClient({
                             {s.requiresVerification && (
                               <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
                                 <ShieldCheck className="h-3 w-3" /> Verify
-                              </span>
-                            )}
-                            {s.expectedForEveryMember && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
-                                <Users className="h-3 w-3" /> Everyone
                               </span>
                             )}
                             {s.reviewPeriodMonths && (
@@ -340,7 +333,6 @@ function SubtypeEditorDialog({
           ...payload,
           employeeCanUpload: false,
           requiresVerification: false,
-          expectedForEveryMember: false,
           trackablePerMember: false,
           reviewPeriodMonths: null,
           // Retention class is a GDPR concept — how long personal-data
@@ -430,12 +422,6 @@ function SubtypeEditorDialog({
                   description="Documents of this subtype must be sighted by HR."
                   value={payload.requiresVerification}
                   onChange={(v) => update("requiresVerification", v)}
-                />
-                <FlagRow
-                  label="Expected for every member"
-                  description="Members with no active doc of this subtype surface on the compliance dashboard."
-                  value={payload.expectedForEveryMember}
-                  onChange={(v) => update("expectedForEveryMember", v)}
                 />
                 <FlagRow
                   label="Trackable per member"

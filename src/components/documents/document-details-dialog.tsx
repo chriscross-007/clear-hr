@@ -20,7 +20,7 @@
 // step for a small upfront fetch.
 
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { Camera, Download, Pencil, SendHorizontal, Upload as UploadIcon } from "lucide-react";
+import { Camera, Download, Loader2, Pencil, SendHorizontal, Upload as UploadIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -287,9 +287,16 @@ export function DocumentDetailsDialog({
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent
         // Override shadcn's default `sm:max-w-lg` at every breakpoint —
-        // width is driven entirely by the inline style below.
+        // width is driven entirely by the inline style below. Shrinks
+        // to a compact loading box while `detail` is still fetching so
+        // the user doesn't see a full-width empty dialog for 1–2s.
+        //
+        // Close X is hidden during the brief loading state (it lives
+        // for ~1s and looks silly cramped next to "Loading…"); it
+        // appears once the doc loads. ESC still dismisses either way.
         className="max-w-none sm:max-w-none p-0 gap-0"
-        style={{ width: "min(1200px, 95vw)" }}
+        style={{ width: detail ? "min(1200px, 95vw)" : "auto" }}
+        showCloseButton={!!detail || !!loadError}
       >
         {/* Radix requires DialogTitle to be present in every
             DialogContent for a11y. Render a hidden fallback for the
@@ -306,7 +313,10 @@ export function DocumentDetailsDialog({
         )}
 
         {!detail && !loadError && (
-          <div className="p-10 text-center text-sm text-muted-foreground">Loading…</div>
+          <div className="flex items-center gap-2 px-6 py-4 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading document…
+          </div>
         )}
 
         {detail && (

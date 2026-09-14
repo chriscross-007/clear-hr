@@ -101,9 +101,13 @@ export async function getComplianceRows(filters?: {
     const memberById = new Map(members.map((m) => [m.id, m]));
 
     // Subtype config for the tenant.
+    // CLE-215 — `expected_for_every_member` dropped; per-member
+    // expectations now come solely from `member_expected_document`,
+    // and RTW-class subtypes are aggregated into a single per-member
+    // "Right to Work evidence" row (below).
     const { data: subtypeRows } = await admin
       .from("document_subtype")
-      .select("id, type, name, retention_class, requires_verification, expected_for_every_member")
+      .select("id, type, name, retention_class, requires_verification")
       .eq("organisation_id", ctx.organisationId);
     type SubtypeRow = {
       id: string;
@@ -111,7 +115,6 @@ export async function getComplianceRows(filters?: {
       name: string;
       retention_class: string;
       requires_verification: boolean;
-      expected_for_every_member: boolean;
     };
     const subtypes = (subtypeRows ?? []) as unknown as SubtypeRow[];
     const subtypeById = new Map(subtypes.map((s) => [s.id, s]));
@@ -153,12 +156,16 @@ export async function getComplianceRows(filters?: {
     const rows: ComplianceRow[] = [];
 
     // Real doc rows.
+    //
+    // CLE-215 — RTW-class docs are hidden from the per-doc listing.
+    // They're rolled up into one aggregate "Right to Work evidence"
+    // row per member (below) so a member with Passport + Visa
+    // appears as a single RTW row, not two separate rows.
     for (const d of activeDocs) {
       const member = memberById.get(d.owner_id);
       if (!member) continue;
       const subtype = d.subtype_id ? subtypeById.get(d.subtype_id) : null;
-      // Exclude RTW subtypes when the member has opted out.
-      if (member.rtw_not_required && subtype?.retention_class === "right_to_work") continue;
+      if (subtype?.retention_class === "right_to_work") continue;
       const statuses = deriveDocumentStatuses({
         requiresVerification: subtype?.requires_verification === true,
         verifiedOn: d.verified_on,
@@ -185,16 +192,11 @@ export async function getComplianceRows(filters?: {
 
     // Synthetic not_uploaded rows.
     //
-    // CLE-213 — the "expected" set for a given member is the union of
-    // (a) org-wide subtypes flagged `expected_for_every_member`, and
-    // (b) per-member entries in `member_expected_document`. Both feed
-    // the same not_uploaded synthesis; dedupe on (memberId, subtypeId)
-    // so a subtype required by both sources appears once.
-    const orgWideExpectedIds = new Set(
-      subtypes.filter((s) => s.expected_for_every_member).map((s) => s.id),
-    );
-
-    // Per-member expected rows for the in-scope members.
+    // CLE-215 — expectations now come solely from
+    // `member_expected_document` (org-wide `expected_for_every_member`
+    // was dropped in the same migration; if anyone relied on it,
+    // per-member rows were backfilled). RTW-class subtypes are
+    // filtered out here — they surface via the RTW aggregate row.
     const perMemberExpected: Map<string, Set<string>> = new Map();
     if (memberIds.length > 0) {
       const { data: expectedRows } = await admin
@@ -210,19 +212,14 @@ export async function getComplianceRows(filters?: {
     }
 
     for (const m of members) {
-      // Effective expected set = org-wide ∪ per-member.
-      const expectedIds = new Set<string>(orgWideExpectedIds);
-      const perMember = perMemberExpected.get(m.id);
-      if (perMember) for (const id of perMember) expectedIds.add(id);
-      if (expectedIds.size === 0) continue;
+      const expectedIds = perMemberExpected.get(m.id);
+      if (!expectedIds || expectedIds.size === 0) continue;
 
       for (const subtypeId of expectedIds) {
         const s = subtypeById.get(subtypeId);
-        // A per-member expectation on a subtype that no longer exists
-        // in the org (deleted after assignment) — skip.
         if (!s) continue;
-        // RTW opt-out for RTW subtypes.
-        if (m.rtw_not_required && s.retention_class === "right_to_work") continue;
+        // RTW-class subtypes are aggregated via the RTW row below.
+        if (s.retention_class === "right_to_work") continue;
         // Does this member have any active doc of this subtype?
         const has = activeDocs.some((d) => d.owner_id === m.id && d.subtype_id === s.id);
         if (has) continue;
@@ -243,6 +240,71 @@ export async function getComplianceRows(filters?: {
           nextReviewOn: null,
         });
       }
+    }
+
+    // CLE-215 — RTW aggregate rows.
+    //
+    // One per non-opted-out member. Status derivation matches
+    // getMemberRequiredDocumentRows: `not_uploaded` when no non-
+    // expired RTW-class doc exists; otherwise `pending_verification`
+    // if any newest qualifying doc is unverified, `expiring_soon` if
+    // any expires within 30 days, `verified` when all are clean.
+    const rtwSubtypeIdSet = new Set(
+      subtypes.filter((s) => s.retention_class === "right_to_work").map((s) => s.id),
+    );
+    const soonIso = (() => {
+      const d = new Date(today + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() + 30);
+      return d.toISOString().slice(0, 10);
+    })();
+    for (const m of members) {
+      if (m.rtw_not_required) continue;
+      // Newest non-expired doc per RTW-class subtype for this member.
+      const perSubtypeNewest: Map<string, typeof activeDocs[number]> = new Map();
+      for (const d of activeDocs) {
+        if (d.owner_id !== m.id) continue;
+        if (!d.subtype_id || !rtwSubtypeIdSet.has(d.subtype_id)) continue;
+        if (d.expires_on !== null && d.expires_on <= today) continue;
+        const prior = perSubtypeNewest.get(d.subtype_id);
+        // activeDocs isn't ordered by upload time here; pick the row
+        // with the newest verified_on || expires_on || any ordering
+        // proxy. Simpler and stable: pick the largest doc id
+        // lexicographically, which is close enough for the aggregate.
+        // Compliance rows are read-only; the Required Documents card
+        // is where users actually click through.
+        if (!prior || (prior.id < d.id)) perSubtypeNewest.set(d.subtype_id, d);
+      }
+      let anyPending = false;
+      let anyExpiring = false;
+      for (const d of perSubtypeNewest.values()) {
+        if (!d.verified_on) anyPending = true;
+        if (d.expires_on !== null && d.expires_on <= soonIso) anyExpiring = true;
+      }
+      const rtwStatuses: (DocumentStatus | "not_uploaded")[] = [];
+      if (perSubtypeNewest.size === 0) {
+        rtwStatuses.push("not_uploaded");
+      } else {
+        if (anyPending) rtwStatuses.push("pending_verification");
+        if (anyExpiring) rtwStatuses.push("expiring_soon");
+        if (!anyPending && !anyExpiring) rtwStatuses.push("verified");
+      }
+      rows.push({
+        key: `rtw:${m.id}`,
+        memberId: m.id,
+        memberName: `${m.first_name} ${m.last_name}`.trim() || "—",
+        memberTeamId: m.team_id,
+        // No individual subtype — this is the RTW aggregate.
+        subtypeId: null,
+        subtypeName: "Right to Work evidence",
+        subtypeType: "evidence",
+        retentionClass: "right_to_work",
+        statuses: rtwStatuses,
+        documentId: null,
+        fileName: null,
+        verifiedOn: null,
+        expiresOn: null,
+        nextReviewOn: null,
+      });
     }
 
     // Apply filters.

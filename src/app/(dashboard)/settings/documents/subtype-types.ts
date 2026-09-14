@@ -61,7 +61,6 @@ export interface DocumentSubtypeDto {
   defaultExpiryMonths: number | null;
   requiresVerification: boolean;
   reviewPeriodMonths: number | null;
-  expectedForEveryMember: boolean;
   trackablePerMember: boolean;
   requiresSignature: boolean;
 }
@@ -75,7 +74,6 @@ export interface DocumentSubtypeWritePayload {
   defaultExpiryMonths: number | null;
   requiresVerification: boolean;
   reviewPeriodMonths: number | null;
-  expectedForEveryMember: boolean;
   trackablePerMember: boolean;
   requiresSignature: boolean;
 }

@@ -64,7 +64,7 @@ async function callerName(callerMemberId: string): Promise<string> {
 const SELECT_COLUMNS =
   "id, type, name, sort_order, employee_can_upload, retention_class, " +
   "expiry_required, default_expiry_months, requires_verification, " +
-  "review_period_months, expected_for_every_member, trackable_per_member, " +
+  "review_period_months, trackable_per_member, " +
   "requires_signature";
 
 interface DbRow {
@@ -78,7 +78,6 @@ interface DbRow {
   default_expiry_months: number | null;
   requires_verification: boolean;
   review_period_months: number | null;
-  expected_for_every_member: boolean;
   trackable_per_member: boolean;
   requires_signature: boolean;
 }
@@ -95,7 +94,6 @@ function rowToDto(row: DbRow): DocumentSubtypeDto {
     defaultExpiryMonths: row.default_expiry_months,
     requiresVerification: row.requires_verification,
     reviewPeriodMonths: row.review_period_months,
-    expectedForEveryMember: row.expected_for_every_member,
     trackablePerMember: row.trackable_per_member,
     requiresSignature: row.requires_signature,
   };
@@ -111,7 +109,6 @@ function payloadToRow(p: DocumentSubtypeWritePayload): Record<string, unknown> {
     default_expiry_months: p.defaultExpiryMonths,
     requires_verification: p.requiresVerification,
     review_period_months: p.reviewPeriodMonths,
-    expected_for_every_member: p.expectedForEveryMember,
     trackable_per_member: p.trackablePerMember,
     requires_signature: p.requiresSignature,
   };
@@ -226,7 +223,6 @@ export async function updateDocumentSubtype(
       default_expiry_months: b.default_expiry_months,
       requires_verification: b.requires_verification,
       review_period_months: b.review_period_months,
-      expected_for_every_member: b.expected_for_every_member,
       trackable_per_member: b.trackable_per_member,
       requires_signature: b.requires_signature,
     };

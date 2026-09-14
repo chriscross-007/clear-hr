@@ -85,7 +85,7 @@ export async function queueCaptureTask(
     // Subtype must be member-scope + same tenant.
     const { data: subtype } = await admin
       .from("document_subtype")
-      .select("id, type, name, expiry_required")
+      .select("id, type, name, expiry_required, default_expiry_months")
       .eq("id", subtypeId)
       .eq("organisation_id", ctx.organisationId)
       .single();
@@ -93,8 +93,15 @@ export async function queueCaptureTask(
     if (subtype.type === "organisation_document") {
       return { success: false, error: "Organisation documents can't be captured this way." };
     }
-    if (subtype.expiry_required && !expiresOn) {
-      return { success: false, error: "This document type needs an expiry date before you can queue a photo." };
+    // CLE-214 — expiry is set post-upload via the details dialog's
+    // Expiry pencil. Auto-derive from `default_expiry_months` when
+    // the subtype has one; otherwise let the task land with
+    // expires_on = null.
+    let effectiveExpiresOn: string | null = expiresOn;
+    if (subtype.expiry_required && !effectiveExpiresOn && subtype.default_expiry_months) {
+      const d = new Date();
+      d.setUTCMonth(d.getUTCMonth() + Number(subtype.default_expiry_months));
+      effectiveExpiresOn = d.toISOString().slice(0, 10);
     }
 
     // Trim / cap the note.
@@ -110,7 +117,7 @@ export async function queueCaptureTask(
         queued_by_member_id: ctx.memberId,
         target_member_id: target.id,
         subtype_id: subtype.id,
-        expires_on: expiresOn,
+        expires_on: effectiveExpiresOn,
         note: cleanNote,
         expires_at: expiresAtIso,
       })
@@ -131,7 +138,7 @@ export async function queueCaptureTask(
       metadata: {
         member: memberDisplay(target),
         type_subtype: `${subtype.type} / ${subtype.name}`,
-        expires_on: expiresOn,
+        expires_on: effectiveExpiresOn,
         expires_at: expiresAtIso,
       },
     });
