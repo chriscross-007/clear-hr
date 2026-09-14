@@ -196,6 +196,18 @@ export function RequiredDocumentsCard({
                       // as a clickable chip.
                       if (r.isRtwAggregate) {
                         const canAddRtw = canEdit;
+                        // Earliest expiry across the qualifying docs
+                        // — the one that'll next trigger an alarm.
+                        // Skip docs with no expiry set. Undefined
+                        // when nothing qualifies.
+                        const earliestExpiry = (() => {
+                          const withDates = (r.rtwDocs ?? [])
+                            .map((d) => d.expiresOn)
+                            .filter((v): v is string => typeof v === "string" && v.length > 0);
+                          if (withDates.length === 0) return null;
+                          withDates.sort();
+                          return withDates[0];
+                        })();
                         return (
                           <tr key="rtw-aggregate" className="border-b last:border-b-0">
                             <td className="px-3 py-2">
@@ -236,7 +248,9 @@ export function RequiredDocumentsCard({
                                 ))}
                               </div>
                             </td>
-                            <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">—</td>
+                            <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
+                              {fmtDate(earliestExpiry)}
+                            </td>
                             <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">—</td>
                             {canEdit && (
                               <td className="px-2 py-2 text-right">
