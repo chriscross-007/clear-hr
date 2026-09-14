@@ -98,7 +98,7 @@ export default async function EmploymentPage({
   const currentProfileId = (member.rights_profile_id as string | null) ?? null;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 p-6">
+    <div className="mx-auto max-w-4xl space-y-6 p-6">
       <div>
         <h1 className="text-2xl font-bold">Employment</h1>
         <p className="text-sm text-muted-foreground">

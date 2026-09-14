@@ -199,6 +199,7 @@ export function RequiredDocumentsCard({
                     <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
                       <th className="px-3 py-2 font-medium">Subtype</th>
                       <th className="px-3 py-2 font-medium">Status</th>
+                      <th className="px-3 py-2 font-medium hidden md:table-cell">Verified</th>
                       <th className="px-3 py-2 font-medium hidden md:table-cell">Expires</th>
                       <th className="px-3 py-2 font-medium hidden md:table-cell">To be reviewed by</th>
                       {canEdit && <th className="w-8 px-2 py-2" aria-label="Actions" />}
@@ -264,6 +265,7 @@ export function RequiredDocumentsCard({
                                 ))}
                               </div>
                             </td>
+                            <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">—</td>
                             <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
                               {fmtDate(earliestExpiry)}
                             </td>
@@ -337,6 +339,9 @@ export function RequiredDocumentsCard({
                                 </span>
                               ))}
                             </div>
+                          </td>
+                          <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
+                            {fmtDate(r.verifiedOn)}
                           </td>
                           <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
                             {fmtDate(r.expiresOn)}
