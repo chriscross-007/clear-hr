@@ -22,7 +22,7 @@
 // entries as before.
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
-import { Loader2, Minus, Plus } from "lucide-react";
+import { Loader2, Minus, Plus, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -277,15 +277,17 @@ export function RequiredDocumentsCard({
                       // open the New Document dialog with the row's
                       // subtype pre-locked. Only offer that path to
                       // callers who can edit; otherwise the row is
-                      // static.
-                      const canOpenNew = !hasDoc && canEdit;
+                      // static. RTW-evidence rows always have a doc
+                      // (they're built from real uploads).
+                      const canOpenNew = !hasDoc && canEdit && !r.isRtwEvidence;
                       const clickable = hasDoc || canOpenNew;
                       return (
                         <tr
-                          key={r.subtypeId}
+                          key={r.documentId ?? r.subtypeId}
                           className={
                             "border-b last:border-b-0 " +
-                            (clickable ? "cursor-pointer hover:bg-muted/30" : "")
+                            (clickable ? "cursor-pointer hover:bg-muted/30" : "") +
+                            (r.isRtwEvidence ? " bg-sky-50/40 dark:bg-sky-950/10" : "")
                           }
                           onClick={() => {
                             if (hasDoc && r.documentId) setDetailsDocId(r.documentId);
@@ -300,7 +302,26 @@ export function RequiredDocumentsCard({
                           }
                         >
                           <td className="px-3 py-2">
-                            <p className="font-medium">{subtypeLabel(r.subtypeType, r.subtypeName)}</p>
+                            <p className="font-medium flex items-center gap-1.5">
+                              {r.isRtwEvidence && (
+                                <span
+                                  className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-800 dark:bg-sky-900/40 dark:text-sky-300"
+                                  title="Counts as Right to Work evidence"
+                                >
+                                  RTW
+                                </span>
+                              )}
+                              {r.isRtwPrimary && (
+                                <span
+                                  className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                                  title="Currently providing evidence"
+                                >
+                                  <Star className="h-3 w-3 fill-current" />
+                                  Primary
+                                </span>
+                              )}
+                              <span>{subtypeLabel(r.subtypeType, r.subtypeName)}</span>
+                            </p>
                             {r.fileName && (
                               <p className="text-xs text-muted-foreground truncate">{r.fileName}</p>
                             )}
@@ -354,35 +375,57 @@ export function RequiredDocumentsCard({
               </div>
             )}
 
-            {canEdit && pickable.length > 0 && (
-              <div className="flex items-center gap-2">
-                <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      disabled={pending}
-                      className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-dashed text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-                      aria-label="Add required document"
-                      title="Add required document"
-                    >
-                      <Plus className="h-4 w-4" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-80 p-0" align="start">
-                    <div className="max-h-72 overflow-y-auto py-1">
-                      {pickable.map((s) => (
-                        <button
-                          key={s.id}
-                          type="button"
-                          onClick={() => addSubtype(s.id)}
-                          className="block w-full px-3 py-1.5 text-left text-sm hover:bg-muted/50"
-                        >
-                          {subtypeLabel(s.type, s.name)}
-                        </button>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
+            {canEdit && (pickable.length > 0 || rows.some((r) => r.isRtwEvidence)) && (
+              <div className="flex flex-wrap items-center gap-2">
+                {pickable.length > 0 && (
+                  <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        disabled={pending}
+                        className="inline-flex items-center gap-1 rounded-full border border-dashed px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                        aria-label="Add required document"
+                        title="Add required document"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Add subtype
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-80 p-0" align="start">
+                      <div className="max-h-72 overflow-y-auto py-1">
+                        {pickable.map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => addSubtype(s.id)}
+                            className="block w-full px-3 py-1.5 text-left text-sm hover:bg-muted/50"
+                          >
+                            {subtypeLabel(s.type, s.name)}
+                          </button>
+                        ))}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                )}
+                {/* CLE-215 follow-up — when at least one RTW-evidence
+                    row is already present, offer a second button for
+                    adding another RTW doc (a different subtype or a
+                    replacement). The empty-state placeholder already
+                    has its own "+" so we only surface this here when
+                    docs exist. */}
+                {rows.some((r) => r.isRtwEvidence) && (
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => setRtwAdding(true)}
+                    className="inline-flex items-center gap-1 rounded-full border border-dashed px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                    aria-label="Add another Right to Work doc"
+                    title="Add another Right to Work doc"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add RTW evidence
+                  </button>
+                )}
                 {pending && (
                   <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                     <Loader2 className="h-3 w-3 animate-spin" /> Saving…

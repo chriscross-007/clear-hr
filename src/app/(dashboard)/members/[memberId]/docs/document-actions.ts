@@ -1523,14 +1523,25 @@ export interface RequiredDocumentRow {
    *  synthetic (like the RTW aggregate) are false. Drives whether
    *  the per-row remove button shows. */
   assignedPerMember: boolean;
-  /** CLE-215 — true for the synthetic "Right to Work" aggregate row
-   *  the card renders at the top when the member's RTW is required.
-   *  Non-RTW rows leave this false. */
+  /** CLE-215 — true for the synthetic "Right to Work" placeholder
+   *  row emitted only when the member has zero non-expired RTW-class
+   *  docs. When ≥1 non-expired RTW doc exists, RTW is expressed as
+   *  individual rows (one per doc) rather than an aggregate. */
   isRtwAggregate?: boolean;
-  /** Populated only on the RTW aggregate row: newest non-expired
-   *  doc per RTW-class subtype the member has. Empty when the
-   *  aggregate is `not_uploaded`. */
+  /** Populated only on the placeholder aggregate row: newest
+   *  non-expired doc per RTW-class subtype the member has. Empty
+   *  when the aggregate is `not_uploaded`. Retained for the
+   *  no-docs-yet render path; unused when individual rows are
+   *  emitted. */
   rtwDocs?: RtwEvidenceDoc[];
+  /** CLE-215-follow-up — true on RTW-evidence rows so the UI can
+   *  group them at the top and mark them visually. */
+  isRtwEvidence?: boolean;
+  /** True on the RTW row nominated as "primary" — the one currently
+   *  providing evidence (or nearest to providing it). Priority:
+   *  verified & non-expired > non-expired > expired; ties broken by
+   *  the latest expiry. */
+  isRtwPrimary?: boolean;
   /** Newest active document of this subtype for the member, if any.
    *  null when the member hasn't uploaded one — status will contain
    *  "not_uploaded" instead. */
@@ -1693,73 +1704,103 @@ export async function getMemberRequiredDocumentRows(
       return a.subtypeName.localeCompare(b.subtypeName);
     });
 
-    // CLE-215 — RTW aggregate row.
+    // CLE-215 (follow-up) — RTW rows.
     //
-    // Prepend a single synthetic row summarising all Right-to-Work
-    // evidence for members who need RTW (rtw_not_required = false).
-    // Any subtype with `retention_class = 'right_to_work'` counts;
-    // the row lists the newest non-expired doc per qualifying
-    // subtype. Status derivation:
-    //   * No non-expired qualifying doc → `not_uploaded`.
-    //   * At least one → verify each; if any is not yet verified,
-    //     status includes `pending_verification`; if any is expiring
-    //     within 30 days, `expiring_soon`; if all are verified and
-    //     none expiring, `verified`.
+    // Design shift from a single aggregate row to one row per RTW-
+    // class doc the member has uploaded. Rows behave like any other
+    // per-doc row (click to open Details, status/expiry/review
+    // columns), sit at the top of the list, and one of them is
+    // marked as the "primary" nominee — the doc currently providing
+    // (or nearest to providing) evidence.
+    //
+    // Nomination priority (higher = more preferred):
+    //   3. verified AND not expired
+    //   2. not expired (verified or not — verified wins tiebreak)
+    //   1. expired
+    // Within a tier, the doc with the latest `expires_on` wins
+    // (longest usable runway); a NULL expiry beats a set one within
+    // the same tier since it doesn't lapse.
+    //
+    // When the member has zero RTW-class docs at all, we emit a
+    // single placeholder aggregate row instead so admins can tap
+    // the "+" to upload the first one.
     if (!rtwOptedOut) {
-      const rtwSubtypeIds = subtypes
-        .filter((s) => s.retention_class === "right_to_work")
-        .map((s) => s.id);
-      const rtwEvidenceDocs: RtwEvidenceDoc[] = [];
-      const soonIso = (() => {
-        const d = new Date(today + "T00:00:00Z");
-        d.setUTCDate(d.getUTCDate() + 30);
-        return d.toISOString().slice(0, 10);
-      })();
-      let anyPending = false;
-      let anyExpiring = false;
-      for (const sid of rtwSubtypeIds) {
-        const list = bySubtype.get(sid);
-        if (!list || list.length === 0) continue;
-        // Newest of that subtype. Skip if already expired.
+      const rtwRows: RequiredDocumentRow[] = [];
+      for (const s of subtypes) {
+        if (s.retention_class !== "right_to_work") continue;
+        const list = bySubtype.get(s.id) ?? [];
+        // Only the newest doc per RTW-class subtype surfaces here.
+        // Older uploads of the same subtype are historical — the
+        // per-member docs page still shows them.
         const newest = list[0];
-        if (newest.expires_on !== null && newest.expires_on <= today) continue;
-        const s = subtypeById.get(sid);
-        if (!s) continue;
-        rtwEvidenceDocs.push({
-          documentId: newest.id,
+        if (!newest) continue;
+        const statuses = deriveDocumentStatuses({
+          requiresVerification: s.requires_verification === true,
+          verifiedOn: newest.verified_on,
+          expiresOn: newest.expires_on,
+          nextReviewOn: newest.next_review_on,
+        }) as (DocumentStatus | "not_uploaded")[];
+        rtwRows.push({
+          subtypeId: s.id,
           subtypeName: s.name,
           subtypeType: s.type,
+          isTrackableNow: s.trackable_per_member,
+          isOrgWideExpected: false,
+          assignedPerMember: false,
+          isRtwEvidence: true,
+          documentId: newest.id,
           fileName: newest.file_name,
           verifiedOn: newest.verified_on,
           expiresOn: newest.expires_on,
+          nextReviewOn: newest.next_review_on,
+          statuses,
         });
-        if (!newest.verified_on) anyPending = true;
-        if (newest.expires_on !== null && newest.expires_on <= soonIso) anyExpiring = true;
       }
-      const rtwStatuses: (DocumentStatus | "not_uploaded")[] = [];
-      if (rtwEvidenceDocs.length === 0) {
-        rtwStatuses.push("not_uploaded");
+
+      if (rtwRows.length === 0) {
+        // Placeholder — no RTW doc yet.
+        rows.unshift({
+          subtypeId: "rtw-aggregate",
+          subtypeName: "Right to Work evidence",
+          subtypeType: "evidence",
+          isTrackableNow: false,
+          isOrgWideExpected: true,
+          assignedPerMember: false,
+          isRtwAggregate: true,
+          rtwDocs: [],
+          documentId: null,
+          fileName: null,
+          verifiedOn: null,
+          expiresOn: null,
+          nextReviewOn: null,
+          statuses: ["not_uploaded"],
+        });
       } else {
-        if (anyPending) rtwStatuses.push("pending_verification");
-        if (anyExpiring) rtwStatuses.push("expiring_soon");
-        if (!anyPending && !anyExpiring) rtwStatuses.push("verified");
+        // Nominate the primary. Score higher = better.
+        function score(r: RequiredDocumentRow): number {
+          const expired = r.expiresOn !== null && r.expiresOn <= today;
+          const verified = r.verifiedOn !== null;
+          if (verified && !expired) return 3;
+          if (!expired) return 2;
+          return 1;
+        }
+        rtwRows.sort((a, b) => {
+          const s = score(b) - score(a);
+          if (s !== 0) return s;
+          // Within tier: NULL expiry beats a set expiry (evergreen
+          // wins), then later expiry beats earlier.
+          const aNull = a.expiresOn === null;
+          const bNull = b.expiresOn === null;
+          if (aNull !== bNull) return aNull ? -1 : 1;
+          if (a.expiresOn !== null && b.expiresOn !== null) {
+            return a.expiresOn < b.expiresOn ? 1 : a.expiresOn > b.expiresOn ? -1 : 0;
+          }
+          return 0;
+        });
+        rtwRows[0].isRtwPrimary = true;
+        // Prepend RTW rows so they sit at the top.
+        rows.unshift(...rtwRows);
       }
-      rows.unshift({
-        subtypeId: "rtw-aggregate",
-        subtypeName: "Right to Work evidence",
-        subtypeType: "evidence",
-        isTrackableNow: false,
-        isOrgWideExpected: true,
-        assignedPerMember: false,
-        isRtwAggregate: true,
-        rtwDocs: rtwEvidenceDocs,
-        documentId: null,
-        fileName: null,
-        verifiedOn: null,
-        expiresOn: null,
-        nextReviewOn: null,
-        statuses: rtwStatuses,
-      });
     }
 
     return { success: true, rows };
