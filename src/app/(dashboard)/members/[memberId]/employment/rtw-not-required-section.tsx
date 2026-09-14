@@ -1,11 +1,16 @@
 "use client";
 
-// CLE-207 — Right-to-Work opt-out toggle on the Employment page.
+// CLE-207 — Right-to-Work toggle on the Employment page.
 // Owned by Employee Records but the compliance dashboard reads it to
 // exclude opted-out members from RTW-flagged subtypes.
+//
+// UI reads as "Right to Work evidence required" (ON by default) while
+// the underlying DB column is still `members.rtw_not_required` — we
+// just invert at the boundary. Turning the toggle OFF requires a
+// reason (why does this individual not need an RTW check?).
 
 import { useState, useTransition } from "react";
-import { Loader2, ShieldOff } from "lucide-react";
+import { Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -24,23 +29,27 @@ interface Props {
 
 export function RtwNotRequiredSection({ memberId, initial, canEdit }: Props) {
   const router = useRouter();
-  const [rtwNotRequired, setRtwNotRequiredState] = useState<boolean>(initial.rtwNotRequired);
+  // The visible toggle is the inverse of the stored column. `true` =
+  // RTW required (default). `false` = opted out; a reason must be
+  // captured before saving.
+  const [rtwRequired, setRtwRequired] = useState<boolean>(!initial.rtwNotRequired);
   const [reason, setReason] = useState<string>(initial.reason ?? "");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  const initialRequired = !initial.rtwNotRequired;
   const hasChanges =
-    rtwNotRequired !== initial.rtwNotRequired ||
-    (rtwNotRequired && (reason.trim() !== (initial.reason ?? "").trim()));
+    rtwRequired !== initialRequired ||
+    (!rtwRequired && (reason.trim() !== (initial.reason ?? "").trim()));
 
   function handleSave() {
     setError(null);
     setSuccess(null);
     startTransition(async () => {
       const res = await setRtwNotRequired(memberId, {
-        rtwNotRequired,
-        reason: rtwNotRequired ? reason.trim() : null,
+        rtwNotRequired: !rtwRequired,
+        reason: !rtwRequired ? reason.trim() : null,
       });
       if (!res.success) {
         setError(res.error ?? "Failed to save");
@@ -63,29 +72,30 @@ export function RtwNotRequiredSection({ memberId, initial, canEdit }: Props) {
   return (
     <div className="rounded-lg border bg-card p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <ShieldOff className="h-4 w-4 text-muted-foreground" />
-        <h2 className="text-sm font-semibold">Right-to-Work opt-out</h2>
+        <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+        <h2 className="text-sm font-semibold">Right to Work</h2>
       </div>
       <p className="text-xs text-muted-foreground">
-        Documents dashboard skips this member on Right-to-Work-flagged subtypes when this is on.
-        Use only when a documented determination applies (rare — most workers require an RTW check).
+        Most workers must produce evidence of their right to work in the UK.
+        Leave this on unless a documented determination says otherwise
+        (rare — e.g. overseas contractor engaged outside employment).
       </p>
 
       <div className="flex items-center justify-between rounded-md border p-3">
         <div>
-          <p className="text-sm font-medium">RTW check not required</p>
+          <p className="text-sm font-medium">Right to Work evidence required</p>
           <p className="text-xs text-muted-foreground">
-            Off by default. Turning on requires a reason.
+            On by default. Turning off requires a reason.
           </p>
         </div>
         <Switch
-          checked={rtwNotRequired}
-          onCheckedChange={(v) => setRtwNotRequiredState(v)}
+          checked={rtwRequired}
+          onCheckedChange={(v) => setRtwRequired(v)}
           disabled={!canEdit || pending}
         />
       </div>
 
-      {rtwNotRequired && (
+      {!rtwRequired && (
         <div className="space-y-2">
           <Label>Reason <span className="text-destructive">*</span></Label>
           <Textarea
@@ -106,7 +116,7 @@ export function RtwNotRequiredSection({ memberId, initial, canEdit }: Props) {
 
       {canEdit && (
         <div className="flex justify-end">
-          <Button size="sm" onClick={handleSave} disabled={pending || !hasChanges || (rtwNotRequired && !reason.trim())}>
+          <Button size="sm" onClick={handleSave} disabled={pending || !hasChanges || (!rtwRequired && !reason.trim())}>
             {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Save
           </Button>

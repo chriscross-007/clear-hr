@@ -39,6 +39,7 @@ import {
 import { STATUS_LABEL, STATUS_TONE, type DocumentStatus } from "@/lib/document-status";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
 import { NewMemberDocumentDialog } from "@/components/documents/new-document-dialog";
+import { useMemberLabel } from "@/contexts/member-label-context";
 import {
   listTrackablePerMemberSubtypes,
   getMemberRequiredDocumentRows,
@@ -80,6 +81,7 @@ export function RequiredDocumentsCard({
    *  false the +/− controls are hidden and the table is view-only. */
   canEdit: boolean;
 }) {
+  const { memberLabel } = useMemberLabel();
   const [rows, setRows] = useState<RequiredDocumentRow[] | null>(null);
   const [available, setAvailable] = useState<TrackableSubtype[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -159,8 +161,7 @@ export function RequiredDocumentsCard({
       <CardHeader>
         <CardTitle className="text-base">Required documents</CardTitle>
         <CardDescription>
-          Document subtypes this member is expected to supply. Add to the
-          documents already required of everyone in the organisation.
+          Documents this {memberLabel} is expected to supply.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
