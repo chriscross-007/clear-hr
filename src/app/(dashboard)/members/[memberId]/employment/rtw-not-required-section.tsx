@@ -48,6 +48,15 @@ export function RtwNotRequiredSection({ memberId, initial, canEdit }: Props) {
       }
       setSuccess("Saved.");
       router.refresh();
+      // CLE-215 — the Required Documents card renders an RTW
+      // aggregate row whose presence depends on rtw_not_required.
+      // Poke it to reload after this save so the row appears or
+      // disappears without waiting for a full page reload.
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("clearhr:rtw-changed", { detail: { memberId } }),
+        );
+      }
     });
   }
 

@@ -108,6 +108,20 @@ export function RequiredDocumentsCard({
 
   useEffect(() => { void load(); }, [load]);
 
+  // CLE-215 — react to the RTW opt-out toggle on the sibling card.
+  // The RTW aggregate row appears/disappears based on
+  // `members.rtw_not_required`, so re-fetching here makes the card
+  // pick up the change without a page reload.
+  useEffect(() => {
+    function onRtwChanged(e: Event) {
+      const detail = (e as CustomEvent<{ memberId?: string }>).detail;
+      if (!detail || detail.memberId !== memberId) return;
+      void load();
+    }
+    window.addEventListener("clearhr:rtw-changed", onRtwChanged);
+    return () => window.removeEventListener("clearhr:rtw-changed", onRtwChanged);
+  }, [memberId, load]);
+
   // Subtypes with the trackable flag on that aren't already assigned
   // per-member. Drives the "+" picker.
   const pickable = useMemo(() => {
