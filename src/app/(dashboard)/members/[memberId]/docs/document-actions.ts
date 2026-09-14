@@ -109,7 +109,7 @@ const PROTECTED_RETENTION_CLASSES = new Set(["right_to_work", "contract", "payro
 const TYPE_DISPLAY: Record<string, string> = {
   contract: "Contract",
   certificate: "Certificate",
-  evidence: "Evidence",
+  evidence: "RTW Evidence",
   attachment: "Attachment",
   organisation_document: "Organisation document",
 };

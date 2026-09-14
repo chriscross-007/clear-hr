@@ -69,7 +69,7 @@ function todayIso(): string {
 const TYPE_DISPLAY: Record<string, string> = {
   contract: "Contract",
   certificate: "Certificate",
-  evidence: "Evidence",
+  evidence: "RTW Evidence",
   policy: "Policy",
   handbook: "Handbook",
   attachment: "Attachment",

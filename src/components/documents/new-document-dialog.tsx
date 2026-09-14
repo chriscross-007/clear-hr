@@ -46,7 +46,7 @@ import {
 const TYPE_LABEL: Record<string, string> = {
   contract: "Contract",
   certificate: "Certificate",
-  evidence: "Evidence",
+  evidence: "RTW Evidence",
   attachment: "Attachment",
 };
 

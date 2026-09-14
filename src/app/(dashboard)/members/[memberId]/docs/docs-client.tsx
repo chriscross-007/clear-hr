@@ -60,7 +60,7 @@ import { NewMemberDocumentDialog } from "@/components/documents/new-document-dia
 const TYPE_LABEL: Record<string, string> = {
   contract: "Contract",
   certificate: "Certificate",
-  evidence: "Evidence",
+  evidence: "RTW Evidence",
   policy: "Policy",
   handbook: "Handbook",
   attachment: "Attachment",

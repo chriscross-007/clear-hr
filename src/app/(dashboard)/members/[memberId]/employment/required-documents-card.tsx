@@ -22,7 +22,7 @@
 // entries as before.
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
-import { Loader2, Minus, Plus, Star } from "lucide-react";
+import { Loader2, Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -36,14 +36,26 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { STATUS_LABEL, STATUS_TONE, type DocumentStatus } from "@/lib/document-status";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
 import { NewMemberDocumentDialog } from "@/components/documents/new-document-dialog";
 import { useMemberLabel } from "@/contexts/member-label-context";
+import { capitalize } from "@/lib/label-utils";
 import {
   listTrackablePerMemberSubtypes,
   getMemberRequiredDocumentRows,
   setMemberExpectedDocuments,
+  softDeleteMemberDocument,
   type TrackableSubtype,
   type RequiredDocumentRow,
 } from "@/app/(dashboard)/members/[memberId]/docs/document-actions";
@@ -51,7 +63,7 @@ import {
 const TYPE_LABEL: Record<string, string> = {
   contract: "Contract",
   certificate: "Certificate",
-  evidence: "Evidence",
+  evidence: "RTW Evidence",
   attachment: "Attachment",
 };
 
@@ -95,6 +107,10 @@ export function RequiredDocumentsCard({
   // in rtwOnly mode. Separate state because there's no preset
   // subtype; the user picks one from the restricted list.
   const [rtwAdding, setRtwAdding] = useState(false);
+  // CLE-215 follow-up — deleting an RTW doc requires a reason
+  // (retention_class = right_to_work is protected while the employee
+  // is still active). Holds the row being confirmed.
+  const [rtwDeleting, setRtwDeleting] = useState<RequiredDocumentRow | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -161,7 +177,7 @@ export function RequiredDocumentsCard({
       <CardHeader>
         <CardTitle className="text-base">Required documents</CardTitle>
         <CardDescription>
-          Documents this {memberLabel} is expected to supply.
+          Documents this {capitalize(memberLabel)} is expected to provide.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -286,8 +302,7 @@ export function RequiredDocumentsCard({
                           key={r.documentId ?? r.subtypeId}
                           className={
                             "border-b last:border-b-0 " +
-                            (clickable ? "cursor-pointer hover:bg-muted/30" : "") +
-                            (r.isRtwEvidence ? " bg-sky-50/40 dark:bg-sky-950/10" : "")
+                            (clickable ? "cursor-pointer hover:bg-muted/30" : "")
                           }
                           onClick={() => {
                             if (hasDoc && r.documentId) setDetailsDocId(r.documentId);
@@ -302,26 +317,7 @@ export function RequiredDocumentsCard({
                           }
                         >
                           <td className="px-3 py-2">
-                            <p className="font-medium flex items-center gap-1.5">
-                              {r.isRtwEvidence && (
-                                <span
-                                  className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-800 dark:bg-sky-900/40 dark:text-sky-300"
-                                  title="Counts as Right to Work evidence"
-                                >
-                                  RTW
-                                </span>
-                              )}
-                              {r.isRtwPrimary && (
-                                <span
-                                  className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
-                                  title="Currently providing evidence"
-                                >
-                                  <Star className="h-3 w-3 fill-current" />
-                                  Primary
-                                </span>
-                              )}
-                              <span>{subtypeLabel(r.subtypeType, r.subtypeName)}</span>
-                            </p>
+                            <p className="font-medium">{subtypeLabel(r.subtypeType, r.subtypeName)}</p>
                             {r.fileName && (
                               <p className="text-xs text-muted-foreground truncate">{r.fileName}</p>
                             )}
@@ -361,6 +357,21 @@ export function RequiredDocumentsCard({
                                   className="inline-flex h-6 w-6 items-center justify-center rounded text-destructive hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
                                   aria-label={`Remove ${subtypeLabel(r.subtypeType, r.subtypeName)}`}
                                   title="Remove from this member's required docs"
+                                >
+                                  <Minus className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                              {r.isRtwEvidence && r.documentId && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setRtwDeleting(r);
+                                  }}
+                                  disabled={pending}
+                                  className="inline-flex h-6 w-6 items-center justify-center rounded text-destructive hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
+                                  aria-label={`Delete ${subtypeLabel(r.subtypeType, r.subtypeName)}`}
+                                  title="Delete this document (moves it to Trash)"
                                 >
                                   <Minus className="h-3.5 w-3.5" />
                                 </button>
@@ -476,6 +487,92 @@ export function RequiredDocumentsCard({
           }}
         />
       )}
+
+      {rtwDeleting && (
+        <RtwDeleteDialog
+          row={rtwDeleting}
+          onClose={() => setRtwDeleting(null)}
+          onDeleted={async () => {
+            setRtwDeleting(null);
+            await load();
+          }}
+        />
+      )}
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// RTW delete confirmation — RTW-class docs are retention-protected
+// while the employee is active, so soft-delete requires a reason.
+// The reason is captured here and passed straight through to the
+// existing `softDeleteMemberDocument` action.
+// ---------------------------------------------------------------------------
+
+function RtwDeleteDialog({
+  row,
+  onClose,
+  onDeleted,
+}: {
+  row: RequiredDocumentRow;
+  onClose: () => void;
+  onDeleted: () => Promise<void>;
+}) {
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function handleDelete() {
+    if (!row.documentId) return;
+    if (!reason.trim()) {
+      setError("Please give a reason.");
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      const res = await softDeleteMemberDocument(row.documentId as string, {
+        forceDeleteReason: reason.trim(),
+      });
+      if (!res.success) { setError(res.error ?? "Failed to delete"); return; }
+      await onDeleted();
+    });
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o && !pending) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Delete Right to Work evidence</DialogTitle>
+          <DialogDescription>
+            <span className="font-medium">{subtypeLabel(row.subtypeType, row.subtypeName)}</span> will move to Trash
+            for 30 days, then be permanently deleted. Right-to-Work evidence
+            is retention-protected while the employee is active, so please
+            record why you're removing it.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label>Reason <span className="text-destructive">*</span></Label>
+          <Textarea
+            rows={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. Superseded by renewed passport uploaded today."
+            disabled={pending}
+          />
+          {error && <p className="text-xs text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={pending}>Cancel</Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={pending || !reason.trim()}
+          >
+            {pending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+            Delete
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

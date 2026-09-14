@@ -406,7 +406,7 @@ function ChangeDetail({ changes }: { changes: Record<string, { old: unknown; new
 const DOCUMENT_TYPE_LABELS: Record<string, string> = {
   contract: "Contract",
   certificate: "Certificate",
-  evidence: "Evidence",
+  evidence: "RTW Evidence",
   attachment: "Attachment",
   organisation_document: "Organisation Document",
   // Legacy pre-CLE-210 values, kept for old audit rows.
