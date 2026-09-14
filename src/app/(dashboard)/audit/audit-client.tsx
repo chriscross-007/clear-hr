@@ -65,7 +65,7 @@ const ACTION_LABELS: Record<string, string> = {
   "document.renewed": "Document renewed",
   "member.expected_documents_added": "Required documents added",
   "member.expected_documents_removed": "Required documents removed",
-  "member.rtw_not_required_changed": "Right-to-Work opt-out changed",
+  "member.rtw_not_required_changed": "Right to Work updated",
   "org.updated": "Edited Organisation",
   "team.created": "Created Team",
   "team.updated": "Edited Team",
@@ -210,6 +210,11 @@ const FIELD_LABELS: Record<string, string> = {
   expires_on: "Expires on",
   next_review_on: "Next review on",
   verified_on: "Verified on",
+  // CLE-215 — audit now writes the positive form ("RTW required")
+  // to match the UI toggle. Legacy keys are kept below so audit rows
+  // written before the flip still render with sensible labels.
+  rtw_required: "RTW required",
+  rtw_opt_out_reason: "RTW opt-out reason",
   rtw_not_required: "RTW opt-out",
   rtw_not_required_reason: "RTW opt-out reason",
   queued_at: "Queued at",

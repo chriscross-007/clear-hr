@@ -429,6 +429,11 @@ export async function setRtwNotRequired(
     const changed = before.rtw_not_required !== input.rtwNotRequired
       || (before.rtw_not_required_reason ?? null) !== (input.rtwNotRequired ? (input.reason?.trim() ?? null) : null);
     if (changed) {
+      // CLE-215 — audit records the diff in the positive form
+      // ("RTW required") to match the UI toggle. Column storage is
+      // still `rtw_not_required`; the invert happens at the audit
+      // boundary. Reason stays as "opt-out reason" — it's only
+      // captured when opting out.
       await logAudit({
         organisationId: resolved.ctx.organisationId,
         actorId: resolved.ctx.memberId,
@@ -438,11 +443,11 @@ export async function setRtwNotRequired(
         targetId: memberId,
         targetLabel: `${before.first_name ?? ""} ${before.last_name ?? ""}`.trim() || memberId,
         changes: {
-          rtw_not_required: {
-            old: before.rtw_not_required,
-            new: input.rtwNotRequired,
+          rtw_required: {
+            old: !before.rtw_not_required,
+            new: !input.rtwNotRequired,
           },
-          rtw_not_required_reason: {
+          rtw_opt_out_reason: {
             old: before.rtw_not_required_reason,
             new: input.rtwNotRequired ? (input.reason?.trim() ?? null) : null,
           },
