@@ -67,6 +67,34 @@ export function OrganisationSettingsForm({
   const [bankHolidayHandling, setBankHolidayHandling] = useState(initialBankHolidayHandling);
   const [bankHolidayColour, setBankHolidayColour] = useState(initialBankHolidayColour);
 
+  // Snapshot of what's currently persisted — drives the "dirty"
+  // check that gates the Save button. Reset on every successful
+  // save so the button greys out until the next real change.
+  const [saved, setSaved] = useState({
+    name: initialName,
+    memberLabel: initialMemberLabel,
+    currencySymbol: initialCurrencySymbol,
+    countryCode: initialCountryCode,
+    requireMfa: initialRequireMfa,
+    holidayYearStartType: initialHolidayYearStartType,
+    holidayYearStartDay: initialHolidayYearStartDay,
+    holidayYearStartMonth: initialHolidayYearStartMonth,
+    bankHolidayHandling: initialBankHolidayHandling,
+    bankHolidayColour: initialBankHolidayColour,
+  });
+
+  const isDirty =
+    name !== saved.name ||
+    memberLabel !== saved.memberLabel ||
+    currencySymbol !== saved.currencySymbol ||
+    countryCode !== saved.countryCode ||
+    requireMfa !== saved.requireMfa ||
+    holidayYearStartType !== saved.holidayYearStartType ||
+    holidayYearStartDay !== saved.holidayYearStartDay ||
+    holidayYearStartMonth !== saved.holidayYearStartMonth ||
+    bankHolidayHandling !== saved.bankHolidayHandling ||
+    bankHolidayColour !== saved.bankHolidayColour;
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -75,10 +103,13 @@ export function OrganisationSettingsForm({
     setSaving(true);
     setError(null);
     setSavedFlash(false);
+    const trimmedName = name.trim();
+    const trimmedMemberLabel = memberLabel.trim() || "member";
+    const trimmedCurrency = currencySymbol.trim() || "£";
     const result = await updateOrganisation({
-      name: name.trim(),
-      memberLabel: memberLabel.trim() || "member",
-      currencySymbol: currencySymbol.trim() || "£",
+      name: trimmedName,
+      memberLabel: trimmedMemberLabel,
+      currencySymbol: trimmedCurrency,
       countryCode,
       requireMfa,
       holidayYearStartType,
@@ -92,6 +123,24 @@ export function OrganisationSettingsForm({
       setError(result.error ?? "Failed to save");
       return;
     }
+    // Push the trimmed / defaulted values back into local state so
+    // the fields display exactly what was persisted, and re-baseline
+    // the `saved` snapshot so the Save button greys out.
+    setName(trimmedName);
+    setMemberLabel(trimmedMemberLabel);
+    setCurrencySymbol(trimmedCurrency);
+    setSaved({
+      name: trimmedName,
+      memberLabel: trimmedMemberLabel,
+      currencySymbol: trimmedCurrency,
+      countryCode,
+      requireMfa,
+      holidayYearStartType,
+      holidayYearStartDay,
+      holidayYearStartMonth,
+      bankHolidayHandling,
+      bankHolidayColour,
+    });
     setSavedFlash(true);
     setTimeout(() => setSavedFlash(false), 2500);
     router.refresh();
@@ -341,7 +390,7 @@ export function OrganisationSettingsForm({
 
       {/* Save */}
       <div className="flex justify-end">
-        <Button onClick={handleSave} disabled={saving}>
+        <Button onClick={handleSave} disabled={saving || !isDirty}>
           {saving ? "Saving…" : "Save changes"}
         </Button>
       </div>
