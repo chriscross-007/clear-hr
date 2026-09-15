@@ -1829,6 +1829,14 @@ export interface RequiredDocumentRow {
   /** CLE-215-follow-up — true on RTW-evidence rows so the UI can
    *  group them at the top and mark them visually. */
   isRtwEvidence?: boolean;
+  /** CLE-216 follow-up — mirror of `document_subtype.employee_can_upload`
+   *  for this row's subtype. The admin Required Documents card ignores
+   *  it (admins can upload anything on any member); the self-scope
+   *  "My Documents" card reads it to decide whether a not-uploaded row
+   *  gets a clickable "+ Add" affordance or renders as a static "HR
+   *  will upload this for you" hint. Always false on the synthetic
+   *  RTW aggregate row (there's no single subtype behind it). */
+  employeeCanUpload: boolean;
   /** True on the RTW row nominated as "primary" — the one currently
    *  providing evidence (or nearest to providing it). Priority:
    *  verified & non-expired > non-expired > expired; ties broken by
@@ -1888,7 +1896,12 @@ export async function getMemberRequiredDocumentRows(
     const { data: subtypeRows, error: sErr } = await admin
       .from("document_subtype")
       .select(
-        "id, type, name, retention_class, requires_verification, trackable_per_member",
+        // CLE-216 follow-up — `employee_can_upload` added so the
+        // self-scope "My Documents" card can decide row-by-row whether
+        // to render a "+ Add" affordance or a static "HR will upload
+        // this for you" hint. The admin Required Documents card
+        // simply ignores this field.
+        "id, type, name, retention_class, requires_verification, trackable_per_member, employee_can_upload",
       )
       .eq("organisation_id", caller.organisationId);
     if (sErr) return { success: false, error: sErr.message };
@@ -1899,6 +1912,7 @@ export async function getMemberRequiredDocumentRows(
       retention_class: string;
       requires_verification: boolean;
       trackable_per_member: boolean;
+      employee_can_upload: boolean;
     };
     const subtypes = (subtypeRows ?? []) as unknown as SubtypeRow[];
     const subtypeById = new Map(subtypes.map((s) => [s.id, s]));
@@ -1981,6 +1995,7 @@ export async function getMemberRequiredDocumentRows(
         isTrackableNow: s.trackable_per_member,
         isOrgWideExpected: false,
         assignedPerMember: perMemberIds.has(s.id),
+        employeeCanUpload: s.employee_can_upload,
         documentId: newest?.id ?? null,
         fileName: newest?.file_name ?? null,
         verifiedOn: newest?.verified_on ?? null,
@@ -2040,6 +2055,7 @@ export async function getMemberRequiredDocumentRows(
           isOrgWideExpected: false,
           assignedPerMember: false,
           isRtwEvidence: true,
+          employeeCanUpload: s.employee_can_upload,
           documentId: newest.id,
           fileName: newest.file_name,
           verifiedOn: newest.verified_on,
@@ -2059,6 +2075,12 @@ export async function getMemberRequiredDocumentRows(
           isOrgWideExpected: true,
           assignedPerMember: false,
           isRtwAggregate: true,
+          // The RTW aggregate row is synthetic — it doesn't map to any
+          // single subtype, so there's no `employee_can_upload` value
+          // to lift. False here means the self-scope card will render
+          // it as read-only (an employee who wants to add RTW
+          // evidence goes through HR).
+          employeeCanUpload: false,
           rtwDocs: [],
           documentId: null,
           fileName: null,

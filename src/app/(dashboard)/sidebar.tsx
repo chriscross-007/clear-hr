@@ -200,6 +200,14 @@ export function Sidebar({
             <LayoutDashboard className="h-4 w-4 shrink-0" />
             Dashboard
           </Link>
+          {/* CLE-216 follow-up — "My Documents" lands the caller on
+              their own required-docs card regardless of shell. Visible
+              to everyone; the underlying resolver RLS-scopes reads to
+              the caller's own docs even for admins. */}
+          <Link href="/my-documents" className={linkClass("/my-documents")}>
+            <FileText className="h-4 w-4 shrink-0" />
+            My Documents
+          </Link>
           <Link href="/holiday" className={linkClass("/holiday")}>
             <Palmtree className="h-4 w-4 shrink-0" />
             My Absences

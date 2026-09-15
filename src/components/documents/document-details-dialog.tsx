@@ -86,6 +86,13 @@ interface Props {
    *  Trash list so admins can still review a trashed doc without being
    *  able to change or comment on it. */
   readOnly?: boolean;
+  /** CLE-216 follow-up — when true, the entire Activity section is
+   *  hidden (header, feed, composer). Distinct axis from `readOnly`,
+   *  which keeps the feed visible (Trash consumers want the audit
+   *  trail). The self-scope "My Documents" surface passes both:
+   *  employees see their doc + download but not the internal audit
+   *  chatter or comment history. */
+  hideActivity?: boolean;
 }
 
 function fmtDate(iso: string | null): string {
@@ -213,6 +220,7 @@ export function DocumentDetailsDialog({
   onClose,
   onSaved,
   readOnly = false,
+  hideActivity = false,
 }: Props) {
   // A read-only opening (from the Trash list) forces every pencil off
   // and the composer off, regardless of whether the caller would
@@ -551,7 +559,11 @@ export function DocumentDetailsDialog({
 
                 {/* Activity — merged audit + comments feed. The list is
                     the only scrolling region; the composer stays pinned
-                    below it. */}
+                    below it. `hideActivity` (CLE-216 follow-up) drops
+                    the entire section for the self-scope "My
+                    Documents" surface — employees don't see the
+                    internal audit chatter or the comment feed. */}
+                {!hideActivity && (
                 <div className="flex-1 overflow-hidden p-4 flex flex-col min-h-0">
                   <div className="mb-2 flex items-center justify-between">
                     <p className="text-base font-semibold">Activity</p>
@@ -636,6 +648,7 @@ export function DocumentDetailsDialog({
                     </div>
                   )}
                 </div>
+                )}
               </div>
             </div>
           </>
