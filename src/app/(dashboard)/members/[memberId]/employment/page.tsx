@@ -99,6 +99,9 @@ export default async function EmploymentPage({
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
+      {/* CLE-216 — Documents traffic light moved to the sidebar avatar
+          badge (see employee-sidebar.tsx) so it's visible on every
+          member tab. */}
       <div>
         <h1 className="text-2xl font-bold">Employment</h1>
         <p className="text-sm text-muted-foreground">

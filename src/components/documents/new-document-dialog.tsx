@@ -42,6 +42,7 @@ import {
   queueCaptureTask,
   cancelCaptureTask,
 } from "@/app/(dashboard)/members/[memberId]/docs/capture-actions";
+import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 
 const TYPE_LABEL: Record<string, string> = {
   contract: "Contract",
@@ -245,6 +246,8 @@ export function NewMemberDocumentDialog({
         setError(res.error ?? "Upload failed");
         return;
       }
+      // CLE-216 — Sidebar avatar traffic light listens for this.
+      dispatchMemberDocsChanged(memberId);
       await onCreated(res.documentId);
     });
   }

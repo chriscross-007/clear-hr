@@ -47,6 +47,10 @@ import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 import { AddEmployeeDialog } from "./add-employee-dialog";
 import type { FieldDef } from "./custom-field-actions";
 import { formatMemberForPdf } from "@/lib/format-member-pdf-row";
+import {
+  getOrgDocumentsTrafficLights,
+  type TrafficLight,
+} from "@/app/(dashboard)/documents/compliance-actions";
 import { cn } from "@/lib/utils";
 
 export type { Team, Member };
@@ -124,6 +128,20 @@ export function EmployeesClient({
   );
 
   const [members, setMembers] = useState(initialMembers);
+  // CLE-216 — Documents traffic light per member. Fetched in one
+  // batch after mount so the initial render isn't blocked; the
+  // Docs column renders `—` for members whose light isn't in the
+  // map yet.
+  const [trafficLights, setTrafficLights] = useState<Record<string, TrafficLight>>({});
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await getOrgDocumentsTrafficLights();
+      if (cancelled || !res.success) return;
+      setTrafficLights(res.lights);
+    })();
+    return () => { cancelled = true; };
+  }, []);
   // CLE-201 follow-up — Re-sync local state whenever the server
   // component re-renders (after router.refresh() following a bulk
   // update, employee edit, etc.). Without this, local `members` stays
@@ -218,6 +236,13 @@ export function EmployeesClient({
     approvalProfileNames,
     // CLE-198 — Redact sensitive columns for viewers without the flag.
     canViewSensitiveFields: canSeeCurrency,
+    // CLE-216 — pre-fetched traffic lights power the Docs column.
+    trafficLights,
+    // CLE-216 — Docs icon routes to the Employment tab's Required
+    // Documents card (rather than /calendar via the row click), so
+    // admins land where they can act on whatever's driving the colour.
+    onDocsHealthClick: (memberId) =>
+      router.push(`/members/${memberId}/employment#required-documents`),
   });
 
   const selectColumn: ColumnDef<Member> = useMemo(() => ({

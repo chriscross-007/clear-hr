@@ -22,10 +22,15 @@ import {
   verifyMemberDocument,
   renewMemberDocument,
 } from "@/app/(dashboard)/members/[memberId]/docs/document-actions";
+import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 
 interface Props {
   mode: "verify" | "renew";
   documentId: string;
+  /** CLE-216 — Owning member id. Used to fire the
+   *  member-docs-changed event so the sidebar avatar traffic light
+   *  refreshes after verify/renew. */
+  memberId?: string;
   /** Pre-fills the next-review picker. Optional. */
   initialNextReviewOn?: string | null;
   /** Rendered in the dialog header. Typically the file name. */
@@ -49,6 +54,7 @@ function fmtDateReadonly(iso: string | null | undefined): string {
 export function VerifyDialog({
   mode,
   documentId,
+  memberId,
   initialNextReviewOn,
   headerLabel,
   contextSubtype,
@@ -73,6 +79,7 @@ export function VerifyDialog({
         nextReviewOn: nextReviewOn || null,
       });
       if (!res.success) { setError(res.error ?? "Failed to save"); return; }
+      if (memberId) dispatchMemberDocsChanged(memberId);
       await onSaved();
     });
   }

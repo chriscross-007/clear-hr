@@ -496,8 +496,13 @@ export function buildEmployeeColumns(opts: {
    *  parent client via `getOrgDocumentsTrafficLights()` and passed
    *  through here so the `docs_health` column has data to render. */
   trafficLights?: Record<string, TrafficLight>;
+  /** CLE-216 — Click handler for the Docs cell. The row's own
+   *  onRowClick routes to /calendar; the icon needs its own route
+   *  to the Employment tab's Required Documents card. Parent owns
+   *  the router; the column just invokes with the member id. */
+  onDocsHealthClick?: (memberId: string) => void;
 }): ColumnDef<Member>[] {
-  const { teams, memberLabel, currencySymbol, customFieldDefs, holidayProfileNames = [], workPatternNames = [], profileNames = [], approvalProfileNames = [], canViewSensitiveFields = true, trafficLights = {} } = opts;
+  const { teams, memberLabel, currencySymbol, customFieldDefs, holidayProfileNames = [], workPatternNames = [], profileNames = [], approvalProfileNames = [], canViewSensitiveFields = true, trafficLights = {}, onDocsHealthClick } = opts;
   const teamMap = Object.fromEntries(teams.map((t) => [t.id, t.name]));
 
   return [
@@ -706,26 +711,32 @@ export function buildEmployeeColumns(opts: {
       id: "docs_health",
       // CLE-216 — Documents traffic light. Server pre-computes the
       // colour + counts; here we render the shared badge and provide
-      // sort/filter over the colour value.
+      // sort/filter over the colour value. Member is keyed by
+      // `member_id` in the row data (not `id`), which is the id that
+      // `getOrgDocumentsTrafficLights` returns.
       size: 60,
-      accessorFn: (row) => trafficLights[row.id]?.colour ?? null,
+      accessorFn: (row) => trafficLights[row.member_id]?.colour ?? null,
       header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label="Docs" />,
       cell: ({ row }) => {
-        const light = trafficLights[row.original.id];
+        const light = trafficLights[row.original.member_id];
         if (!light || !light.colour) return <span className="text-muted-foreground">—</span>;
+        const memberId = row.original.member_id;
         return (
           <div className="flex justify-start">
-            <DocumentsTrafficLight light={light} />
+            <DocumentsTrafficLight
+              light={light}
+              onClick={onDocsHealthClick ? () => onDocsHealthClick(memberId) : undefined}
+            />
           </div>
         );
       },
       sortingFn: (a, b) => {
-        return trafficLightSortRank(trafficLights[a.original.id])
-          - trafficLightSortRank(trafficLights[b.original.id]);
+        return trafficLightSortRank(trafficLights[a.original.member_id])
+          - trafficLightSortRank(trafficLights[b.original.member_id]);
       },
       filterFn: (row, _columnId, filterValue: string) => {
         if (!filterValue) return true;
-        const colour = trafficLights[row.original.id]?.colour ?? null;
+        const colour = trafficLights[row.original.member_id]?.colour ?? null;
         if (filterValue === "none") return colour === null;
         return colour === filterValue;
       },

@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import { recordRecentEmployee } from "@/lib/recent-employees";
 import type { TabKey } from "@/lib/rights-types";
+import { MemberDocumentsTrafficLight } from "@/components/documents/member-traffic-light";
 
 export type EmployeeSidebarMember = {
   id: string;
@@ -94,18 +95,32 @@ export function EmployeeSidebar({
   return (
     <aside className="sticky top-16 h-[calc(100vh-4rem)] w-56 shrink-0 overflow-y-auto border-r bg-muted/30">
       <div className="flex flex-col items-center gap-2 border-b px-4 py-6">
-        {member.avatar_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={member.avatar_url}
-            alt={`${member.first_name} ${member.last_name}`}
-            className="h-20 w-20 rounded-full object-cover"
-          />
-        ) : (
-          <div className="flex h-20 w-20 items-center justify-center rounded-full bg-muted">
-            <span className="text-xl font-medium text-muted-foreground">{initials}</span>
+        {/* CLE-216 — Documents traffic light lives on the avatar so it's
+            visible on every member tab, not just Employment. Positioned
+            as a badge at the avatar's bottom-right corner. */}
+        <div className="relative">
+          {member.avatar_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={member.avatar_url}
+              alt={`${member.first_name} ${member.last_name}`}
+              className="h-20 w-20 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-muted">
+              <span className="text-xl font-medium text-muted-foreground">{initials}</span>
+            </div>
+          )}
+          {/* Clicking the badge routes to the Employment tab's
+              Required Documents card — that's where the admin acts
+              on whatever's driving the colour. */}
+          <div className="absolute -bottom-1 -right-1 rounded-full border-2 border-background bg-background p-0.5">
+            <MemberDocumentsTrafficLight
+              memberId={member.id}
+              onClickHref={`/members/${member.id}/employment#required-documents`}
+            />
           </div>
-        )}
+        </div>
         <div className="text-center">
           <div className="text-xl font-bold leading-tight">
             {member.first_name} {member.last_name}

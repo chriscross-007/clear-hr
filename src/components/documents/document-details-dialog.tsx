@@ -56,6 +56,7 @@ import {
   type DocumentDetailContext,
   type DocumentActivityItem,
 } from "@/app/(dashboard)/members/[memberId]/docs/document-actions";
+import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 
 const TYPE_LABEL: Record<string, string> = {
   contract: "Contract",
@@ -275,6 +276,16 @@ export function DocumentDetailsDialog({
     ]);
     if (d.success) setDetail(d.detail);
     if (a.success) setActivity(a.items);
+    await notifySaved();
+  }
+
+  /** CLE-216 — Called after any successful save inside the dialog.
+   *  Dispatches the member-docs-changed event so the sidebar avatar
+   *  traffic light (and any other listener) reloads, then calls the
+   *  caller's `onSaved`. Every existing `await onSaved()` site was
+   *  migrated to this helper. */
+  async function notifySaved() {
+    if (detail) dispatchMemberDocsChanged(detail.targetMemberId);
     if (onSaved) await onSaved();
   }
 
@@ -652,7 +663,7 @@ function SubtypePencil({
       });
       if (!res.success) { setError(res.error ?? "Save failed"); return; }
       setOpen(false);
-      await onSaved();
+      await notifySaved();
     });
   }
 
@@ -706,7 +717,7 @@ function ExpiryPencil({
       });
       if (!res.success) { setError(res.error ?? "Save failed"); return; }
       setOpen(false);
-      await onSaved();
+      await notifySaved();
     });
   }
 
@@ -935,7 +946,7 @@ function ReviewPencil({
       });
       if (!res.success) { setError(res.error ?? "Save failed"); return; }
       setOpen(false);
-      await onSaved();
+      await notifySaved();
     });
   }
 

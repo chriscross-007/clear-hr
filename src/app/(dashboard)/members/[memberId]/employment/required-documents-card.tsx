@@ -59,6 +59,7 @@ import {
   type TrackableSubtype,
   type RequiredDocumentRow,
 } from "@/app/(dashboard)/members/[memberId]/docs/document-actions";
+import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 
 const TYPE_LABEL: Record<string, string> = {
   contract: "Contract",
@@ -126,6 +127,38 @@ export function RequiredDocumentsCard({
 
   useEffect(() => { void load(); }, [load]);
 
+  // CLE-216 — When the page is opened with #required-documents (from
+  // the sidebar avatar badge or the Directory Docs icon), the browser
+  // can only push the card to the top of the viewport if there's
+  // enough scrollable content below it. On short Employment pages the
+  // card would land near the bottom instead. To guarantee it hits the
+  // top: inject a tall spacer at the end of the scrollable page just
+  // before scrolling, then scroll the card into view. The spacer
+  // stays for the life of the visit so the card remains at top even
+  // if the user scrolls back — small UX cost, big clarity win when
+  // arriving from the traffic-light click.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash !== "#required-documents") return;
+    const raf = requestAnimationFrame(() => {
+      const card = document.getElementById("required-documents");
+      if (!card) return;
+      // Inject spacer once (idempotent) so scroll-to-top has room.
+      if (!document.getElementById("required-documents-spacer")) {
+        const spacer = document.createElement("div");
+        spacer.id = "required-documents-spacer";
+        spacer.setAttribute("aria-hidden", "true");
+        spacer.style.height = "70vh";
+        // Append to the card's own scrolling ancestor's flow — the
+        // page wrapper (max-w-4xl space-y-6) works because it's the
+        // outermost content box on Employment.
+        card.parentElement?.appendChild(spacer);
+      }
+      card.scrollIntoView({ block: "start", behavior: "auto" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   // CLE-215 — react to the RTW opt-out toggle on the sibling card.
   // The RTW aggregate row appears/disappears based on
   // `members.rtw_not_required`, so re-fetching here makes the card
@@ -155,6 +188,8 @@ export function RequiredDocumentsCard({
     startTransition(async () => {
       const res = await setMemberExpectedDocuments(memberId, nextIds);
       if (!res.success) { setError(res.error ?? "Save failed"); return; }
+      // CLE-216 — Sidebar avatar traffic light listens for this.
+      dispatchMemberDocsChanged(memberId);
       await load();
     });
   }
@@ -173,7 +208,10 @@ export function RequiredDocumentsCard({
   }
 
   return (
-    <Card>
+    // CLE-216 — Scroll anchor for the traffic-light click target on
+    // the sidebar avatar (and Directory Docs column). `scroll-mt-24`
+    // keeps the card clear of the sticky page header when scrolled to.
+    <Card id="required-documents" className="scroll-mt-24">
       <CardHeader>
         <CardTitle className="text-base">Required documents</CardTitle>
         <CardDescription>
@@ -499,6 +537,8 @@ export function RequiredDocumentsCard({
           onClose={() => setRtwDeleting(null)}
           onDeleted={async () => {
             setRtwDeleting(null);
+            // CLE-216 — Sidebar avatar traffic light listens for this.
+            dispatchMemberDocsChanged(memberId);
             await load();
           }}
         />

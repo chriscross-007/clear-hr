@@ -57,6 +57,7 @@ import type { MemberDocumentRow, TrashedMemberDocumentRow } from "./document-typ
 import { STATUS_LABEL, STATUS_TONE } from "@/lib/document-status";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
 import { NewMemberDocumentDialog } from "@/components/documents/new-document-dialog";
+import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 const TYPE_LABEL: Record<string, string> = {
   contract: "Contract",
   certificate: "Certificate",
@@ -227,6 +228,8 @@ export function DocsClient({
           onRestore={async (id) => {
             const res = await restoreMemberDocument(id);
             if (!res.success) { setError(res.error ?? "Failed to restore"); return; }
+            // CLE-216 — Sidebar avatar traffic light listens for this.
+            dispatchMemberDocsChanged(memberId);
             await load();
             router.refresh();
           }}
@@ -302,6 +305,8 @@ export function DocsClient({
           onClose={() => setDeleting(null)}
           onDeleted={async () => {
             setDeleting(null);
+            // CLE-216 — Sidebar avatar traffic light listens for this.
+            dispatchMemberDocsChanged(memberId);
             await load();
             router.refresh();
           }}
