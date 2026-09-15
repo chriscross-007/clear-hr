@@ -14,8 +14,15 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { StickyPageHeader } from "@/components/ui/sticky-page-header";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-interface AuditEntry {
+export interface AuditEntry {
   id: string;
   actor_id: string;
   actor_name: string;
@@ -455,6 +462,11 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
   const [dateTo, setDateTo] = useState("");
   const [verbose, setVerbose] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  // Client-side pagination. Fetch window comes from page.tsx (up to
+  // 10k rows); user picks how many to show at a time. Any filter
+  // change resets to page 1 (`useEffect` below).
+  const [pageSize, setPageSize] = useState<number>(100);
+  const [currentPage, setCurrentPage] = useState<number>(1);
 
   // Load persisted preference
   useEffect(() => {
@@ -511,6 +523,32 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
     }
     return true;
   });
+
+  // Reset to page 1 whenever any filter shifts — otherwise the user
+  // ends up on an out-of-range page after narrowing the result set.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedActions, selectedEditorIds, subjectSearch, dateFrom, dateTo, pageSize]);
+
+  const totalCount = filteredEntries.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const pageStart = (currentPage - 1) * pageSize;
+  const pagedEntries = filteredEntries.slice(pageStart, pageStart + pageSize);
+
+  const hasAnyFilter =
+    selectedActions.size > 0 ||
+    selectedEditorIds.size > 0 ||
+    subjectSearch.length > 0 ||
+    dateFrom !== "" ||
+    dateTo !== "";
+
+  function clearAllFilters() {
+    setSelectedActions(new Set());
+    setSelectedEditorIds(new Set());
+    setSubjectSearch("");
+    setDateFrom("");
+    setDateTo("");
+  }
 
   function toggleExpanded(id: string) {
     setExpandedIds((prev) => {
@@ -652,17 +690,36 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
               </button>
             )}
           </div>
+          {/* Clear Filters — right-hand side of the filter row.
+              Disabled when nothing's active so the affordance stays
+              honest. `ml-auto` pushes it to the far right regardless
+              of how many filter controls the row grows. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={clearAllFilters}
+            disabled={!hasAnyFilter}
+            className="ml-auto"
+          >
+            Clear Filters
+          </Button>
       </div>
       </StickyPageHeader>
 
-      <div className="pb-8">
+      {/* pb-0 (was pb-8) — a bottom padding on this wrapper creates
+          a gap between the sticky footer's home position and the
+          actual page bottom, so the footer visibly rises by that
+          padding as the user scrolls to the end. The sticky bar
+          already has its own vertical padding (py-3), which is what
+          controls the visible height of the footer chrome. */}
+      <div className="pb-0">
       {filteredEntries.length === 0 ? (
         <div className="rounded-md border p-8 text-center text-muted-foreground">
           No audit trail entries found
         </div>
       ) : (
         <div className="space-y-1">
-          {filteredEntries.map((entry) => {
+          {pagedEntries.map((entry) => {
             const hasManualToggle = expandedIds.has(entry.id);
             const isExpanded = hasManualToggle ? !verbose : verbose;
             const visibleChanges = entry.changes
@@ -760,6 +817,57 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
               </div>
             );
           })}
+        </div>
+      )}
+      {/* Pagination controls — pinned to the bottom of the viewport
+          as a sticky footer so the admin can page without scrolling
+          back to the end of the list. Opaque background + top border
+          + slight backdrop-blur keeps it legible over any row that
+          scrolls behind. `-mx-*` cancels the page's horizontal
+          padding so the bar spans full-bleed within the content
+          area. */}
+      {totalCount > 0 && (
+        <div className="sticky bottom-0 z-10 -mx-4 mt-4 flex flex-wrap items-center justify-between gap-3 border-t bg-background/95 px-4 py-3 text-sm backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <span>Rows per page:</span>
+            <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
+              <SelectTrigger className="w-[90px] h-8">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[25, 50, 100, 200, 500].map((n) => (
+                  <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className="ml-2">
+              {pageStart + 1}–{Math.min(pageStart + pageSize, totalCount)} of {totalCount}
+            </span>
+          </div>
+          {/* Prev / Next always rendered so the affordance is
+              consistent — disabled state carries the meaning
+              (edge of range, or only one page). */}
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage <= 1}
+            >
+              Previous
+            </Button>
+            <span className="text-muted-foreground">
+              Page {currentPage} of {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage >= totalPages}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       )}
       </div>
