@@ -1,11 +1,14 @@
 export const dynamic = 'force-dynamic';
 
+import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Calendar, Clock, Sun, BarChart2 } from "lucide-react";
+import { Calendar, Clock, Sun, BarChart2, FileText } from "lucide-react";
+import { getMemberDocumentsTrafficLight } from "@/app/(dashboard)/documents/compliance-actions";
+import { trafficLightTooltipText } from "@/lib/traffic-light-format";
 
 export default async function EmployeeDashboardPage({
   params,
@@ -51,6 +54,51 @@ export default async function EmployeeDashboardPage({
     .join("") || member.email?.charAt(0).toUpperCase() || "?";
 
   const fullName = [member.first_name, member.last_name].filter(Boolean).join(" ");
+
+  // CLE-216 follow-up — Documents traffic light for the member the
+  // admin is viewing. Mirrors the "My documents" card on the Employee
+  // Self Dashboard, but points at this member's own Docs page.
+  const docsRes = await getMemberDocumentsTrafficLight(memberId);
+  const docsLight = docsRes.success ? docsRes.light : null;
+  const docsColour = docsLight?.colour ?? null;
+  let docsBigText: string;
+  let docsSubtext: string;
+  let docsTextClass: string;
+  let docsIconClass: string;
+  if (docsColour === "green") {
+    docsBigText = "All up to date";
+    docsSubtext = "Required documents are in order";
+    docsTextClass = "text-green-600";
+    docsIconClass = "text-green-500";
+  } else if (docsColour === "red") {
+    docsBigText = trafficLightTooltipText(docsLight!);
+    docsSubtext = "See documents";
+    docsTextClass = "text-red-600";
+    docsIconClass = "text-red-500";
+  } else if (docsColour === "amber") {
+    docsBigText = trafficLightTooltipText(docsLight!);
+    docsSubtext = "See documents";
+    docsTextClass = "text-amber-600";
+    docsIconClass = "text-amber-500";
+  } else {
+    docsBigText = "No required documents";
+    docsSubtext = "Nothing to provide right now";
+    docsTextClass = "text-muted-foreground";
+    docsIconClass = "text-muted-foreground";
+  }
+  const docsHref = docsColour ? `/members/${memberId}/docs` : null;
+  const docsCard = (
+    <Card className={docsHref ? "transition-colors hover:bg-muted/50" : undefined}>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="text-sm font-medium">Documents</CardTitle>
+        <FileText className={`h-4 w-4 ${docsIconClass}`} />
+      </CardHeader>
+      <CardContent>
+        <p className={`text-2xl font-bold ${docsTextClass}`}>{docsBigText}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{docsSubtext}</p>
+      </CardContent>
+    </Card>
+  );
 
   return (
     <div className="mx-auto max-w-4xl space-y-8 p-6">
@@ -114,6 +162,17 @@ export default async function EmployeeDashboardPage({
             <p className="mt-1 text-xs text-muted-foreground">Recent actions</p>
           </CardContent>
         </Card>
+
+        {/* CLE-216 follow-up — Documents traffic light for this
+            member. Route to their /docs tab when a light exists;
+            null (no required docs) renders as a non-linked card. */}
+        {docsHref ? (
+          <Link href={docsHref} className="block">
+            {docsCard}
+          </Link>
+        ) : (
+          docsCard
+        )}
       </div>
 
     </div>

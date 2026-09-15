@@ -188,12 +188,18 @@ export function Sidebar({
           </div>
         )}
         <div className="mt-2 flex flex-col gap-0.5 p-2 pt-4">
-          {isAdminShell && (
-            <Link href="/admin-dashboard" className={linkClass("/admin-dashboard")}>
-              <LayoutDashboard className="h-4 w-4 shrink-0" />
-              Dashboard
-            </Link>
-          )}
+          {/* Dashboard entry — admin shell lands on /admin-dashboard,
+              self-scope employees on /dashboard. Same link label; the
+              route diverges by rank. Previously only the admin path
+              was rendered, which left employees with no navigation
+              affordance to their own dashboard. */}
+          <Link
+            href={isAdminShell ? "/admin-dashboard" : "/dashboard"}
+            className={linkClass(isAdminShell ? "/admin-dashboard" : "/dashboard")}
+          >
+            <LayoutDashboard className="h-4 w-4 shrink-0" />
+            Dashboard
+          </Link>
           <Link href="/holiday" className={linkClass("/holiday")}>
             <Palmtree className="h-4 w-4 shrink-0" />
             My Absences
