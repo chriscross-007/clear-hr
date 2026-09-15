@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -16,13 +17,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Palette, Users } from "lucide-react";
+import { Palette, Repeat, Users } from "lucide-react";
 import { useTheme } from "@/contexts/theme-context";
 import { capitalize } from "@/lib/label-utils";
 import {
   getSwitchableMembers,
   type SwitchableMember,
 } from "./switch-account-actions";
+import { setViewMode } from "./view-mode-actions";
 
 interface HeaderUserMenuProps {
   email: string;
@@ -34,6 +36,13 @@ interface HeaderUserMenuProps {
   rank: "employee" | "manager" | "hr" | "admin";
   memberLabel: string;
   profileName: string | null;
+  // CLE-218 — View mode toggle. `viewMode` is the currently active
+  // mode; `realProfileName` is the caller's real profile name (used
+  // for the chip label when viewMode === "admin"). `canSwitchView`
+  // gates the toggle button — only real admin-scope callers see it.
+  viewMode: "self" | "admin";
+  canSwitchView: boolean;
+  realProfileName: string | null;
 }
 
 export function HeaderUserMenu({
@@ -44,7 +53,14 @@ export function HeaderUserMenu({
   rank,
   memberLabel,
   profileName,
+  viewMode,
+  canSwitchView,
+  realProfileName,
 }: HeaderUserMenuProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [isSwitching, startSwitchTransition] = useTransition();
+  const [switchViewError, setSwitchViewError] = useState<string | null>(null);
   const [showSwitchAccount, setShowSwitchAccount] = useState(false);
   const [switchMembers, setSwitchMembers] = useState<SwitchableMember[] | null>(null);
   const [switchLoading, setSwitchLoading] = useState(false);
@@ -52,6 +68,35 @@ export function HeaderUserMenu({
   const [switchError, setSwitchError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const { theme, setTheme } = useTheme();
+
+  // Chip label — in self mode force "Employee" (the profile shown to
+  // real employees), otherwise render the caller's real profile name
+  // with the same fallbacks as before.
+  const chipLabel =
+    viewMode === "self"
+      ? "Employee"
+      : (realProfileName ??
+          profileName ??
+          (rank === "employee"
+            ? capitalize(memberLabel)
+            : rank === "hr"
+              ? "HR"
+              : capitalize(rank)));
+
+  function handleSwitchView() {
+    setSwitchViewError(null);
+    const target: "self" | "admin" = viewMode === "self" ? "admin" : "self";
+    startSwitchTransition(async () => {
+      const result = await setViewMode(target, pathname ?? undefined);
+      if (!result.success) {
+        setSwitchViewError(result.error);
+        return;
+      }
+      const dest = result.redirectTo ?? pathname ?? "/dashboard";
+      router.push(dest);
+      router.refresh();
+    });
+  }
 
   async function openSwitchAccount() {
     setShowSwitchAccount(true);
@@ -85,13 +130,41 @@ export function HeaderUserMenu({
         <span className="hidden text-sm text-muted-foreground sm:block">
           {fullName}{" "}
           <span className="text-xs">
-            {/* CLE-198 follow-up — Show the profile name (which is
-                what the user actually sees in Settings → User Rights).
-                Falls back to a rank-derived label for the default
-                Employee rank (which uses the org's memberLabel). */}
-            ({profileName ?? (rank === "employee" ? capitalize(memberLabel) : rank === "hr" ? "HR" : capitalize(rank))})
+            {/* CLE-198 follow-up + CLE-218 — Show the profile name
+                (what the user actually sees in Settings → User
+                Rights). In "self" view mode the chip flips to
+                "Employee". */}
+            ({chipLabel})
           </span>
         </span>
+        {canSwitchView && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 gap-1 px-2 text-xs"
+            onClick={handleSwitchView}
+            disabled={isSwitching}
+            title={
+              viewMode === "self"
+                ? "Return to Admin View"
+                : "View the app as an Employee"
+            }
+            aria-label="Switch view"
+          >
+            <Repeat className="h-3.5 w-3.5" />
+            <span className="hidden md:inline">
+              {viewMode === "self" ? "Admin View" : "Switch View"}
+            </span>
+          </Button>
+        )}
+        {switchViewError && (
+          <span
+            className="hidden text-xs text-destructive sm:block"
+            role="alert"
+          >
+            {switchViewError}
+          </span>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button

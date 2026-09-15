@@ -49,7 +49,11 @@ export default async function DashboardLayout({
 
   const resolved = await getEffectiveRightsForUser(user.id);
   if (!resolved) redirect("/organisation-setup");
-  const { rights } = resolved;
+  const { rights, realRights, viewMode } = resolved;
+  // CLE-218 — Only real admin-scope callers see the "Switch View"
+  // affordance. In self-mode `rights.crossUserAccess === "self"` (the
+  // Employee profile), so we key on the real profile.
+  const canSwitchView = realRights.crossUserAccess !== "self";
 
   // Member count for header display (bypasses RLS visibility so all users see the true total)
   const { data: countResult } = await supabase
@@ -227,6 +231,9 @@ export default async function DashboardLayout({
                 rank={rights.rank}
                 memberLabel={memberLabel}
                 profileName={rights.profileName}
+                viewMode={viewMode}
+                canSwitchView={canSwitchView}
+                realProfileName={realRights.profileName}
               />
             </div>
             </div>

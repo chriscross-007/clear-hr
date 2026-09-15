@@ -51,6 +51,7 @@ const ACTION_LABELS: Record<string, string> = {
   "member.deleted": "Deleted Member",
   "member.invited": "Invited Member",
   "member.rights_profile_changed": "User Rights changed",
+  "member.view_mode_switched": "View mode switched",
   "rights_profile.created": "User Rights profile created",
   "rights_profile.updated": "User Rights profile updated",
   "rights_profile.deleted": "User Rights profile deleted",

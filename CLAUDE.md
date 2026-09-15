@@ -385,6 +385,18 @@ If an org is locked out (no rights-editor available), ClearHR support intervenes
 
 The "Emergency successor" Settings field (name + email) is a proposed but not-yet-built follow-up — see CLE-200 out-of-scope notes.
 
+### View mode toggle (CLE-218)
+
+Admin-scope callers can flip the whole app into "Employee view" via the **Switch View** button next to the avatar in the header. The toggle is a strict reduce — it can only ever swap the caller's effective rights *down* to the org's default Employee profile, never up. It's for admins who want to preview what a normal employee sees.
+
+- **State** lives in the HttpOnly cookie `clearhr_view_mode` (`"self" | "admin"`, default absent = admin). The cookie is set from `setViewMode` in `src/app/(dashboard)/view-mode-actions.ts` with `path=/`, `sameSite=lax`, `secure` in production. The client can't read it directly; the resolver is the sole read site.
+- **Resolver behaviour.** `getEffectiveRightsForUser(userId)` returns `{ rights, realRights, viewMode, ctx }`. When the cookie is `"self"` AND the caller's real profile is admin-scope, `rights` is swapped to the org's default Employee profile (`rights_profiles WHERE organisation_id = ? AND is_default = true AND rank = 'employee'`); `realRights` always carries the underlying profile. `ctx` is never impersonated — the caller keeps their own memberId/organisationId/teamId. Real employees ignore the cookie entirely.
+- **Consumers should always read `resolved.rights` for gating decisions.** `resolved.realRights` is only for rendering the toggle affordance (header button) and for preventing elevation in `setViewMode`. Using `realRights` for a gate would defeat the whole feature.
+- **`getRealRightsForUser(userId)`** is the sibling read path that ignores the cookie. Used by `setViewMode` to check "may this user switch?" and by anywhere else that must reason about the underlying profile independently of the toggle.
+- **RLS still runs against the caller's real profile.** The view-mode swap is an app-layer overlay only; RLS remains a mirror of the real permissions. This means Employee-mode reads can occasionally fetch a superset from the DB that the app-layer resolver then trims down — safe, slightly wasteful, and worth the simplicity.
+- **Audit.** Every toggle writes a `member.view_mode_switched` audit row with `changes.view_mode = { old, new }` and `metadata = { from, to }`.
+- **Redirect on switch.** `setViewMode(mode, currentPath)` returns `redirectTo = "/dashboard"` when the caller was on an admin-only path (`/employees`, `/audit`, `/settings`, `/documents/compliance`, `/documents/organisation`, `/admin-dashboard`, `/absence-types`, `/availability`, `/approvals`, `/shifts`, `/reports`, `/health-and-safety`, `/billing`) and is dropping to self mode. Otherwise the client stays on the current path and `router.refresh()` re-runs every server component with the swapped rights.
+
 ## Sensitive fields (CLE-198)
 
 Two sources feed "is this field sensitive?":

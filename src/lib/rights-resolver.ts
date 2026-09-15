@@ -13,7 +13,7 @@
  * only. Do not import into client code.
  */
 
-import { createClient } from "@/lib/supabase/server";
+import { cookies } from "next/headers";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import {
   TAB_KEYS,
@@ -25,6 +25,13 @@ import {
   type EffectiveRights,
   type MemberContext,
 } from "@/lib/rights-types";
+
+// CLE-218 — View mode toggle. When set to "self", an admin-scope
+// caller's effective rights are swapped down to the org's default
+// Employee profile. The cookie is HttpOnly + set by the server action
+// in `view-mode-actions.ts`; the resolver is the sole read site.
+export const VIEW_MODE_COOKIE = "clearhr_view_mode";
+export type ViewMode = "self" | "admin";
 
 // Re-export the shared surface so existing server-only imports of
 // `@/lib/rights-resolver` keep working after the split in CLE-197.
@@ -215,17 +222,135 @@ export async function getEffectiveRights(
 }
 
 /**
+ * Read the org's default Employee profile — the one the View Mode
+ * toggle swaps admin callers down to. Sourced from `rights_profiles`
+ * on `is_default = true AND rank = 'employee'`. Returns null if the
+ * org has no seeded default Employee profile (shouldn't happen post
+ * CLE-196a seed migration, but tolerated as a safety net).
+ */
+async function getDefaultEmployeeProfile(
+  organisationId: string
+): Promise<EffectiveRights | null> {
+  const admin = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+  const { data: profile } = await admin
+    .from("rights_profiles")
+    .select(PROFILE_COLUMNS)
+    .eq("organisation_id", organisationId)
+    .eq("is_default", true)
+    .eq("rank", "employee")
+    .limit(1)
+    .single();
+  if (!profile) return null;
+  return rowToEffective(profile as unknown as RightsProfileRow);
+}
+
+/**
+ * Read the `clearhr_view_mode` cookie server-side. Returns "admin"
+ * (the default) when the cookie is absent or has any unexpected value.
+ * Cookies is called defensively via a try/catch so this remains
+ * usable from contexts where request cookies aren't available (e.g.
+ * mobile API routes) — falls back to "admin" there.
+ */
+async function readViewModeCookie(): Promise<ViewMode> {
+  try {
+    const store = await cookies();
+    const raw = store.get(VIEW_MODE_COOKIE)?.value;
+    return raw === "self" ? "self" : "admin";
+  } catch {
+    return "admin";
+  }
+}
+
+/**
  * Same as getEffectiveRights but starts from a Supabase auth user id.
  * Handy from server components that already have `user.id`.
+ *
+ * CLE-218 — View mode toggle. When the `clearhr_view_mode` cookie is
+ * "self" AND the caller's *real* profile has admin-scope
+ * (`crossUserAccess !== "self"`), the returned `rights` are swapped
+ * down to the org's default Employee profile so the whole app renders
+ * as if the caller were an employee. `realRights` always carries the
+ * caller's real profile (used by the header to decide whether to show
+ * the toggle button and to prevent elevation). `ctx` is always the
+ * caller's own memberId / organisationId / teamId — we never
+ * impersonate a different user.
+ *
+ * NOTE: RLS still filters DB reads to what the caller's real profile
+ * allows. The view-mode swap is an app-layer overlay that applies a
+ * stricter Employee-mode gate on top. Employee-mode reads may fetch a
+ * superset from the DB and the app-layer resolver trims down — safe
+ * but slightly wasteful. Kept this way so the RLS policies stay a
+ * simple mirror of the caller's real permissions.
  */
 export async function getEffectiveRightsForUser(
   userId: string
-): Promise<{ rights: EffectiveRights; ctx: MemberContext } | null> {
+): Promise<{
+  rights: EffectiveRights;
+  realRights: EffectiveRights;
+  viewMode: ViewMode;
+  ctx: MemberContext;
+} | null> {
   // Use the admin client for the members lookup — the caller has
   // already vouched for the `userId` (from a verified session cookie
   // in web-server context, or a JWT-verified user id in mobile API
   // routes). The cookie-backed SSR client would fail RLS in mobile
   // routes where no cookies flow.
+  const admin = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+  const { data: member } = await admin
+    .from("members")
+    .select("id, organisation_id, team_id, rights_profile_id")
+    .eq("user_id", userId)
+    .single();
+  if (!member?.rights_profile_id) return null;
+
+  const { data: profile } = await admin
+    .from("rights_profiles")
+    .select(PROFILE_COLUMNS)
+    .eq("id", member.rights_profile_id)
+    .single();
+  if (!profile) return null;
+
+  const realRights = rowToEffective(profile as unknown as RightsProfileRow);
+  const ctx: MemberContext = {
+    memberId: member.id,
+    organisationId: member.organisation_id,
+    teamId: member.team_id,
+  };
+
+  const cookieMode = await readViewModeCookie();
+  // Only real admin-scope callers may switch views. Real employees
+  // ignore the cookie entirely — the toggle can never elevate.
+  const canSwitch = realRights.crossUserAccess !== "self";
+  let effective = realRights;
+  let viewMode: ViewMode = "admin";
+  if (canSwitch && cookieMode === "self") {
+    const employeeProfile = await getDefaultEmployeeProfile(member.organisation_id);
+    if (employeeProfile) {
+      effective = employeeProfile;
+      viewMode = "self";
+    }
+  }
+
+  return { rights: effective, realRights, viewMode, ctx };
+}
+
+/**
+ * CLE-218 — Read the caller's *real* rights, ignoring any view-mode
+ * cookie. Only needed by callers who must gate on the underlying
+ * profile rather than the effective one (e.g. the view-mode toggle
+ * server action itself, or code that renders the toggle affordance).
+ * Every other consumer should use `getEffectiveRightsForUser` and
+ * read `resolved.rights`.
+ */
+export async function getRealRightsForUser(
+  userId: string
+): Promise<{ rights: EffectiveRights; ctx: MemberContext } | null> {
   const admin = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
