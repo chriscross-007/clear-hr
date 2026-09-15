@@ -663,7 +663,11 @@ function SubtypePencil({
       });
       if (!res.success) { setError(res.error ?? "Save failed"); return; }
       setOpen(false);
-      await notifySaved();
+      // Prop-supplied callback — parent (DocumentDetailsDialog) wires
+      // this to `refreshDetailAndHistory`, which itself dispatches the
+      // member-docs-changed event before calling `onSaved`. Sub-
+      // components don't have `notifySaved` in scope.
+      await onSaved();
     });
   }
 
@@ -717,7 +721,11 @@ function ExpiryPencil({
       });
       if (!res.success) { setError(res.error ?? "Save failed"); return; }
       setOpen(false);
-      await notifySaved();
+      // Prop-supplied callback — parent (DocumentDetailsDialog) wires
+      // this to `refreshDetailAndHistory`, which itself dispatches the
+      // member-docs-changed event before calling `onSaved`. Sub-
+      // components don't have `notifySaved` in scope.
+      await onSaved();
     });
   }
 
@@ -946,7 +954,11 @@ function ReviewPencil({
       });
       if (!res.success) { setError(res.error ?? "Save failed"); return; }
       setOpen(false);
-      await notifySaved();
+      // Prop-supplied callback — parent (DocumentDetailsDialog) wires
+      // this to `refreshDetailAndHistory`, which itself dispatches the
+      // member-docs-changed event before calling `onSaved`. Sub-
+      // components don't have `notifySaved` in scope.
+      await onSaved();
     });
   }
 
