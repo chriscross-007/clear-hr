@@ -15,6 +15,11 @@ import { cn } from "@/lib/utils";
 import { capitalize } from "@/lib/label-utils";
 import { formatOptionForDisplay } from "@/components/custom-field-multiselect";
 import type { FieldDef } from "./custom-field-actions";
+import {
+  DocumentsTrafficLight,
+  trafficLightSortRank,
+} from "@/components/documents/documents-traffic-light";
+import type { TrafficLight } from "@/app/(dashboard)/documents/compliance-actions";
 
 // ---------------------------------------------------------------------------
 // TanStack Table module augmentation — adds filterElement + class helpers to
@@ -184,12 +189,12 @@ export const DATE_PRESET_LABELS: Record<string, string> = {
 // access-level column.
 export const ALL_EMPLOYEE_COLS = [
   "avatar", "payroll_number", "first_name", "last_name", "email", "user_rights",
-  "team", "holiday_profile", "approval_profile", "work_pattern", "status", "last_log_in",
+  "team", "holiday_profile", "approval_profile", "work_pattern", "status", "docs_health", "last_log_in",
 ];
 
 export const DEFAULT_EMPLOYEE_COLS = [
   "avatar", "payroll_number", "first_name", "last_name", "email", "user_rights",
-  "team", "holiday_profile", "approval_profile", "work_pattern", "status",
+  "team", "holiday_profile", "approval_profile", "work_pattern", "status", "docs_health",
 ];
 
 export const EMPLOYEE_COL_LABELS: Record<string, string> = {
@@ -204,6 +209,7 @@ export const EMPLOYEE_COL_LABELS: Record<string, string> = {
   approval_profile: "Approver Profile",
   work_pattern: "Work Pattern",
   status: "Status",
+  docs_health: "Docs",
   last_log_in: "Last Log-in",
 };
 
@@ -486,8 +492,12 @@ export function buildEmployeeColumns(opts: {
    *  option strings so filtering by a sensitive category (rather than
    *  a specific number/name) remains possible. */
   canViewSensitiveFields?: boolean;
+  /** CLE-216 — Documents traffic light per member. Fetched by the
+   *  parent client via `getOrgDocumentsTrafficLights()` and passed
+   *  through here so the `docs_health` column has data to render. */
+  trafficLights?: Record<string, TrafficLight>;
 }): ColumnDef<Member>[] {
-  const { teams, memberLabel, currencySymbol, customFieldDefs, holidayProfileNames = [], workPatternNames = [], profileNames = [], approvalProfileNames = [], canViewSensitiveFields = true } = opts;
+  const { teams, memberLabel, currencySymbol, customFieldDefs, holidayProfileNames = [], workPatternNames = [], profileNames = [], approvalProfileNames = [], canViewSensitiveFields = true, trafficLights = {} } = opts;
   const teamMap = Object.fromEntries(teams.map((t) => [t.id, t.name]));
 
   return [
@@ -688,6 +698,49 @@ export function buildEmployeeColumns(opts: {
             <option value="Active">Active</option>
             <option value="Invited">Invited</option>
             <option value="Not invited">Not invited</option>
+          </select>
+        ),
+      },
+    },
+    {
+      id: "docs_health",
+      // CLE-216 — Documents traffic light. Server pre-computes the
+      // colour + counts; here we render the shared badge and provide
+      // sort/filter over the colour value.
+      size: 60,
+      accessorFn: (row) => trafficLights[row.id]?.colour ?? null,
+      header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label="Docs" />,
+      cell: ({ row }) => {
+        const light = trafficLights[row.original.id];
+        if (!light || !light.colour) return <span className="text-muted-foreground">—</span>;
+        return (
+          <div className="flex justify-start">
+            <DocumentsTrafficLight light={light} />
+          </div>
+        );
+      },
+      sortingFn: (a, b) => {
+        return trafficLightSortRank(trafficLights[a.original.id])
+          - trafficLightSortRank(trafficLights[b.original.id]);
+      },
+      filterFn: (row, _columnId, filterValue: string) => {
+        if (!filterValue) return true;
+        const colour = trafficLights[row.original.id]?.colour ?? null;
+        if (filterValue === "none") return colour === null;
+        return colour === filterValue;
+      },
+      meta: {
+        filterElement: (column) => (
+          <select
+            className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+            value={(column.getFilterValue() as string) ?? ""}
+            onChange={(e) => column.setFilterValue(e.target.value || undefined)}
+          >
+            <option value="">All</option>
+            <option value="red">Red (attention required)</option>
+            <option value="amber">Amber (attention soon)</option>
+            <option value="green">Green (all good)</option>
+            <option value="none">No required docs</option>
           </select>
         ),
       },
