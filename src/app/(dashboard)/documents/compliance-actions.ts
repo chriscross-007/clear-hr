@@ -747,3 +747,133 @@ export async function getOrgDocumentsTrafficLights(): Promise<
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }
 }
+
+// ---------------------------------------------------------------------------
+// CLE-216 follow-up — Dashboard surfaces.
+//
+// Two more entry points feeding the two Dashboard pages:
+//   - Employee self dashboard: caller's own light (one row).
+//   - Admin dashboard: every in-scope member whose light is red or
+//     amber, sorted worst-first for the expandable attention list.
+// Both delegate to `computeTrafficLightsForMembers` so the tier
+// semantics stay identical across every surface. See spec §7b.16.
+// ---------------------------------------------------------------------------
+
+/**
+ * Traffic light for the caller's own member row. Resolves the caller
+ * → member id via the rights resolver, then runs the shared computer
+ * against a single-element member list. Powers the "My documents"
+ * card on the Employee Self Dashboard.
+ */
+export async function getMyDocumentsTrafficLight(): Promise<
+  { success: true; memberId: string; light: TrafficLight }
+  | { success: false; error: string }
+> {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Not authenticated" };
+    const resolved = await getEffectiveRightsForUser(user.id);
+    if (!resolved) return { success: false, error: "No organisation" };
+    const { ctx } = resolved;
+
+    const admin = getAdmin();
+    const { data: memberRow } = await admin
+      .from("members")
+      .select("id, rtw_not_required")
+      .eq("id", ctx.memberId)
+      .eq("organisation_id", ctx.organisationId)
+      .single();
+    if (!memberRow) return { success: false, error: "Member not found" };
+
+    const map = await computeTrafficLightsForMembers(
+      ctx.organisationId,
+      [{
+        id: memberRow.id as string,
+        rtw_not_required: (memberRow as { rtw_not_required?: boolean }).rtw_not_required === true,
+      }],
+    );
+    const light = map.get(ctx.memberId) ?? { colour: null, counts: { ...EMPTY_COUNTS } };
+    return { success: true, memberId: ctx.memberId, light };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+export interface DocumentsAttentionRow {
+  memberId: string;
+  memberName: string;
+  light: TrafficLight;
+}
+
+/**
+ * Every in-scope member whose light is red or amber, sorted red-first
+ * then amber, then by name. Powers the Admin Dashboard "Documents"
+ * card's expandable list. Scope mirrors `getOrgDocumentsTrafficLights`
+ * — self / team / all — so a self-scoped caller only ever sees their
+ * own row (they'll also have the "My documents" card on the self
+ * dashboard, but the admin dashboard call is redirected away for
+ * them via the layout, so this scope path is defensive).
+ */
+export async function getOrgDocumentsAttention(): Promise<
+  { success: true; rows: DocumentsAttentionRow[] }
+  | { success: false; error: string }
+> {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Not authenticated" };
+    const resolved = await getEffectiveRightsForUser(user.id);
+    if (!resolved) return { success: false, error: "No organisation" };
+    const { rights, ctx } = resolved;
+
+    const admin = getAdmin();
+    let q = admin
+      .from("members")
+      .select("id, first_name, last_name, rtw_not_required, team_id")
+      .eq("organisation_id", ctx.organisationId);
+    if (rights.crossUserAccess === "self") {
+      q = q.eq("id", ctx.memberId);
+    } else if (rights.crossUserAccess === "team") {
+      if (ctx.teamId === null) q = q.eq("id", ctx.memberId);
+      else q = q.eq("team_id", ctx.teamId);
+    }
+    const { data: memberRows, error } = await q;
+    if (error) return { success: false, error: error.message };
+    const members = ((memberRows ?? []) as unknown as Array<{
+      id: string;
+      first_name: string | null;
+      last_name: string | null;
+      rtw_not_required: boolean;
+      team_id: string | null;
+    }>);
+
+    const map = await computeTrafficLightsForMembers(
+      ctx.organisationId,
+      members.map((m) => ({ id: m.id, rtw_not_required: m.rtw_not_required })),
+    );
+
+    // Red-first, then amber. Green + null are excluded — the card
+    // only surfaces attention items, not the healthy tail.
+    const colourRank: Record<string, number> = { red: 1, amber: 2 };
+    const rows: DocumentsAttentionRow[] = [];
+    for (const m of members) {
+      const light = map.get(m.id);
+      if (!light || (light.colour !== "red" && light.colour !== "amber")) continue;
+      const memberName = `${m.first_name ?? ""} ${m.last_name ?? ""}`.trim() || "—";
+      rows.push({ memberId: m.id, memberName, light });
+    }
+    rows.sort((a, b) => {
+      const ac = a.light.colour ?? "";
+      const bc = b.light.colour ?? "";
+      const ar = colourRank[ac] ?? 9;
+      const br = colourRank[bc] ?? 9;
+      if (ar !== br) return ar - br;
+      return a.memberName.localeCompare(b.memberName);
+    });
+
+    return { success: true, rows };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}

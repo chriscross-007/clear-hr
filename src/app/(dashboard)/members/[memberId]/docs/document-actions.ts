@@ -890,6 +890,298 @@ export async function uploadMemberDocument(
 }
 
 // ---------------------------------------------------------------------------
+// Replace (CLE-217) — swap the file on an unverified doc.
+//
+// Chris's testing wrinkle: if a Required Document upload lands the
+// wrong file, the only remedy today is a Documents-tab detour to
+// delete the row and re-add. Replace collapses that into a single
+// operation launched from inside the Details dialog:
+//
+//   * validates the caller can update the target member,
+//   * verifies the old doc is still unverified — once verified we
+//     insist admins delete + re-upload so the audit trail keeps its
+//     first-sighting chain intact,
+//   * uploads the new bytes and inserts a new `document` row that
+//     inherits every relevant metadata field from the old row
+//     (owner, subtype, type, retention_class, expires_on,
+//     next_review_on),
+//   * enqueues the old doc into `disposal_queue` directly — a
+//     deliberate bypass of `softDeleteMemberDocument`'s force-delete
+//     gate because a Replace is legitimate for every retention class
+//     (including RTW): the *content* is being superseded, not the
+//     record, and the new row immediately takes over the retention
+//     obligation,
+//   * writes a `document.replaced` audit row on the *new* id so the
+//     Activity feed on the replacement carries the swap; the
+//     `metadata.replaces_document_id` back-links to the trashed row
+//     for anyone chasing the chain in Trash.
+// ---------------------------------------------------------------------------
+
+export async function replaceMemberDocument(
+  oldDocumentId: string,
+  formData: FormData,
+): Promise<{ success: boolean; error?: string; documentId?: string }> {
+  try {
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const admin = getAdmin();
+
+    // Fetch the old doc — every field we need to inherit onto the
+    // replacement plus the guard fields (verified_on, owner scope).
+    const { data: oldDoc } = await admin
+      .from("document")
+      .select(
+        "id, organisation_id, owner_scope, owner_id, file_name, file_size, type, subtype_id, expires_on, retention_class, next_review_on, verified_on, document_subtype!subtype_id(name)",
+      )
+      .eq("id", oldDocumentId)
+      .single();
+    if (
+      !oldDoc
+      || oldDoc.organisation_id !== caller.organisationId
+      || oldDoc.owner_scope !== "member"
+      || !oldDoc.owner_id
+    ) {
+      return { success: false, error: "Document not found" };
+    }
+    // The unverified-only gate. Verified docs are the audit "anchor"
+    // for their subtype cycle — swapping the file underneath would
+    // orphan the verification event, so the admin has to delete +
+    // re-upload in that case.
+    if (oldDoc.verified_on !== null) {
+      return {
+        success: false,
+        error: "Verified documents can't be replaced — delete and add a new one instead.",
+      };
+    }
+
+    // Validate the incoming file.
+    const file = formData.get("file");
+    if (!(file instanceof File)) return { success: false, error: "No file supplied" };
+    if (file.size > MAX_DOCUMENT_SIZE)
+      return { success: false, error: "This file is too large. The limit is 10 MB." };
+    if (!ALLOWED_CONTENT_TYPES.includes(file.type as (typeof ALLOWED_CONTENT_TYPES)[number])) {
+      return { success: false, error: "This file type is not accepted." };
+    }
+
+    const memberId = oldDoc.owner_id as string;
+    const target = await getTarget(admin, memberId, caller.organisationId);
+    if (!target) return { success: false, error: "Document not found" };
+    if (!caller.canUpdateTarget({ memberId: target.id, teamId: target.team_id })) {
+      return { success: false, error: "You don't have permission to replace this document." };
+    }
+
+    // Upload bytes. Same path convention as uploadMemberDocument.
+    const uuid = crypto.randomUUID();
+    const ext = file.name.includes(".") ? file.name.substring(file.name.lastIndexOf(".")) : "";
+    const storagePath = `${caller.organisationId}/${uuid}${ext}`;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const { error: uploadError } = await admin.storage
+      .from(STORAGE_BUCKET)
+      .upload(storagePath, bytes, { contentType: file.type, upsert: false });
+    if (uploadError) return { success: false, error: uploadError.message };
+
+    // Insert the replacement row, inheriting every relevant column
+    // from the old row so subtype/retention/expiry never drift.
+    const { data: inserted, error: insertError } = await admin
+      .from("document")
+      .insert({
+        organisation_id: caller.organisationId,
+        owner_scope: "member",
+        owner_id: memberId,
+        storage_path: storagePath,
+        file_name: file.name.substring(0, 255),
+        file_size: file.size,
+        content_type: file.type,
+        type: oldDoc.type,
+        subtype_id: oldDoc.subtype_id,
+        retention_class: oldDoc.retention_class,
+        expires_on: oldDoc.expires_on,
+        next_review_on: oldDoc.next_review_on,
+        uploaded_by: caller.memberId,
+      })
+      .select("id")
+      .single();
+    if (insertError || !inserted) {
+      // Best-effort cleanup so we don't leak orphan bytes.
+      await admin.storage.from(STORAGE_BUCKET).remove([storagePath]);
+      return {
+        success: false,
+        error: insertError?.message ?? "Failed to insert replacement document",
+      };
+    }
+
+    // Enqueue the old row into disposal_queue directly. Deliberate
+    // bypass of softDeleteMemberDocument's PROTECTED_RETENTION_CLASSES
+    // check — Replace legitimately covers RTW/contract/payroll
+    // because the new active doc immediately takes over the retention
+    // obligation. The wrinkle is that queue rows are unique on
+    // document_id, so a second call for the same old id would fail —
+    // we don't retry on error here; if it fails we roll back the new
+    // row so the caller can start over cleanly.
+    const { error: queueError } = await admin
+      .from("disposal_queue")
+      .insert({
+        organisation_id: caller.organisationId,
+        document_id: oldDocumentId,
+        queued_by: caller.memberId,
+        force_delete_reason: "Replaced by uploader",
+      });
+    if (queueError) {
+      await admin.from("document").delete().eq("id", inserted.id as string);
+      await admin.storage.from(STORAGE_BUCKET).remove([storagePath]);
+      return { success: false, error: queueError.message };
+    }
+
+    const stObj = oldDoc.document_subtype as unknown as { name?: string } | { name?: string }[] | null;
+    const subtypeName = Array.isArray(stObj) ? (stObj[0]?.name ?? null) : (stObj?.name ?? null);
+    await logAudit({
+      organisationId: caller.organisationId,
+      actorId: caller.memberId,
+      actorName: await callerName(admin, caller.memberId),
+      action: "document.replaced",
+      targetType: "member_document",
+      targetId: inserted.id as string,
+      targetLabel: file.name,
+      changes: {
+        file_name: { old: oldDoc.file_name, new: file.name },
+        file_size: { old: oldDoc.file_size, new: file.size },
+      },
+      metadata: {
+        member: memberDisplay(target),
+        type_subtype: typeSubtypeLabel(oldDoc.type as string, subtypeName),
+        replaces_document_id: oldDocumentId,
+      },
+    });
+
+    revalidatePath(`/members/${memberId}/docs`);
+    return { success: true, documentId: inserted.id as string };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Finalize replace via photo capture (CLE-217).
+//
+// The photo path can't do everything in one action — the mobile
+// capture flow already inserts its own `document` row via the
+// /api/mobile/capture-tasks/:id/upload endpoint, so all the web
+// dialog sees is a fresh `uploaded_document_id` on the capture_task.
+// This action is what the dialog calls afterwards to (a) trash the
+// old doc and (b) write the same `document.replaced` audit row the
+// file-upload path produces. Same guard rails: same tenant, same
+// owner + subtype, old still unverified, caller can update the
+// target. Idempotent — a second call for the same pair is a no-op.
+// ---------------------------------------------------------------------------
+
+export async function finalizeDocumentReplace(
+  oldDocumentId: string,
+  newDocumentId: string,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const admin = getAdmin();
+
+    const { data: rows } = await admin
+      .from("document")
+      .select(
+        "id, organisation_id, owner_scope, owner_id, file_name, file_size, subtype_id, type, verified_on, document_subtype!subtype_id(name)",
+      )
+      .in("id", [oldDocumentId, newDocumentId]);
+    type RowShape = {
+      id: string;
+      organisation_id: string;
+      owner_scope: string;
+      owner_id: string | null;
+      file_name: string;
+      file_size: number;
+      subtype_id: string | null;
+      type: string;
+      verified_on: string | null;
+      document_subtype: { name?: string } | { name?: string }[] | null;
+    };
+    const list = ((rows ?? []) as unknown as RowShape[]);
+    const oldRow = list.find((r) => r.id === oldDocumentId);
+    const newRow = list.find((r) => r.id === newDocumentId);
+    if (!oldRow || !newRow) return { success: false, error: "Document not found" };
+    if (
+      oldRow.organisation_id !== caller.organisationId
+      || newRow.organisation_id !== caller.organisationId
+      || oldRow.owner_scope !== "member"
+      || newRow.owner_scope !== "member"
+    ) {
+      return { success: false, error: "Document not found" };
+    }
+    if (oldRow.owner_id !== newRow.owner_id) {
+      return { success: false, error: "Replacement belongs to a different member." };
+    }
+    if (oldRow.subtype_id !== newRow.subtype_id) {
+      return { success: false, error: "Replacement belongs to a different subtype." };
+    }
+    if (oldRow.verified_on !== null) {
+      return {
+        success: false,
+        error: "Verified documents can't be replaced — delete and add a new one instead.",
+      };
+    }
+
+    const memberId = oldRow.owner_id as string;
+    const target = await getTarget(admin, memberId, caller.organisationId);
+    if (!target) return { success: false, error: "Document not found" };
+    if (!caller.canUpdateTarget({ memberId: target.id, teamId: target.team_id })) {
+      return { success: false, error: "You don't have permission to replace this document." };
+    }
+
+    // Idempotency — if a previous finalize already queued the old
+    // row, skip both the queue insert AND the audit write so we
+    // don't double-log the swap.
+    const { data: existingQueue } = await admin
+      .from("disposal_queue")
+      .select("id")
+      .eq("document_id", oldDocumentId)
+      .maybeSingle();
+    if (!existingQueue) {
+      const { error: queueError } = await admin
+        .from("disposal_queue")
+        .insert({
+          organisation_id: caller.organisationId,
+          document_id: oldDocumentId,
+          queued_by: caller.memberId,
+          force_delete_reason: "Replaced by uploader",
+        });
+      if (queueError) return { success: false, error: queueError.message };
+
+      const stObj = oldRow.document_subtype;
+      const subtypeName = Array.isArray(stObj) ? (stObj[0]?.name ?? null) : (stObj?.name ?? null);
+      await logAudit({
+        organisationId: caller.organisationId,
+        actorId: caller.memberId,
+        actorName: await callerName(admin, caller.memberId),
+        action: "document.replaced",
+        targetType: "member_document",
+        targetId: newDocumentId,
+        targetLabel: newRow.file_name,
+        changes: {
+          file_name: { old: oldRow.file_name, new: newRow.file_name },
+          file_size: { old: oldRow.file_size, new: newRow.file_size },
+        },
+        metadata: {
+          member: memberDisplay(target),
+          type_subtype: typeSubtypeLabel(oldRow.type, subtypeName ?? null),
+          replaces_document_id: oldDocumentId,
+        },
+      });
+    }
+
+    revalidatePath(`/members/${memberId}/docs`);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Edit metadata
 // ---------------------------------------------------------------------------
 

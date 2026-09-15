@@ -273,9 +273,21 @@ export function NewMemberDocumentDialog({
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent
+        showCloseButton={false}
         className="max-w-none sm:max-w-none p-0 gap-0"
         style={{ width: "min(1200px, 95vw)" }}
       >
+        {/* Close (CLE-217 follow-up) — sits top-right, replacing the
+            default X. Reads as a named action rather than an escape
+            hatch, which fits better here since there's no Save/Cancel
+            row (upload = save). */}
+        <Button
+          onClick={onClose}
+          size="sm"
+          className="absolute right-3 top-3 z-10"
+        >
+          Close
+        </Button>
         <DialogHeader className="border-b p-5 space-y-2 text-center sm:text-center">
           {/* Row 1: Member + subtype (locked or picker) */}
           <DialogTitle className="text-xl flex items-center justify-center gap-2">
@@ -306,8 +318,9 @@ export function NewMemberDocumentDialog({
                   {subtypeError && (
                     <div className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">{subtypeError}</div>
                   )}
-                  <div className="space-y-1">
-                    <Label className="text-xs">Subtype</Label>
+                  {/* No inner "Subtype" label — the popover heading
+                      above already names the field. */}
+                  <div>
                     <Select
                       value={subtypeId}
                       onValueChange={(v) => { setSubtypeId(v); setSubtypePickerOpen(false); }}

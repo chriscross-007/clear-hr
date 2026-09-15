@@ -199,6 +199,12 @@ export function RequiredDocumentsCard({
     const current = rows.filter((r) => r.assignedPerMember).map((r) => r.subtypeId);
     persist([...current, id]);
     setPickerOpen(false);
+    // Skip the "click the not-uploaded row" step — open the new-doc
+    // dialog for this subtype directly. `persist()` runs the server
+    // round-trip in the background so the row appears when the dialog
+    // closes; the subtype id itself is the only thing the dialog
+    // needs, and we already have it here.
+    setNewDocSubtypeId(id);
   }
 
   function removeSubtype(id: string) {

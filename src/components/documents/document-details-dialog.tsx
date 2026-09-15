@@ -19,8 +19,8 @@
 // Preview signed URL loads eagerly on mount — trade the click-to-view
 // step for a small upfront fetch.
 
-import { useEffect, useMemo, useState, useTransition } from "react";
-import { Camera, Download, Loader2, Pencil, SendHorizontal, Upload as UploadIcon } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Camera, Download, FileUp, Loader2, Pencil, RefreshCw, SendHorizontal, Smartphone, Upload as UploadIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -53,9 +53,16 @@ import {
   renewMemberDocument,
   getMemberDocumentSignedUrl,
   getSubtypesForUpload,
+  replaceMemberDocument,
+  finalizeDocumentReplace,
   type DocumentDetailContext,
   type DocumentActivityItem,
 } from "@/app/(dashboard)/members/[memberId]/docs/document-actions";
+import {
+  queueCaptureTask,
+  cancelCaptureTask,
+} from "@/app/(dashboard)/members/[memberId]/docs/capture-actions";
+import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -107,6 +114,7 @@ const ACTION_LABEL_OVERRIDES: Record<string, string> = {
   "document.force_deleted": "Moved to Trash (retention override)",
   "document.restored": "Restored from Trash",
   "document.purged": "Permanently deleted",
+  "document.replaced": "File replaced",
 };
 
 function actionLabel(action: string): string {
@@ -210,6 +218,15 @@ export function DocumentDetailsDialog({
   // and the composer off, regardless of whether the caller would
   // ordinarily have update rights.
   const effectiveCanUpdate = canUpdate && !readOnly;
+  // CLE-217 — the currently-displayed document id is lifted from the
+  // prop into local state so the Replace flow can pivot the whole
+  // dialog to the freshly-created replacement id without the parent
+  // having to close + reopen. Seeded from the `documentId` prop; kept
+  // in sync if the prop itself changes (belt + braces for callers
+  // that mount a new dialog with a new prop rather than closing
+  // first).
+  const [currentDocumentId, setCurrentDocumentId] = useState(documentId);
+  useEffect(() => { setCurrentDocumentId(documentId); }, [documentId]);
   const [detail, setDetail] = useState<DocumentDetailContext | null>(null);
   const [activity, setActivity] = useState<DocumentActivityItem[] | null>(null);
   const [subtypes, setSubtypes] = useState<Array<{ id: string; name: string; type: string }>>([]);
@@ -220,20 +237,28 @@ export function DocumentDetailsDialog({
 
   const [showChatty, setShowChatty] = useState(false);
 
-  // Load detail, subtypes, activity, preview URL on mount / when
-  // documentId changes.
+  // Load detail, subtypes, activity, preview URL on mount / when the
+  // active document id changes (either the prop or a post-Replace
+  // pivot to a new id).
   useEffect(() => {
     let cancelled = false;
+    // Reset per-doc UI state so the previous doc's preview / error
+    // never bleed through the pivot.
+    setDetail(null);
+    setActivity(null);
+    setPreviewUrl(null);
+    setPreviewError(null);
+    setLoadError(null);
     (async () => {
-      const dRes = await getDocumentDetail(documentId);
+      const dRes = await getDocumentDetail(currentDocumentId);
       if (cancelled) return;
       if (!dRes.success) { setLoadError(dRes.error); return; }
       setDetail(dRes.detail);
 
       const [stRes, aRes, urlRes] = await Promise.all([
         getSubtypesForUpload(dRes.detail.targetMemberId),
-        getDocumentActivity(documentId),
-        getMemberDocumentSignedUrl(documentId, "inline"),
+        getDocumentActivity(currentDocumentId),
+        getMemberDocumentSignedUrl(currentDocumentId, "inline"),
       ]);
       if (cancelled) return;
       if (stRes.success) {
@@ -250,13 +275,13 @@ export function DocumentDetailsDialog({
       // definitely landed so the just-written view row shows up when
       // the user toggles "Show views/downloads" on.
       if (urlRes.success) {
-        const a2 = await getDocumentActivity(documentId);
+        const a2 = await getDocumentActivity(currentDocumentId);
         if (cancelled) return;
         if (a2.success) setActivity(a2.items);
       }
     })();
     return () => { cancelled = true; };
-  }, [documentId]);
+  }, [currentDocumentId]);
 
   const employeeStripped = detail?.isSelf && !canUpdate;
 
@@ -271,8 +296,8 @@ export function DocumentDetailsDialog({
 
   async function refreshDetailAndHistory() {
     const [d, a] = await Promise.all([
-      getDocumentDetail(documentId),
-      getDocumentActivity(documentId),
+      getDocumentDetail(currentDocumentId),
+      getDocumentActivity(currentDocumentId),
     ]);
     if (d.success) setDetail(d.detail);
     if (a.success) setActivity(a.items);
@@ -290,8 +315,17 @@ export function DocumentDetailsDialog({
   }
 
   async function reloadActivity() {
-    const a = await getDocumentActivity(documentId);
+    const a = await getDocumentActivity(currentDocumentId);
     if (a.success) setActivity(a.items);
+  }
+
+  /** CLE-217 — pivot the whole dialog to a freshly-created
+   *  replacement document. Called from both Replace paths (file
+   *  upload + photo capture). Fires the traffic-light event so the
+   *  sidebar avatar + Required Documents card catch up. */
+  async function pivotToReplacement(newId: string) {
+    setCurrentDocumentId(newId);
+    await notifySaved();
   }
 
   return (
@@ -302,12 +336,14 @@ export function DocumentDetailsDialog({
         // to a compact loading box while `detail` is still fetching so
         // the user doesn't see a full-width empty dialog for 1–2s.
         //
-        // Close X is hidden during the brief loading state (it lives
-        // for ~1s and looks silly cramped next to "Loading…"); it
-        // appears once the doc loads. ESC still dismisses either way.
+        // Default close X is hidden — we render a named "Close" button
+        // top-right instead once the doc has loaded, matching the
+        // NewMemberDocumentDialog pattern. Consistent affordance across
+        // both add and view surfaces, and stays out of the composer's
+        // send arrow at the bottom.
         className="max-w-none sm:max-w-none p-0 gap-0"
         style={{ width: detail ? "min(1200px, 95vw)" : "auto" }}
-        showCloseButton={!!detail || !!loadError}
+        showCloseButton={false}
       >
         {/* Radix requires DialogTitle to be present in every
             DialogContent for a11y. Render a hidden fallback for the
@@ -317,6 +353,19 @@ export function DocumentDetailsDialog({
           <DialogHeader className="sr-only">
             <DialogTitle>Document details</DialogTitle>
           </DialogHeader>
+        )}
+        {/* Named Close button (top-right). Shown once the doc has
+            loaded — hidden during the compact "Loading…" flash so it
+            doesn't crowd the placeholder. ESC still dismisses either
+            way. Mirrors the NewMemberDocumentDialog's button. */}
+        {(detail || loadError) && (
+          <Button
+            onClick={onClose}
+            size="sm"
+            className="absolute right-3 top-3 z-10"
+          >
+            Close
+          </Button>
         )}
 
         {loadError && (
@@ -410,7 +459,7 @@ export function DocumentDetailsDialog({
                     Preview not available for this file type.{" "}
                     <button
                       type="button"
-                      onClick={() => void downloadDocument(documentId, detail.row.fileName, reloadActivity)}
+                      onClick={() => void downloadDocument(currentDocumentId, detail.row.fileName, reloadActivity)}
                       className="underline hover:text-foreground"
                     >
                       Download
@@ -425,7 +474,7 @@ export function DocumentDetailsDialog({
                 {previewUrl && (
                   <button
                     type="button"
-                    onClick={() => void downloadDocument(documentId, detail.row.fileName, reloadActivity)}
+                    onClick={() => void downloadDocument(currentDocumentId, detail.row.fileName, reloadActivity)}
                     className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-background hover:text-foreground"
                     aria-label="Download"
                     title="Download"
@@ -463,6 +512,42 @@ export function DocumentDetailsDialog({
                     onSaved={refreshDetailAndHistory}
                   />
                 </div>
+
+                {/* Replace (CLE-217) — rendered whenever the caller has
+                    update rights, but the *content* switches on
+                    verification state:
+                    • Unverified → the active ReplaceSection with the two
+                      upload/photo entry points.
+                    • Verified → a short explanatory panel telling the
+                      admin why Replace is locked and what to do instead.
+                    Keeping the surface visible (rather than collapsing
+                    the whole section) means admins who go looking for
+                    Replace on a verified doc find the reason rather than
+                    an empty gap — the panel is the answer to "where did
+                    the Replace button go?". */}
+                {effectiveCanUpdate && !employeeStripped && (
+                  <div className="border-b p-4">
+                    {detail.row.verifiedOn === null ? (
+                      <ReplaceSection
+                        documentId={currentDocumentId}
+                        targetMemberId={detail.targetMemberId}
+                        targetMemberName={detail.targetMemberName}
+                        subtypeId={detail.row.subtypeId}
+                        subtypeName={detail.row.subtypeName}
+                        onReplaced={pivotToReplacement}
+                      />
+                    ) : (
+                      <div>
+                        <p className="mb-1 flex items-center gap-2 text-base font-semibold">
+                          <RefreshCw className="h-4 w-4" /> Replace file
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          This document has been verified and cannot be reloaded. If the wrong document is showing, please Delete and Reload.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Activity — merged audit + comments feed. The list is
                     the only scrolling region; the composer stays pinned
@@ -547,7 +632,7 @@ export function DocumentDetailsDialog({
                       when reviewing a trashed doc. */}
                   {!employeeStripped && !readOnly && (
                     <div className="mt-2 shrink-0">
-                      <ActivityComposer documentId={documentId} onPosted={reloadActivity} />
+                      <ActivityComposer documentId={currentDocumentId} onPosted={reloadActivity} />
                     </div>
                   )}
                 </div>
@@ -1001,5 +1086,255 @@ function ReviewPencil({
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Replace file (CLE-217).
+//
+// Two entry points that mirror NewMemberDocumentDialog: a file upload
+// (calls the one-shot server action `replaceMemberDocument`) and a
+// photo capture (queues a capture_task, subscribes to it via Realtime,
+// then calls `finalizeDocumentReplace` once the mobile side lands
+// the new doc). Both paths end the same way — the parent's
+// `onReplaced(newId)` fires, which pivots the whole dialog to the
+// new document's id.
+//
+// The wrinkle is that this component only renders while the doc is
+// unverified (the parent gates it), but the useEffect chain that
+// watches the capture_task might outlive that render if the user
+// hits Cancel mid-flight. The cleanup effect below cancels the task
+// server-side when we unmount so the mobile app doesn't keep a stale
+// task at the top of its list.
+// ---------------------------------------------------------------------------
+
+function ReplaceSection({
+  documentId,
+  targetMemberId,
+  targetMemberName,
+  subtypeId,
+  subtypeName,
+  onReplaced,
+}: {
+  documentId: string;
+  targetMemberId: string;
+  targetMemberName: string;
+  subtypeId: string | null;
+  subtypeName: string | null;
+  onReplaced: (newDocumentId: string) => void | Promise<void>;
+}) {
+  const [mode, setMode] = useState<"idle" | "waiting">("idle");
+  const [captureTaskId, setCaptureTaskId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Keep a ref to onReplaced so the Realtime subscription doesn't
+  // need to be torn down + resubscribed every render.
+  const onReplacedRef = useRef(onReplaced);
+  onReplacedRef.current = onReplaced;
+
+  function handleUploadClick() {
+    setError(null);
+    fileInputRef.current?.click();
+  }
+
+  function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+    const chosen = e.target.files?.[0] ?? null;
+    e.target.value = "";
+    if (!chosen) return;
+    setError(null);
+    const fd = new FormData();
+    fd.set("file", chosen);
+    startTransition(async () => {
+      const res = await replaceMemberDocument(documentId, fd);
+      if (!res.success || !res.documentId) {
+        setError(res.error ?? "Replace failed");
+        return;
+      }
+      await onReplacedRef.current(res.documentId);
+    });
+  }
+
+  function handlePhotoClick() {
+    if (!subtypeId) {
+      setError("This document has no subtype — set one before replacing via photo.");
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      // Note the null expiresOn — the queue action auto-derives from
+      // the subtype's default when required. The replacement inherits
+      // the old row's expiry via finalizeDocumentReplace instead, but
+      // the capture_task's own expires_on is only used to seed a
+      // brand-new upload; here it's harmless.
+      const res = await queueCaptureTask(targetMemberId, subtypeId, null, null);
+      if (!res.success) { setError(res.error); return; }
+      setCaptureTaskId(res.taskId);
+      setMode("waiting");
+    });
+  }
+
+  // Realtime subscription — mirrors the NewMemberDocumentDialog flow.
+  // Fires finalizeDocumentReplace when the mobile side lands the new
+  // doc, then hands over to the parent to pivot the dialog.
+  useEffect(() => {
+    if (mode !== "waiting" || !captureTaskId) return;
+    const supabase = createSupabaseBrowserClient();
+    let cancelled = false;
+
+    async function fetchAndProgress() {
+      const { data } = await supabase
+        .from("capture_task")
+        .select("status, uploaded_document_id")
+        .eq("id", captureTaskId)
+        .single();
+      if (cancelled || !data) return;
+      handleStatus(
+        data.status as string,
+        (data as { uploaded_document_id?: string | null }).uploaded_document_id ?? null,
+      );
+    }
+
+    async function handleStatus(status: string, uploadedDocumentId: string | null) {
+      if (cancelled) return;
+      if (status === "uploaded" && uploadedDocumentId) {
+        // Trash the old row + audit, then hand over.
+        const res = await finalizeDocumentReplace(documentId, uploadedDocumentId);
+        if (!res.success) {
+          setError(res.error ?? "Replace finalize failed");
+          setMode("idle");
+          setCaptureTaskId(null);
+          return;
+        }
+        await onReplacedRef.current(uploadedDocumentId);
+      } else if (status === "cancelled") {
+        setMode("idle");
+        setCaptureTaskId(null);
+      } else if (status === "timeout") {
+        setMode("idle");
+        setCaptureTaskId(null);
+        setError("This request timed out. Try again when you're ready to take the photo.");
+      }
+    }
+
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) supabase.realtime.setAuth(session.access_token);
+    })();
+
+    const channel = supabase
+      .channel(`capture_task:${captureTaskId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "capture_task",
+          filter: `id=eq.${captureTaskId}`,
+        },
+        (payload) => {
+          const row = payload.new as {
+            status?: string;
+            uploaded_document_id?: string | null;
+          } | null;
+          if (row?.status) void handleStatus(row.status, row.uploaded_document_id ?? null);
+        },
+      )
+      .subscribe();
+
+    const pollInterval = setInterval(() => {
+      if (!cancelled) void fetchAndProgress();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(pollInterval);
+      void supabase.removeChannel(channel);
+    };
+  }, [mode, captureTaskId, documentId]);
+
+  // If the section unmounts (e.g. the doc gets verified from another
+  // pencil while we're waiting, or the dialog closes) cancel the
+  // capture task server-side so it doesn't sit on the mobile app's
+  // list.
+  useEffect(() => {
+    return () => {
+      if (captureTaskId && mode === "waiting") {
+        void cancelCaptureTask(captureTaskId);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleWaitingCancel() {
+    if (captureTaskId) await cancelCaptureTask(captureTaskId);
+    setMode("idle");
+    setCaptureTaskId(null);
+  }
+
+  return (
+    <div>
+      <p className="text-base font-semibold flex items-center gap-2">
+        <RefreshCw className="h-4 w-4" /> Replace file
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Only unverified files can be replaced. Once verified, delete and add a new upload instead.
+      </p>
+      {error && (
+        <div className="mt-2 rounded-md bg-destructive/10 p-2 text-xs text-destructive">{error}</div>
+      )}
+      {mode === "waiting" ? (
+        <div className="mt-2 flex flex-col items-center gap-2 rounded-md border bg-background p-3 text-center">
+          <Smartphone className="h-8 w-8 text-muted-foreground" />
+          <p className="text-sm">
+            Take a photo of <strong>{targetMemberName}</strong>&apos;s{" "}
+            <strong>{subtypeName ?? "document"}</strong>
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Open ClearHR on your phone — the capture task is at the top of the app.
+          </p>
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <Button variant="outline" size="sm" onClick={handleWaitingCancel}>
+            Cancel
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-2 flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={handleUploadClick}
+            disabled={pending}
+            className="gap-1"
+          >
+            <FileUp className="h-4 w-4" /> Upload replacement
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={handlePhotoClick}
+            disabled={pending}
+            className="gap-1"
+          >
+            <Camera className="h-4 w-4" /> Take photo
+          </Button>
+          {pending && (
+            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" /> Working…
+            </span>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain"
+            className="hidden"
+            onChange={handleFileChosen}
+          />
+        </div>
+      )}
+    </div>
   );
 }

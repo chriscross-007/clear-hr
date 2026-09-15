@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -9,6 +10,7 @@ import {
   ChevronDown,
   ChevronUp,
   ClipboardCheck,
+  FileText,
   Stethoscope,
   UserX,
   Palmtree,
@@ -22,6 +24,14 @@ import {
   type EmployeeMissingHolidayPeriod,
 } from "@/app/(dashboard)/holiday-period-actions";
 import { getPendingApprovalsCount } from "@/app/(dashboard)/approvals-actions";
+import {
+  getOrgDocumentsAttention,
+  type DocumentsAttentionRow,
+} from "@/app/(dashboard)/documents/compliance-actions";
+import {
+  DocumentsTrafficLight,
+  trafficLightTooltipText,
+} from "@/components/documents/documents-traffic-light";
 import type { IncompleteSickBooking } from "@/app/(dashboard)/sick-booking-types";
 import type { AbsentMember, BirthdayMember } from "@/app/(dashboard)/dashboard-types";
 
@@ -118,11 +128,22 @@ function SummaryCard({
 // ---------------------------------------------------------------------------
 
 export function AdminDashboardClient() {
+  const router = useRouter();
+
   // Sick bookings needing attention
   const [sickBookings, setSickBookings] = useState<IncompleteSickBooking[]>([]);
   const [sickLoading, setSickLoading] = useState(true);
   const [sickError, setSickError] = useState<string | null>(null);
   const [sickExpanded, setSickExpanded] = useState(false);
+
+  // CLE-216 follow-up — Documents attention (red + amber members).
+  // Each row carries the pre-computed traffic light so the expanded
+  // list can render the same icon + short summary as the Employees
+  // Directory. Independent fetch — doesn't block any other card.
+  const [docsAttention, setDocsAttention] = useState<DocumentsAttentionRow[]>([]);
+  const [docsLoading, setDocsLoading] = useState(true);
+  const [docsError, setDocsError] = useState<string | null>(null);
+  const [docsExpanded, setDocsExpanded] = useState(false);
 
   // Today's absences, holidays, birthdays
   const [absentToday, setAbsentToday] = useState<AbsentMember[]>([]);
@@ -204,8 +225,32 @@ export function AdminDashboardClient() {
       setApprovalsLoading(false);
     })();
 
+    // CLE-216 follow-up — Documents attention list. Server sorts
+    // red-first then amber then by name; we can render the rows in
+    // order they arrive.
+    (async () => {
+      const res = await getOrgDocumentsAttention();
+      if (cancelled) return;
+      if (!res.success) {
+        setDocsError(res.error ?? "Could not load documents status");
+      } else {
+        setDocsAttention(res.rows);
+      }
+      setDocsLoading(false);
+    })();
+
     return () => { cancelled = true; };
   }, []);
+
+  // CLE-216 follow-up — precompute the Documents card's derived
+  // display values so the JSX stays readable. Border colour walks
+  // the same severity ladder the light itself uses.
+  const docsRedCount = docsAttention.filter((r) => r.light.colour === "red").length;
+  const docsAmberCount = docsAttention.filter((r) => r.light.colour === "amber").length;
+  const docsBorderColour =
+    docsRedCount > 0 ? "border-red-300"
+    : docsAmberCount > 0 ? "border-amber-300"
+    : "border-green-300";
 
   const sickOpenCount = sickBookings.filter((b) => b.completion_status === "open").length;
   const sickAttentionCount = sickBookings.filter((b) => b.completion_status !== "open").length;
@@ -310,6 +355,28 @@ export function AdminDashboardClient() {
             absenceApprovalsCount > 0 ? (
               <span className="text-sm text-muted-foreground">
                 {absenceApprovalsCount === 1 ? "request" : "requests"} awaiting your decision
+              </span>
+            ) : undefined
+          }
+        />
+
+        {/* ---- Documents attention (CLE-216 follow-up) ---- */}
+        <SummaryCard
+          icon={<FileText className="h-4 w-4 text-amber-500" />}
+          title="Documents"
+          count={docsAttention.length}
+          loading={docsLoading}
+          error={docsError}
+          emptyText="All clear"
+          expanded={docsExpanded}
+          onToggle={() => setDocsExpanded((e) => !e)}
+          borderColour={docsBorderColour}
+          subtitle={
+            docsAttention.length > 0 ? (
+              <span className="text-sm text-muted-foreground">
+                {docsRedCount > 0 && <>{docsRedCount} red</>}
+                {docsRedCount > 0 && docsAmberCount > 0 && " · "}
+                {docsAmberCount > 0 && <>{docsAmberCount} amber</>}
               </span>
             ) : undefined
           }
@@ -458,6 +525,44 @@ export function AdminDashboardClient() {
                     )}
                   </div>
                 </Link>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ---- Expanded: Documents attention (CLE-216 follow-up) ----
+           Rows are pre-sorted server-side: red first (worst-first),
+           then amber, tie-break by name. Click a row → Employment
+           tab, anchored to the Required Documents card. */}
+      {docsExpanded && docsAttention.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-amber-500" />
+              <CardTitle className="text-sm font-medium">
+                Documents
+                <span className="ml-1.5 text-muted-foreground">({docsAttention.length})</span>
+              </CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {docsAttention.map((r) => (
+                <button
+                  key={r.memberId}
+                  type="button"
+                  onClick={() => router.push(`/members/${r.memberId}/employment#required-documents`)}
+                  className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm hover:bg-muted/50 transition-colors text-left"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <DocumentsTrafficLight light={r.light} />
+                    <p className="font-medium truncate">{r.memberName}</p>
+                  </div>
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {trafficLightTooltipText(r.light)}
+                  </span>
+                </button>
               ))}
             </div>
           </CardContent>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { type ColPref, saveGridPrefs } from "@/lib/grid-prefs-actions";
 import { formatOptionForDisplay } from "@/components/custom-field-multiselect";
@@ -133,6 +133,10 @@ export function EmployeesClient({
   // Docs column renders `—` for members whose light isn't in the
   // map yet.
   const [trafficLights, setTrafficLights] = useState<Record<string, TrafficLight>>({});
+  const reloadTrafficLights = useCallback(async () => {
+    const res = await getOrgDocumentsTrafficLights();
+    if (res.success) setTrafficLights(res.lights);
+  }, []);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -740,6 +744,13 @@ export function EmployeesClient({
               return updated;
             })
           );
+          // CLE-216 follow-up — RTW changes ripple into the Docs
+          // column colours. `router.refresh()` re-runs the server
+          // component but doesn't re-trigger client effects, so
+          // pull fresh traffic lights explicitly.
+          if (updates.rtw_required !== undefined) {
+            void reloadTrafficLights();
+          }
           // Background refresh to sync server state
           router.refresh();
         }}

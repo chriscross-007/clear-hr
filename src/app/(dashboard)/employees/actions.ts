@@ -7,6 +7,7 @@ import { headers } from "next/headers";
 import { logAudit, diffChanges } from "@/lib/audit";
 import { sendBookingCancelledEmail } from "@/lib/email";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
+import { setRtwNotRequired } from "@/app/(dashboard)/documents/compliance-actions";
 
 function createAdminClient() {
   return createSupabaseClient(
@@ -790,6 +791,16 @@ export type BulkUpdatePayload = {
    *  `bulkUpdateMembers` returns a per-member error list when any
    *  row's trigger fires. `undefined` = no change. */
   rights_profile_id?: string;
+  /** CLE-216 follow-up — bulk-toggle "Right to Work evidence required"
+   *  in the positive form (matches the per-member Employment toggle).
+   *  `true` = required (rtw_not_required=false, reason cleared);
+   *  `false` = not required (rtw_not_required=true, reason mandatory).
+   *  `undefined` = no change. */
+  rtw_required?: boolean;
+  /** Only meaningful when `rtw_required === false`. Server rejects an
+   *  empty/whitespace reason in that case. Ignored when `rtw_required`
+   *  is true or undefined. */
+  rtw_not_required_reason?: string | null;
 };
 
 export interface BulkUpdateResult {
@@ -798,6 +809,9 @@ export interface BulkUpdateResult {
   /** Per-member failures from the User Rights assignment leg. Empty
    *  when everything succeeded or no rights_profile_id was requested. */
   rightsProfileErrors?: { memberId: string; memberName: string; error: string }[];
+  /** CLE-216 follow-up — Per-member failures from the RTW toggle leg.
+   *  Empty when everything succeeded or no rtw_required was requested. */
+  rtwErrors?: { memberId: string; memberName: string; error: string }[];
 }
 
 export async function bulkUpdateMembers(
@@ -838,11 +852,23 @@ export async function bulkUpdateMembers(
       updates.custom_fields !== undefined ||
       updates.approval_profile_id !== undefined;
     const needsRightsEdit = updates.rights_profile_id !== undefined;
+    // CLE-216 follow-up — RTW toggle lives on the member row and is
+    // gated by employment.update to match the per-member Employment
+    // page. `setRtwNotRequired` re-checks this itself per member, but
+    // fail fast here for the whole batch so the admin gets a single
+    // clear error rather than N identical per-member errors.
+    const needsRtw = updates.rtw_required !== undefined;
     if (needsPersonal && resolved?.rights.tabs.personal?.update !== true) {
       return { success: false, error: "Insufficient permissions" };
     }
     if (needsRightsEdit && !resolved?.rights.canEditRightsProfiles) {
       return { success: false, error: "You don't have permission to edit User Rights" };
+    }
+    if (needsRtw && resolved?.rights.tabs.employment?.update !== true) {
+      return { success: false, error: "You don't have permission to change Right to Work settings" };
+    }
+    if (needsRtw && updates.rtw_required === false && !(updates.rtw_not_required_reason ?? "").trim()) {
+      return { success: false, error: "Please give a reason for opting these members out of Right-to-Work checks." };
     }
 
     // Call the RPC via service role client (bypasses RLS, runs in single transaction)
@@ -962,12 +988,44 @@ export async function bulkUpdateMembers(
       }
     }
 
+    // CLE-216 follow-up — Bulk RTW toggle. Delegates to
+    // `setRtwNotRequired`, which handles per-member audit + traffic-
+    // light-relevant `rtw_not_required_reason` bookkeeping. Loop is
+    // sequential — matches the User Rights leg above and keeps per-
+    // member failures independent (one bad row won't drop the batch).
+    const rtwErrors: { memberId: string; memberName: string; error: string }[] = [];
+    if (updates.rtw_required !== undefined) {
+      const rtwNotRequired = !updates.rtw_required;
+      const reason = rtwNotRequired ? (updates.rtw_not_required_reason ?? "").trim() : null;
+      // Name lookup for per-error messages — cheaper than a per-row round-trip.
+      const { data: nameRows } = await admin
+        .from("members")
+        .select("id, first_name, last_name")
+        .in("id", memberIds)
+        .eq("organisation_id", membership.organisation_id);
+      const nameById = new Map<string, string>();
+      for (const r of ((nameRows ?? []) as Array<{ id: string; first_name: string; last_name: string }>)) {
+        nameById.set(r.id, `${r.first_name} ${r.last_name}`);
+      }
+      for (const id of memberIds) {
+        const res = await setRtwNotRequired(id, { rtwNotRequired, reason });
+        if (!res.success) {
+          rtwErrors.push({
+            memberId: id,
+            memberName: nameById.get(id) ?? id,
+            error: res.error ?? "Failed to update",
+          });
+        }
+      }
+    }
+
     // Audit log
     const changedParts: string[] = [];
     if (updates.team_id) changedParts.push("team");
     if (updates.custom_fields) changedParts.push("custom fields");
     if (updates.approval_profile_id !== undefined) changedParts.push("approver profile");
     if (updates.rights_profile_id !== undefined) changedParts.push("User Rights");
+    if (updates.rtw_required !== undefined) changedParts.push("Right to Work");
 
     logAudit({
       organisationId: membership.organisation_id,
@@ -979,13 +1037,15 @@ export async function bulkUpdateMembers(
       targetLabel: `${memberIds.length} members (${changedParts.join(", ")})`,
     });
 
+    const totalErrors = rightsProfileErrors.length + rtwErrors.length;
     return {
-      success: rightsProfileErrors.length === 0,
+      success: totalErrors === 0,
       error:
-        rightsProfileErrors.length > 0
-          ? `${rightsProfileErrors.length} member${rightsProfileErrors.length === 1 ? "" : "s"} couldn't be updated (see details)`
+        totalErrors > 0
+          ? `${totalErrors} member update${totalErrors === 1 ? "" : "s"} couldn't be applied (see details)`
           : undefined,
       rightsProfileErrors: rightsProfileErrors.length > 0 ? rightsProfileErrors : undefined,
+      rtwErrors: rtwErrors.length > 0 ? rtwErrors : undefined,
     };
   } catch (e) {
     return {

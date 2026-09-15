@@ -10,6 +10,7 @@ import {
 } from "@/components/custom-field-multiselect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Sheet,
   SheetContent,
@@ -72,16 +73,24 @@ export function BulkEditSheet({
   const [selectedTeamId, setSelectedTeamId] = useState(NO_CHANGE);
   const [selectedApprovalProfile, setSelectedApprovalProfile] = useState(NO_CHANGE);
   const [selectedRightsProfile, setSelectedRightsProfile] = useState(NO_CHANGE);
+  // CLE-216 follow-up — "Right to Work evidence required" bulk field.
+  // Uses the positive form (matches the per-member Employment toggle).
+  // "required" → rtw_not_required = false; "not_required" → true, and
+  // a reason is required (mirrors the per-member modal).
+  const [selectedRtw, setSelectedRtw] = useState<string>(NO_CHANGE);
+  const [rtwReason, setRtwReason] = useState<string>("");
   const [customFieldValues, setCustomFieldValues] = useState<Map<string, unknown>>(new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rightsProfileErrors, setRightsProfileErrors] = useState<{ memberId: string; memberName: string; error: string }[] | null>(null);
+  const [rtwErrors, setRtwErrors] = useState<{ memberId: string; memberName: string; error: string }[] | null>(null);
 
   const hasCustomChanges = customFieldValues.size > 0;
   const hasChanges =
     selectedTeamId !== NO_CHANGE ||
     selectedApprovalProfile !== NO_CHANGE ||
     selectedRightsProfile !== NO_CHANGE ||
+    selectedRtw !== NO_CHANGE ||
     hasCustomChanges;
   const canShowApprovalProfile =
     holidayAbsenceTypeId !== null && holidayApprovalProfiles.length > 0;
@@ -99,6 +108,9 @@ export function BulkEditSheet({
   if (selectedRightsProfile !== NO_CHANGE) {
     const found = rightsProfiles.find((p) => p.id === selectedRightsProfile);
     summaryParts.push(`User Rights → ${found?.name ?? "Unknown"}`);
+  }
+  if (selectedRtw !== NO_CHANGE) {
+    summaryParts.push(`RTW evidence required → ${selectedRtw === "required" ? "Yes" : "No"}`);
   }
   for (const [fieldKey, value] of customFieldValues) {
     const def = customFieldDefs.find((d) => d.field_key === fieldKey);
@@ -136,7 +148,10 @@ export function BulkEditSheet({
       setSelectedTeamId(NO_CHANGE);
       setSelectedApprovalProfile(NO_CHANGE);
       setSelectedRightsProfile(NO_CHANGE);
+      setSelectedRtw(NO_CHANGE);
+      setRtwReason("");
       setRightsProfileErrors(null);
+      setRtwErrors(null);
       setCustomFieldValues(new Map());
       setError(null);
     }
@@ -147,6 +162,15 @@ export function BulkEditSheet({
     setLoading(true);
     setError(null);
     try {
+      // Client-side validation for the RTW opt-out reason — the
+      // server enforces it too, but catching it here keeps the sheet
+      // open with the mistake highlighted without a round-trip.
+      if (selectedRtw === "not_required" && !rtwReason.trim()) {
+        setError("Please give a reason for opting these members out of Right-to-Work checks.");
+        setLoading(false);
+        return;
+      }
+
       const updates: BulkUpdatePayload = {};
       if (selectedTeamId !== NO_CHANGE) updates.team_id = selectedTeamId;
       if (selectedApprovalProfile !== NO_CHANGE) {
@@ -154,6 +178,13 @@ export function BulkEditSheet({
       }
       if (selectedRightsProfile !== NO_CHANGE) {
         updates.rights_profile_id = selectedRightsProfile;
+      }
+      if (selectedRtw !== NO_CHANGE) {
+        updates.rtw_required = selectedRtw === "required";
+        // Reason only meaningful when opting a member out (rtw_required=false).
+        updates.rtw_not_required_reason = updates.rtw_required
+          ? null
+          : rtwReason.trim();
       }
 
       if (hasCustomChanges) {
@@ -167,15 +198,17 @@ export function BulkEditSheet({
       const memberIdArray = Array.from(selectedIds);
       const result = await bulkUpdateMembers(memberIdArray, updates);
       setRightsProfileErrors(result.rightsProfileErrors ?? null);
+      setRtwErrors(result.rtwErrors ?? null);
 
       // CLE-201 follow-up — Partial-success handling. When only the
-      // rights_profile leg failed on some rows, the team/custom/
+      // rights_profile / RTW leg failed on some rows, the team/custom/
       // approval writes already went through server-side, so apply
       // the optimistic update for the members that WEREN'T blocked
       // and keep the sheet open showing the per-member errors.
-      const failedIds = new Set(
-        (result.rightsProfileErrors ?? []).map((r) => r.memberId),
-      );
+      const failedIds = new Set([
+        ...(result.rightsProfileErrors ?? []).map((r) => r.memberId),
+        ...(result.rtwErrors ?? []).map((r) => r.memberId),
+      ]);
       const succeededIds = memberIdArray.filter((id) => !failedIds.has(id));
       if (succeededIds.length > 0) {
         onBulkUpdate(succeededIds, updates);
@@ -279,6 +312,42 @@ export function BulkEditSheet({
             </div>
           )}
 
+          {/* CLE-216 follow-up — Right to Work evidence required.
+              Positive form matches the per-member Employment toggle;
+              opting members out requires a reason (same rule as the
+              single-member modal). Reason clears if the admin flips
+              back to "Required". */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium">Right to Work evidence required</label>
+            <Select value={selectedRtw} onValueChange={(v) => {
+              setSelectedRtw(v);
+              if (v !== "not_required") setRtwReason("");
+            }}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_CHANGE}>No change</SelectItem>
+                <SelectItem value="required">Required</SelectItem>
+                <SelectItem value="not_required">Not required</SelectItem>
+              </SelectContent>
+            </Select>
+            {selectedRtw === "not_required" && (
+              <>
+                <Textarea
+                  rows={2}
+                  maxLength={500}
+                  value={rtwReason}
+                  onChange={(e) => setRtwReason(e.target.value)}
+                  placeholder="Reason for opting these members out of RTW checks…"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Required. Recorded in the audit log against each selected {memberLabel.toLowerCase()}.
+                </p>
+              </>
+            )}
+          </div>
+
           {/* Custom fields */}
           {customFieldDefs.length > 0 && (
             <>
@@ -319,6 +388,20 @@ export function BulkEditSheet({
               </div>
               <ul className="list-disc pl-4 space-y-0.5 text-destructive/90">
                 {rightsProfileErrors.map((r) => (
+                  <li key={r.memberId}>
+                    <span className="font-medium">{r.memberName}:</span> {r.error}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {rtwErrors && rtwErrors.length > 0 && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/5 px-3 py-2 text-xs">
+              <div className="font-medium text-destructive mb-1">
+                RTW update skipped {rtwErrors.length} member{rtwErrors.length === 1 ? "" : "s"}:
+              </div>
+              <ul className="list-disc pl-4 space-y-0.5 text-destructive/90">
+                {rtwErrors.map((r) => (
                   <li key={r.memberId}>
                     <span className="font-medium">{r.memberName}:</span> {r.error}
                   </li>
