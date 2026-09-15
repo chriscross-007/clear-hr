@@ -12,8 +12,16 @@
 // spec §7b.16 and compliance-actions.ts / computeTrafficLightsForMembers).
 
 import { FileText } from "lucide-react";
-import type { TrafficLight, TrafficLightCounts } from "@/app/(dashboard)/documents/compliance-actions";
+import type { TrafficLight } from "@/app/(dashboard)/documents/compliance-actions";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+// Pure formatters live outside this "use client" module so server
+// components can import them too. Re-exported here so existing
+// call-sites don't have to move.
+import {
+  trafficLightTooltipText,
+  trafficLightSortRank,
+} from "@/lib/traffic-light-format";
+export { trafficLightTooltipText, trafficLightSortRank };
 
 // Icon fill tints keep the shape identical across states — only
 // the colour changes, so the surface still reads as one thing.
@@ -28,32 +36,6 @@ const COLOUR_LABEL: Record<Exclude<TrafficLight["colour"], null>, string> = {
   amber: "Attention soon",
   green: "All good",
 };
-
-// Only attention-worthy buckets appear in the tooltip. "Verified" and
-// any other clean-state counts are intentionally omitted — the icon
-// colour already signals "all good" and listing the healthy count
-// adds noise to a surface whose job is to flag what needs doing.
-const COUNT_LABELS: Array<[keyof TrafficLightCounts, string, string]> = [
-  ["missing", "missing", "missing"],
-  ["expired", "expired", "expired"],
-  ["pendingVerification", "pending verification", "pending verification"],
-  ["overdueReview", "overdue for review", "overdue for review"],
-  ["expiringSoon", "expiring soon", "expiring soon"],
-  ["reviewDueSoon", "review due soon", "review due soon"],
-];
-
-/** Human-readable list of every non-zero attention-worthy count,
- *  used inside the tooltip on either surface. Healthy counts
- *  (verified etc.) are deliberately excluded. */
-export function trafficLightTooltipText(light: TrafficLight): string {
-  const parts: string[] = [];
-  for (const [key, single, plural] of COUNT_LABELS) {
-    const n = light.counts[key];
-    if (n > 0) parts.push(`${n} ${n === 1 ? single : plural}`);
-  }
-  if (parts.length === 0) return "Nothing needs attention";
-  return parts.join(" · ");
-}
 
 export function DocumentsTrafficLight({
   light,
@@ -104,11 +86,5 @@ export function DocumentsTrafficLight({
   );
 }
 
-/** Numeric rank for sorting — red first, then amber, then green,
- *  then null. Consumed by the Employees Directory column's sort. */
-export function trafficLightSortRank(light: TrafficLight | null | undefined): number {
-  if (!light || !light.colour) return 4;
-  if (light.colour === "red") return 1;
-  if (light.colour === "amber") return 2;
-  return 3; // green
-}
+// `trafficLightSortRank` + `trafficLightTooltipText` are re-exported
+// from the pure formatter module at the top of this file.

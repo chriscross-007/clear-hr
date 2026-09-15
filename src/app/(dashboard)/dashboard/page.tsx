@@ -8,7 +8,10 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar, Clock, Sun, BarChart2, FileText } from "lucide-react";
 import { getMyDocumentsTrafficLight } from "@/app/(dashboard)/documents/compliance-actions";
-import { trafficLightTooltipText } from "@/components/documents/documents-traffic-light";
+// Pure formatter — imported from the standalone module (not the
+// "use client" component) so this server component can call it at
+// render time without hitting a client-boundary reference.
+import { trafficLightTooltipText } from "@/lib/traffic-light-format";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
