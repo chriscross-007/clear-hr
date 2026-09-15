@@ -71,9 +71,12 @@ export function EmployeeSidebar({
     });
   }, [userId, member.id, member.first_name, member.last_name, member.avatar_url, pathname]);
   const allItems: NavItem[] = [
+    // Dashboard first — it's the landing overview for a member and
+    // the natural entry point for admins jumping in from the
+    // Employees Directory.
+    { href: `${base}/dashboard`, label: "Dashboard", icon: LayoutDashboard, tabKey: "dashboard" },
     { href: `${base}/calendar`, label: "Planner", icon: Calendar, tabKey: "planner" },
     { href: `${base}/timesheet`, label: "Timesheet", icon: Clock, tabKey: "timesheet" },
-    { href: `${base}/dashboard`, label: "Dashboard", icon: LayoutDashboard, tabKey: "dashboard" },
     { href: `${base}/holiday`, label: "Holiday Periods", icon: Palmtree, tabKey: "holiday" },
     { href: `${base}/employment`, label: "Employment", icon: Briefcase, tabKey: "employment" },
     { href: `${base}/personal`, label: "Personal", icon: User, tabKey: "personal" },
