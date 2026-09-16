@@ -63,7 +63,7 @@ async function callerName(callerMemberId: string): Promise<string> {
 
 const SELECT_COLUMNS =
   "id, type, name, sort_order, employee_can_upload, retention_class, " +
-  "expiry_required, default_expiry_months, requires_verification, " +
+  "expiry_required, requires_verification, " +
   "review_period_months, trackable_per_member, " +
   "requires_signature";
 
@@ -75,7 +75,6 @@ interface DbRow {
   employee_can_upload: boolean;
   retention_class: RetentionClass;
   expiry_required: boolean;
-  default_expiry_months: number | null;
   requires_verification: boolean;
   review_period_months: number | null;
   trackable_per_member: boolean;
@@ -91,7 +90,6 @@ function rowToDto(row: DbRow): DocumentSubtypeDto {
     employeeCanUpload: row.employee_can_upload,
     retentionClass: row.retention_class,
     expiryRequired: row.expiry_required,
-    defaultExpiryMonths: row.default_expiry_months,
     requiresVerification: row.requires_verification,
     reviewPeriodMonths: row.review_period_months,
     trackablePerMember: row.trackable_per_member,
@@ -106,7 +104,6 @@ function payloadToRow(p: DocumentSubtypeWritePayload): Record<string, unknown> {
     employee_can_upload: p.employeeCanUpload,
     retention_class: p.retentionClass,
     expiry_required: p.expiryRequired,
-    default_expiry_months: p.defaultExpiryMonths,
     requires_verification: p.requiresVerification,
     review_period_months: p.reviewPeriodMonths,
     trackable_per_member: p.trackablePerMember,
@@ -220,7 +217,6 @@ export async function updateDocumentSubtype(
       employee_can_upload: b.employee_can_upload,
       retention_class: b.retention_class,
       expiry_required: b.expiry_required,
-      default_expiry_months: b.default_expiry_months,
       requires_verification: b.requires_verification,
       review_period_months: b.review_period_months,
       trackable_per_member: b.trackable_per_member,

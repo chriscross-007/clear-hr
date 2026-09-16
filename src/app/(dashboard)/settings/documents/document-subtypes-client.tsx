@@ -78,7 +78,6 @@ function emptyPayload(type: DocumentType): DocumentSubtypeWritePayload {
     employeeCanUpload: false,
     retentionClass: "other",
     expiryRequired: false,
-    defaultExpiryMonths: null,
     requiresVerification: false,
     reviewPeriodMonths: null,
     trackablePerMember: false,
@@ -93,7 +92,6 @@ function dtoToPayload(dto: DocumentSubtypeDto): DocumentSubtypeWritePayload {
     employeeCanUpload: dto.employeeCanUpload,
     retentionClass: dto.retentionClass,
     expiryRequired: dto.expiryRequired,
-    defaultExpiryMonths: dto.defaultExpiryMonths,
     requiresVerification: dto.requiresVerification,
     reviewPeriodMonths: dto.reviewPeriodMonths,
     trackablePerMember: dto.trackablePerMember,
@@ -369,7 +367,7 @@ function SubtypeEditorDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+        <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-4">
           {error && (
             <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
               {error}
@@ -407,7 +405,11 @@ function SubtypeEditorDialog({
             </div>
           )}
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {/* Single-column stack (was 2-col on ≥sm). Chris's read: a
+              vertical scan of the flag list is faster than sweeping
+              across a grid, and the wider row lets the description
+              text breathe rather than wrapping tight. */}
+          <div className="flex flex-col gap-3">
             {/* Personal-scope-only flags — hidden entirely for org docs. */}
             {!isOrgScope && (
               <>
@@ -450,23 +452,10 @@ function SubtypeEditorDialog({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>Default expiry (months)</Label>
-              <Input
-                type="number"
-                min={0}
-                value={payload.defaultExpiryMonths ?? ""}
-                onChange={(e) => update(
-                  "defaultExpiryMonths",
-                  e.target.value === "" ? null : Number(e.target.value),
-                )}
-                placeholder="e.g. 24"
-              />
-            </div>
-            {/* Review cadence is a per-member concept (DBS every 3 yrs
-                etc.). Meaningless for org docs. */}
-            {!isOrgScope && (
+          {/* Review cadence is a per-member concept (DBS every 3 yrs
+              etc.). Meaningless for org docs. */}
+          {!isOrgScope && (
+            <div className="flex flex-col gap-3">
               <div className="space-y-2">
                 <Label>Review cadence (months)</Label>
                 <Input
@@ -480,8 +469,8 @@ function SubtypeEditorDialog({
                   placeholder="e.g. 36 for DBS"
                 />
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         <DialogFooter>

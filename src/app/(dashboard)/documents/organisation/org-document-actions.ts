@@ -466,7 +466,6 @@ export async function getOrgUploadSubtypes(): Promise<{
     name: string;
     retentionClass: string;
     expiryRequired: boolean;
-    defaultExpiryMonths: number | null;
   }>;
 }> {
   try {
@@ -475,7 +474,7 @@ export async function getOrgUploadSubtypes(): Promise<{
     const admin = getAdmin();
     const { data, error } = await admin
       .from("document_subtype")
-      .select("id, type, name, retention_class, expiry_required, default_expiry_months, sort_order")
+      .select("id, type, name, retention_class, expiry_required, sort_order")
       .eq("organisation_id", c.organisationId)
       .in("type", Array.from(ORG_TYPES))
       .order("type", { ascending: true })
@@ -490,7 +489,6 @@ export async function getOrgUploadSubtypes(): Promise<{
         name: r.name as string,
         retentionClass: r.retention_class as string,
         expiryRequired: r.expiry_required as boolean,
-        defaultExpiryMonths: r.default_expiry_months as number | null,
       })),
     };
   } catch (e) {

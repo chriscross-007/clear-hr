@@ -58,7 +58,6 @@ export interface DocumentSubtypeDto {
   employeeCanUpload: boolean;
   retentionClass: RetentionClass;
   expiryRequired: boolean;
-  defaultExpiryMonths: number | null;
   requiresVerification: boolean;
   reviewPeriodMonths: number | null;
   trackablePerMember: boolean;
@@ -71,7 +70,6 @@ export interface DocumentSubtypeWritePayload {
   employeeCanUpload: boolean;
   retentionClass: RetentionClass;
   expiryRequired: boolean;
-  defaultExpiryMonths: number | null;
   requiresVerification: boolean;
   reviewPeriodMonths: number | null;
   trackablePerMember: boolean;

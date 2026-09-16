@@ -20,7 +20,7 @@ export async function GET(request: Request) {
 
     const { data, error } = await admin
       .from("document_subtype")
-      .select("id, type, name, sort_order, expiry_required, default_expiry_months")
+      .select("id, type, name, sort_order, expiry_required")
       .eq("organisation_id", organisationId)
       .neq("type", "organisation_document")
       .order("type", { ascending: true })
@@ -34,7 +34,6 @@ export async function GET(request: Request) {
       name: s.name as string,
       sortOrder: (s.sort_order as number) ?? 0,
       expiryRequired: s.expiry_required === true,
-      defaultExpiryMonths: (s.default_expiry_months as number | null) ?? null,
     }));
 
     return NextResponse.json({ success: true, subtypes });

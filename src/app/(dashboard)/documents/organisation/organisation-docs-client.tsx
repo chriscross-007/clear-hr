@@ -255,14 +255,6 @@ function UploadDialog({ onClose, onUploaded }: { onClose: () => void; onUploaded
   const current = useMemo(() => subtypes.find((s) => s.id === subtypeId) ?? null, [subtypes, subtypeId]);
   const expiryRequired = current?.expiryRequired ?? false;
 
-  useEffect(() => {
-    if (current?.defaultExpiryMonths && !expiresOn) {
-      const d = new Date();
-      d.setUTCMonth(d.getUTCMonth() + current.defaultExpiryMonths);
-      setExpiresOn(d.toISOString().slice(0, 10));
-    }
-  }, [current?.defaultExpiryMonths]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const grouped = subtypes.reduce<Record<string, typeof subtypes>>((acc, s) => {
     (acc[s.type] ??= []).push(s);
     return acc;

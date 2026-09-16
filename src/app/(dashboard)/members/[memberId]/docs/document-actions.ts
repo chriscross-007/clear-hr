@@ -796,24 +796,16 @@ export async function uploadMemberDocument(
     const { data: subtype } = await admin
       .from("document_subtype")
       .select(
-        "id, type, name, retention_class, expiry_required, default_expiry_months, employee_can_upload",
+        "id, type, name, retention_class, expiry_required, employee_can_upload",
       )
       .eq("id", subtypeId)
       .eq("organisation_id", caller.organisationId)
       .single();
     if (!subtype) return { success: false, error: "That document type is not available." };
     // CLE-214 — expiry is set post-upload via the Expiry pencil in
-    // the details dialog. If the subtype flags expiry as required and
-    // the caller didn't supply one, auto-derive from
-    // `default_expiry_months` when available, otherwise let the row
-    // land with expires_on = null and rely on the pencil + compliance
-    // dashboard to surface the missing date.
-    let effectiveExpiresOn = expiresOn;
-    if (subtype.expiry_required && !effectiveExpiresOn && subtype.default_expiry_months) {
-      const d = new Date();
-      d.setUTCMonth(d.getUTCMonth() + Number(subtype.default_expiry_months));
-      effectiveExpiresOn = d.toISOString().slice(0, 10);
-    }
+    // the details dialog. If the caller didn't supply one, the row
+    // lands with expires_on = null and the pencil + compliance
+    // dashboard surface the missing date.
     // Past-expiry check removed to allow the retention/status sweeps
     // to be exercised end-to-end during testing.
     // Self-upload check — only enforced for callers whose scope is
@@ -855,7 +847,7 @@ export async function uploadMemberDocument(
         content_type: file.type,
         type: subtype.type,
         subtype_id: subtype.id,
-        expires_on: effectiveExpiresOn,
+        expires_on: expiresOn,
         retention_class: subtype.retention_class,
         uploaded_by: caller.memberId,
       })
@@ -1612,7 +1604,6 @@ export async function getSubtypesForUpload(
     name: string;
     retentionClass: string;
     expiryRequired: boolean;
-    defaultExpiryMonths: number | null;
     employeeCanUpload: boolean;
   }>;
 }> {
@@ -1629,7 +1620,7 @@ export async function getSubtypesForUpload(
     const { data, error } = await admin
       .from("document_subtype")
       .select(
-        "id, type, name, retention_class, expiry_required, default_expiry_months, employee_can_upload, sort_order",
+        "id, type, name, retention_class, expiry_required, employee_can_upload, sort_order",
       )
       .eq("organisation_id", caller.organisationId)
       .order("type", { ascending: true })
@@ -1643,7 +1634,6 @@ export async function getSubtypesForUpload(
       name: string;
       retention_class: string;
       expiry_required: boolean;
-      default_expiry_months: number | null;
       employee_can_upload: boolean;
     }>;
     // Org-scope subtypes have their own upload surface at
@@ -1665,7 +1655,6 @@ export async function getSubtypesForUpload(
         name: r.name,
         retentionClass: r.retention_class,
         expiryRequired: r.expiry_required,
-        defaultExpiryMonths: r.default_expiry_months,
         employeeCanUpload: r.employee_can_upload,
       })),
     };

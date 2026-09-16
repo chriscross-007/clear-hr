@@ -57,7 +57,6 @@ interface UploadSubtype {
   name: string;
   retentionClass: string;
   expiryRequired: boolean;
-  defaultExpiryMonths: number | null;
   employeeCanUpload: boolean;
 }
 
@@ -115,7 +114,6 @@ export function NewMemberDocumentDialog({
           name: s.name,
           retentionClass: "right_to_work",
           expiryRequired: false,
-          defaultExpiryMonths: null,
           employeeCanUpload: false,
         })));
         return;
