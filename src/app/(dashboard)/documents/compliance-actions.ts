@@ -501,10 +501,19 @@ function colourFromCounts(c: TrafficLightCounts): TrafficLight["colour"] {
     c.missing + c.expired + c.pendingVerification +
     c.expiringSoon + c.reviewDueSoon + c.overdueReview + c.verified;
   if (total === 0) return null;
-  // Red — missing / expired / unverified. See spec §7b.16.
-  if (c.missing > 0 || c.expired > 0 || c.pendingVerification > 0) return "red";
-  // Amber — attention within the current cycle.
-  if (c.expiringSoon > 0 || c.reviewDueSoon > 0 || c.overdueReview > 0) return "amber";
+  // Red — missing / expired / unverified / overdue for review. All
+  // four are compliance failures: something isn't there, has run
+  // out, hasn't been sighted, or hasn't been re-sighted on the
+  // required cadence. See spec §7b.16.
+  if (
+    c.missing > 0 ||
+    c.expired > 0 ||
+    c.pendingVerification > 0 ||
+    c.overdueReview > 0
+  ) return "red";
+  // Amber — attention within the current cycle, but nothing has
+  // actually failed yet.
+  if (c.expiringSoon > 0 || c.reviewDueSoon > 0) return "amber";
   return "green";
 }
 
