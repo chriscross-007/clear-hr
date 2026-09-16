@@ -93,7 +93,16 @@ export function HeaderUserMenu({
         return;
       }
       const dest = result.redirectTo ?? pathname ?? "/dashboard";
-      router.push(dest);
+      // CLE-218 follow-up — append a flash-notice message so the
+      // <FlashNotice> in the layout picks it up on the destination
+      // page. Preserves any existing query string.
+      const message =
+        target === "self"
+          ? "Now viewing as Employee — you'll only see your own data"
+          : "Back in Admin View — full access restored";
+      const sep = dest.includes("?") ? "&" : "?";
+      const destWithFlash = `${dest}${sep}flash=${encodeURIComponent(message)}&flashTone=info`;
+      router.push(destWithFlash);
       router.refresh();
     });
   }

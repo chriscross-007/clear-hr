@@ -276,7 +276,7 @@ export function MyHolidayClient({
       <Tabs defaultValue="calendar" className="w-full mb-6">
         <StickyPageHeader>
           <div className="flex items-center justify-between gap-4 mb-3">
-            <h1 className="text-2xl font-bold">My Absences</h1>
+            <h1 className="text-2xl font-bold">Planner</h1>
           </div>
           <TabsList>
             <TabsTrigger value="calendar">Calendar</TabsTrigger>

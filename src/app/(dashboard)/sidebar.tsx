@@ -150,7 +150,14 @@ export function Sidebar({
           height: "calc(100vh - var(--top-chrome-extra, 0px) - 4rem)",
         }}
       >
-        {recentVisible.length > 0 && (
+        {/* Recent employees — a shortcut list of members the caller
+            recently visited. Only makes sense for callers who can
+            see other members (`showEmployees` gate). Hidden entirely
+            for self-scope callers, including admins who've toggled
+            into Employee view (CLE-218) — otherwise the sidebar
+            leaks other members' names in a view that's meant to be
+            self-only. */}
+        {showEmployees && recentVisible.length > 0 && (
           <div className="border-b border-gray-200 px-2 pb-3 pt-4">
             <p className="mb-1 px-3 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
               Recent
@@ -200,18 +207,25 @@ export function Sidebar({
             <LayoutDashboard className="h-4 w-4 shrink-0" />
             Dashboard
           </Link>
-          {/* CLE-216 follow-up — "My Documents" lands the caller on
-              their own required-docs card regardless of shell. Visible
-              to everyone; the underlying resolver RLS-scopes reads to
-              the caller's own docs even for admins. */}
-          <Link href="/my-documents" className={linkClass("/my-documents")}>
-            <FileText className="h-4 w-4 shrink-0" />
-            My Documents
-          </Link>
-          <Link href="/holiday" className={linkClass("/holiday")}>
-            <Palmtree className="h-4 w-4 shrink-0" />
-            My Absences
-          </Link>
+          {/* "My Documents" + "Planner" are self-scope surfaces —
+              only shown when the caller's effective view is
+              self-only. Real employees see them by default; admins
+              only see them after toggling into Employee view (which
+              flips `crossUserAccess` to "self"). Admins in normal
+              admin view manage docs / absences via the per-member
+              Employment tab and Employees Directory instead. */}
+          {!showEmployees && (
+            <>
+              <Link href="/my-documents" className={linkClass("/my-documents")}>
+                <FileText className="h-4 w-4 shrink-0" />
+                My Documents
+              </Link>
+              <Link href="/holiday" className={linkClass("/holiday")}>
+                <Palmtree className="h-4 w-4 shrink-0" />
+                Planner
+              </Link>
+            </>
+          )}
           {showEmployees && (
             <Link
               href="/employees"

@@ -104,7 +104,7 @@ export function MyDocumentsCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">My documents</CardTitle>
+        <CardTitle className="text-base">My required documents</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {error && (

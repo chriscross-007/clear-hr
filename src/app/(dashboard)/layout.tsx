@@ -8,6 +8,7 @@ import { hasPlanFeature } from "@/lib/plan-config";
 import { getEffectiveRightsForUser, getRightsEditorCount } from "@/lib/rights-resolver";
 import { HeaderUserMenu } from "./header-user-menu";
 import { Sidebar } from "./sidebar";
+import { FlashNotice } from "@/components/ui/flash-notice";
 
 // CLE-196b-1 — Dashboard shell rewired onto the Rights Profiles v2
 // resolver. `members.role` / `members.permissions` reads are gone;
@@ -260,6 +261,10 @@ export default async function DashboardLayout({
           <main className="min-w-0 flex-1">{children}</main>
         </div>
       </div>
+      {/* CLE-218 follow-up — Zero-dep flash notice; reads ?flash=…
+          from the URL, shows for 4s, clears the params. Used by the
+          view-mode toggle (and any other one-shot message). */}
+      <FlashNotice />
     </MemberLabelProvider>
   );
 }
