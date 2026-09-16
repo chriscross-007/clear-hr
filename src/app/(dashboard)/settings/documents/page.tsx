@@ -26,7 +26,7 @@ export default async function DocumentsSettingsPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
       <div>
-        <h1 className="text-2xl font-bold">Documents — Subtypes</h1>
+        <h1 className="text-2xl font-bold">Document Definitions</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
           Configure the subtypes that classify each document (contract, evidence,
           absence attachment, etc.) and the rules that govern them — who can upload,

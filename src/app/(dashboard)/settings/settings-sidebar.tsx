@@ -96,7 +96,7 @@ export function SettingsSidebar({
       // moved to the main sidebar (/documents/organisation) per
       // CLE-209 follow-up.
       href: "/settings/documents",
-      label: "Document Subtypes",
+      label: "Documents",
       icon: FileText,
       visible: canEditOrgSettings,
     },
