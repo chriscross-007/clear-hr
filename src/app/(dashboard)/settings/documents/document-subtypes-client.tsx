@@ -54,7 +54,7 @@ import {
 const TYPE_LABEL: Record<DocumentType, string> = {
   contract: "Contracts",
   certificate: "Certificates",
-  evidence: "Evidence (Right-to-Work, DBS, etc.)",
+  evidence: "Right-to-Work Evidence",
   attachment: "Absence attachments",
   organisation_document: "Organisation documents",
 };
