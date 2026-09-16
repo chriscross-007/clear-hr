@@ -45,7 +45,6 @@ export default async function EmploymentPage({
   const canEditDocuments = resolveTab(rights, "documents").update;
   const canSeeCurrency = rights.canViewSensitiveFields;
   const canEditSensitiveFields = rights.canEditSensitiveFields;
-  const canAddMembers = rights.canDeleteUsers; // delete-user right gates the delete button
   const currencySymbol = (caller.organisations as unknown as { currency_symbol: string } | null)?.currency_symbol ?? "£";
 
   // Target member
@@ -127,7 +126,6 @@ export default async function EmploymentPage({
           current_profile_id: currentProfileId,
         }}
         canEdit={canEdit}
-        canDelete={canAddMembers}
         teams={(teams ?? []) as { id: string; name: string }[]}
         customFieldDefs={visibleDefs}
         currencySymbol={currencySymbol}

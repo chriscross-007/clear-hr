@@ -14,7 +14,6 @@ import {
   updateEmployee,
   sendInvite,
   uploadMemberAvatar,
-  deleteEmployee,
 } from "@/app/(dashboard)/employees/actions";
 import { updateMemberTeam } from "@/app/(dashboard)/employees/team-actions";
 import { saveCustomFieldValues } from "@/app/(dashboard)/employees/custom-field-actions";
@@ -36,17 +35,6 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import {
   Tabs,
   TabsContent,
@@ -80,7 +68,6 @@ type Member = {
 interface EmploymentFormProps {
   member: Member;
   canEdit: boolean;
-  canDelete: boolean;
   teams: { id: string; name: string }[];
   // CLE-201a — legacy Admin/Employee Profile pickers removed. Props
   // kept for backwards compat but ignored; safe to delete once every
@@ -112,7 +99,6 @@ interface EmploymentFormProps {
 export function EmploymentForm({
   member,
   canEdit,
-  canDelete,
   teams,
   customFieldDefs,
   currencySymbol,
@@ -142,7 +128,6 @@ export function EmploymentForm({
 
   const [loading, setLoading] = useState(false);
   const [inviting, setInviting] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
@@ -303,17 +288,6 @@ export function EmploymentForm({
     }
     setAvatarUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
-  }
-
-  async function handleDelete() {
-    setDeleting(true);
-    const res = await deleteEmployee(member.member_id);
-    setDeleting(false);
-    if (!res.success) {
-      setError(res.error ?? "Failed to delete");
-      return;
-    }
-    router.push("/employees");
   }
 
   const initials = [firstName, lastName]
@@ -647,38 +621,15 @@ export function EmploymentForm({
         </Button>
       </div>
 
-      {/* Danger zone */}
-      {canDelete && (
-        <Card className="border-destructive/50">
-          <CardHeader>
-            <CardTitle className="text-destructive">Danger zone</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button type="button" variant="destructive" disabled={deleting}>
-                  Delete {capitalize(memberLabel)}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete {firstName} {lastName}?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This will remove this {memberLabel} from the organisation
-                    {member.user_id ? " and delete their user account" : ""}. This action cannot be undone.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleDelete} disabled={deleting}>
-                    {deleting ? "Deleting..." : "Delete"}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </CardContent>
-        </Card>
-      )}
+      {/* Danger zone removed — direct Member deletion is no longer a
+          supported operation from the Employment page. The
+          [[Member Lifecycle & Off-Boarding]] spec (Employee Records
+          → Member Lifecycle) replaces it with an off-boarding
+          workflow that transitions the Member to Left with a
+          recorded end-date and side-effect cascade (auth disabled,
+          approvals re-routed, retention clocks started). The
+          off-board button lands in a future ticket. Right-to-erasure
+          (Article 17) remains an out-of-band support process. */}
     </form>
   );
 }
