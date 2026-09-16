@@ -83,7 +83,11 @@ export default async function DashboardPage() {
     docsTextClass = "text-muted-foreground";
     docsIconClass = "text-muted-foreground";
   }
-  const docsHref = docsColour && docsMemberId ? `/members/${docsMemberId}/docs` : null;
+  // Click-through lands on `/my-documents` (the self-scope Required
+  // Documents surface with the caller-appropriate affordances). The
+  // per-member `/members/{id}/docs` page is admin-oriented and not
+  // the right destination from a self dashboard.
+  const docsHref = docsColour && docsMemberId ? "/my-documents" : null;
 
   // The card itself is the same markup either way — wrapping in a
   // Link (or not) is a single conditional at the outermost level.
