@@ -256,7 +256,19 @@ export function RequiredDocumentsCard({
                       // cell lists every non-expired qualifying doc
                       // as a clickable chip.
                       if (r.isRtwAggregate) {
-                        const canAddRtw = canEdit;
+                        // The aggregate row ONLY exists as the
+                        // zero-doc placeholder — once any RTW doc is
+                        // uploaded, `getMemberRequiredDocumentRows`
+                        // swaps it out for individual `isRtwEvidence`
+                        // rows. So this branch is always the "no
+                        // qualifying doc yet" state, and the whole row
+                        // is clickable (when canEdit) to open the RTW
+                        // subtype picker — matching the click
+                        // affordance of every other not-uploaded row
+                        // on this card. Adding a subsequent RTW doc
+                        // once one exists uses the "+ Add RTW
+                        // evidence" button below the table.
+                        const rowClickOpensPicker = canEdit;
                         // Earliest expiry across the qualifying docs
                         // — the one that'll next trigger an alarm.
                         // Skip docs with no expiry set. Undefined
@@ -270,7 +282,11 @@ export function RequiredDocumentsCard({
                           return withDates[0];
                         })();
                         return (
-                          <tr key="rtw-aggregate" className="border-b last:border-b-0">
+                          <tr
+                            key="rtw-aggregate"
+                            className={`border-b last:border-b-0 ${rowClickOpensPicker ? "cursor-pointer hover:bg-muted/40" : ""}`}
+                            onClick={rowClickOpensPicker ? () => setRtwAdding(true) : undefined}
+                          >
                             <td className="px-3 py-2">
                               <p className="font-medium">Right to Work evidence</p>
                               {r.rtwDocs && r.rtwDocs.length > 0 ? (
@@ -315,20 +331,14 @@ export function RequiredDocumentsCard({
                             </td>
                             <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">—</td>
                             {canEdit && (
-                              <td className="px-2 py-2 text-right">
-                                {canAddRtw && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setRtwAdding(true)}
-                                    disabled={pending}
-                                    className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-                                    aria-label="Add RTW evidence"
-                                    title="Add RTW evidence"
-                                  >
-                                    <Plus className="h-3.5 w-3.5" />
-                                  </button>
-                                )}
-                              </td>
+                              // Empty actions cell preserves column
+                              // alignment with the other rows. The
+                              // whole aggregate row is clickable (see
+                              // above); the "add another" affordance
+                              // once ≥1 RTW doc exists lives in the
+                              // "+ Add RTW evidence" button below the
+                              // table, not in-row.
+                              <td className="px-2 py-2 text-right" />
                             )}
                           </tr>
                         );
