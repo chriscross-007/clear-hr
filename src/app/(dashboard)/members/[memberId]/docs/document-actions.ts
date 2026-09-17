@@ -42,6 +42,10 @@ type CallerCtx = {
   canUpdateTarget: (target: { memberId: string; teamId: string | null }) => boolean;
   canManageDeleted: boolean;
   canForceDelete: boolean;
+  /** CLE-219 — Org-doc view flag. Some read paths (getDocumentDetail,
+   *  getMemberDocumentSignedUrl) accept both member and org-scope
+   *  docs; org-scope docs check this instead of `canViewTarget`. */
+  canViewOrgDocs: boolean;
 };
 
 async function resolveCaller(): Promise<CallerCtx | null> {
@@ -80,6 +84,7 @@ async function resolveCaller(): Promise<CallerCtx | null> {
     // downstream trash actions still cross-check per target member.
     canManageDeleted: rights.tabs.documents?.update === true,
     canForceDelete: rights.canForceDeleteDocuments,
+    canViewOrgDocs: rights.canViewOrganisationDocuments,
   };
 }
 
@@ -254,12 +259,39 @@ export async function getDocumentDetail(
       )
       .eq("id", documentId)
       .single();
-    if (!doc || doc.organisation_id !== caller.organisationId || doc.owner_scope !== "member" || !doc.owner_id) {
+    if (!doc || doc.organisation_id !== caller.organisationId) {
       return { success: false, error: "Document not found" };
     }
-    const target = await getTarget(admin, doc.owner_id as string, caller.organisationId);
-    if (!target) return { success: false, error: "Document not found" };
-    if (!caller.canViewTarget({ memberId: target.id, teamId: target.team_id })) {
+    // CLE-219 — Both member-scope and org-scope docs are supported.
+    // For member-scope the caller must be able to view the owning
+    // member (existing rule). For org-scope any caller with
+    // documents.view AND canViewOrganisationDocuments qualifies —
+    // that's the same rule as the org-docs list surface.
+    let target: { id: string; team_id: string | null; first_name: string; last_name: string } | null = null;
+    if (doc.owner_scope === "member") {
+      if (!doc.owner_id) return { success: false, error: "Document not found" };
+      target = await getTarget(admin, doc.owner_id as string, caller.organisationId);
+      if (!target) return { success: false, error: "Document not found" };
+      if (!caller.canViewTarget({ memberId: target.id, teamId: target.team_id })) {
+        return { success: false, error: "Document not found" };
+      }
+    } else if (doc.owner_scope === "organisation") {
+      if (!caller.canViewOrgDocs) {
+        return { success: false, error: "Document not found" };
+      }
+      // Org docs have no target member; synthesise one from the
+      // caller so the downstream DTO shape stays consistent. The
+      // dialog uses targetMemberId only for member-docs-changed
+      // event dispatch, which is a no-op for org docs (nobody's
+      // sidebar avatar listens for org-doc events keyed on the
+      // caller's own id).
+      target = {
+        id: caller.memberId,
+        team_id: null,
+        first_name: "Organisation",
+        last_name: "",
+      };
+    } else {
       return { success: false, error: "Document not found" };
     }
 
@@ -705,7 +737,7 @@ export async function getMemberDocumentSignedUrl(
       .select("id, organisation_id, owner_scope, owner_id, storage_path, file_name, content_type, disposal_date, type, document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
-    if (!doc || doc.organisation_id !== caller.organisationId || doc.owner_scope !== "member") {
+    if (!doc || doc.organisation_id !== caller.organisationId) {
       return { success: false, error: "Document not found" };
     }
     // Disposal date check.
@@ -714,14 +746,28 @@ export async function getMemberDocumentSignedUrl(
       return { success: false, error: "Document not found" };
     }
 
-    const target = await getTarget(admin, doc.owner_id as string, caller.organisationId);
-    if (!target) return { success: false, error: "Document not found" };
-    if (!caller.canViewTarget({ memberId: target.id, teamId: target.team_id })) {
+    // CLE-219 — Accept both member and org-scope docs. Permission
+    // check branches on scope.
+    if (doc.owner_scope === "member") {
+      if (!doc.owner_id) return { success: false, error: "Document not found" };
+      const target = await getTarget(admin, doc.owner_id as string, caller.organisationId);
+      if (!target) return { success: false, error: "Document not found" };
+      if (!caller.canViewTarget({ memberId: target.id, teamId: target.team_id })) {
+        return { success: false, error: "Document not found" };
+      }
+    } else if (doc.owner_scope === "organisation") {
+      if (!caller.canViewOrgDocs) {
+        return { success: false, error: "Document not found" };
+      }
+    } else {
       return { success: false, error: "Document not found" };
     }
 
+    // CLE-219 — bucket depends on scope: member docs live in
+    // `member-documents`, org docs in `org-documents`.
+    const bucket = doc.owner_scope === "organisation" ? "org-documents" : STORAGE_BUCKET;
     const { data: signed, error } = await admin.storage
-      .from(STORAGE_BUCKET)
+      .from(bucket)
       .createSignedUrl(
         doc.storage_path,
         120,

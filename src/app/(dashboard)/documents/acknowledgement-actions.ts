@@ -109,9 +109,13 @@ async function callerName(admin: ReturnType<typeof getAdmin>, callerMemberId: st
 async function computeDocumentVersionHash(
   admin: ReturnType<typeof getAdmin>,
   storagePath: string,
+  ownerScope: "member" | "organisation",
 ): Promise<string | null> {
   try {
-    const { data, error } = await admin.storage.from(STORAGE_BUCKET).download(storagePath);
+    // CLE-219 — bucket routes by scope. Member docs → member-documents,
+    // org docs → org-documents.
+    const bucket = ownerScope === "organisation" ? "org-documents" : STORAGE_BUCKET;
+    const { data, error } = await admin.storage.from(bucket).download(storagePath);
     if (error || !data) return null;
     const buf = Buffer.from(await data.arrayBuffer());
     return createHash("sha256").update(buf).digest("hex");
@@ -256,7 +260,7 @@ export async function acknowledgeDocument(
 
     // Compute the version hash. Non-fatal on failure — null is
     // deliberately in the schema for exactly this case.
-    const hash = await computeDocumentVersionHash(admin, doc.storage_path as string);
+    const hash = await computeDocumentVersionHash(admin, doc.storage_path as string, ownerScope);
     const ip = await readClientIp();
     const userAgent = await readUserAgent();
 
