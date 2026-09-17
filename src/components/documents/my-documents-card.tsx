@@ -269,14 +269,19 @@ export function MyDocumentsCard({
       </CardContent>
 
       {detailsDocId && (
-        // Employee-view mode: `readOnly` strips pencils + composer,
-        // `hideActivity` drops the Activity section entirely. Download
-        // + Verify context stay visible; Replace is auto-off because
-        // `readOnly` sets `effectiveCanUpdate = false`.
+        // Employee-view mode: `canUpdate=false` strips the pencils
+        // (via `effectiveCanUpdate = canUpdate && !readOnly` inside
+        // the dialog), `hideActivity` drops the Activity feed. We
+        // deliberately do NOT pass `readOnly` any more — that flag is
+        // reserved for the Trash-list view, and setting it here would
+        // (a) fire the misleading "In Trash" pill and (b) suppress the
+        // Acknowledgement section, blocking the employee's only way to
+        // click "I have read and understood this document" (CLE-219).
+        // Download + preview + Acknowledge stay visible; Replace is
+        // off because `effectiveCanUpdate` is already false.
         <DocumentDetailsDialog
           documentId={detailsDocId}
           canUpdate={false}
-          readOnly
           hideActivity
           onClose={() => setDetailsDocId(null)}
           onSaved={load}
