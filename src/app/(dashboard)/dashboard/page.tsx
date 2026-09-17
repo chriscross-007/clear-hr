@@ -102,7 +102,7 @@ export default async function DashboardPage() {
   // Documents. Failure is soft — if the fetch errors we just drop the
   // chip rather than blocking the whole dashboard.
   const acksRes = await getMyOutstandingAcknowledgements();
-  const outstandingAcks = acksRes.success ? acksRes.acknowledgements : [];
+  const outstandingAcks = acksRes.success ? acksRes.rows : [];
   const outstandingAckCount = outstandingAcks.length;
   const hasMemberAck = outstandingAcks.some((a) => a.ownerScope === "member");
   const ackTab = hasMemberAck ? "my" : "org";
