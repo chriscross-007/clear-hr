@@ -65,7 +65,7 @@ const SELECT_COLUMNS =
   "id, type, name, sort_order, employee_can_upload, retention_class, " +
   "expiry_required, requires_verification, " +
   "review_period_months, trackable_per_member, " +
-  "requires_signature";
+  "requires_acknowledgement";
 
 interface DbRow {
   id: string;
@@ -78,7 +78,7 @@ interface DbRow {
   requires_verification: boolean;
   review_period_months: number | null;
   trackable_per_member: boolean;
-  requires_signature: boolean;
+  requires_acknowledgement: boolean;
 }
 
 function rowToDto(row: DbRow): DocumentSubtypeDto {
@@ -93,7 +93,7 @@ function rowToDto(row: DbRow): DocumentSubtypeDto {
     requiresVerification: row.requires_verification,
     reviewPeriodMonths: row.review_period_months,
     trackablePerMember: row.trackable_per_member,
-    requiresSignature: row.requires_signature,
+    requiresAcknowledgement: row.requires_acknowledgement,
   };
 }
 
@@ -107,7 +107,7 @@ function payloadToRow(p: DocumentSubtypeWritePayload): Record<string, unknown> {
     requires_verification: p.requiresVerification,
     review_period_months: p.reviewPeriodMonths,
     trackable_per_member: p.trackablePerMember,
-    requires_signature: p.requiresSignature,
+    requires_acknowledgement: p.requiresAcknowledgement,
   };
 }
 
@@ -220,7 +220,7 @@ export async function updateDocumentSubtype(
       requires_verification: b.requires_verification,
       review_period_months: b.review_period_months,
       trackable_per_member: b.trackable_per_member,
-      requires_signature: b.requires_signature,
+      requires_acknowledgement: b.requires_acknowledgement,
     };
     const afterValues = payloadToRow(payload);
     const changes = diffChanges(beforeValues, afterValues);

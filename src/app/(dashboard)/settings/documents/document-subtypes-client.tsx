@@ -6,7 +6,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2, Loader2, ShieldCheck, Clock } from "lucide-react";
+import { Plus, Trash2, Loader2, ShieldCheck, Clock, CheckSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -81,7 +81,7 @@ function emptyPayload(type: DocumentType): DocumentSubtypeWritePayload {
     requiresVerification: false,
     reviewPeriodMonths: null,
     trackablePerMember: false,
-    requiresSignature: false,
+    requiresAcknowledgement: false,
   };
 }
 
@@ -95,7 +95,7 @@ function dtoToPayload(dto: DocumentSubtypeDto): DocumentSubtypeWritePayload {
     requiresVerification: dto.requiresVerification,
     reviewPeriodMonths: dto.reviewPeriodMonths,
     trackablePerMember: dto.trackablePerMember,
-    requiresSignature: dto.requiresSignature,
+    requiresAcknowledgement: dto.requiresAcknowledgement,
   };
 }
 
@@ -204,6 +204,11 @@ export function DocumentSubtypesClient({
                             {s.expiryRequired && (
                               <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
                                 Expiry
+                              </span>
+                            )}
+                            {s.requiresAcknowledgement && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                                <CheckSquare className="h-3 w-3" /> Ack
                               </span>
                             )}
                           </div>
@@ -443,12 +448,12 @@ function SubtypeEditorDialog({
               onChange={(v) => update("expiryRequired", v)}
             />
             <FlagRow
-              label="Requires acknowledgement (Tier 2)"
+              label="Requires acknowledgement"
               description={isOrgScope
-                ? "Members must acknowledge they've read this. Inert until Tier 2."
-                : "Employee must sign / acknowledge. Inert until Tier 2."}
-              value={payload.requiresSignature}
-              onChange={(v) => update("requiresSignature", v)}
+                ? "Every Member with view rights must click to confirm they've read this."
+                : "The document's owner must click to confirm they've read this."}
+              value={payload.requiresAcknowledgement}
+              onChange={(v) => update("requiresAcknowledgement", v)}
             />
           </div>
 

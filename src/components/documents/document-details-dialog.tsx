@@ -20,7 +20,7 @@
 // step for a small upfront fetch.
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { Camera, Download, FileUp, Loader2, Pencil, RefreshCw, SendHorizontal, Smartphone, Upload as UploadIcon } from "lucide-react";
+import { Camera, CheckSquare, Download, FileUp, Loader2, Pencil, RefreshCw, SendHorizontal, Smartphone, Upload as UploadIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -64,6 +64,11 @@ import {
 } from "@/app/(dashboard)/members/[memberId]/docs/capture-actions";
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
+import {
+  acknowledgeDocument,
+  getDocumentAcknowledgementStatus,
+  type DocumentAcknowledgementStatus,
+} from "@/app/(dashboard)/documents/acknowledgement-actions";
 
 const TYPE_LABEL: Record<string, string> = {
   contract: "Contract",
@@ -245,6 +250,18 @@ export function DocumentDetailsDialog({
 
   const [showChatty, setShowChatty] = useState(false);
 
+  // CLE-219 — Acknowledgement state.
+  //   ackStatus  — server-fetched summary (whether ack is required,
+  //                whether caller has ack'd, coverage summary for admin
+  //                viewing org docs).
+  //   readyToAck — the read-first gate. Enabled when the preview has
+  //                loaded OR the download button has been clicked.
+  //   ackPending — the ack button transition.
+  const [ackStatus, setAckStatus] = useState<DocumentAcknowledgementStatus | null>(null);
+  const [readyToAck, setReadyToAck] = useState(false);
+  const [ackError, setAckError] = useState<string | null>(null);
+  const [ackPending, startAckTransition] = useTransition();
+
   // Load detail, subtypes, activity, preview URL on mount / when the
   // active document id changes (either the prop or a post-Replace
   // pivot to a new id).
@@ -257,24 +274,37 @@ export function DocumentDetailsDialog({
     setPreviewUrl(null);
     setPreviewError(null);
     setLoadError(null);
+    setAckStatus(null);
+    setReadyToAck(false);
+    setAckError(null);
     (async () => {
       const dRes = await getDocumentDetail(currentDocumentId);
       if (cancelled) return;
       if (!dRes.success) { setLoadError(dRes.error); return; }
       setDetail(dRes.detail);
 
-      const [stRes, aRes, urlRes] = await Promise.all([
+      const [stRes, aRes, urlRes, ackRes] = await Promise.all([
         getSubtypesForUpload(dRes.detail.targetMemberId),
         getDocumentActivity(currentDocumentId),
         getMemberDocumentSignedUrl(currentDocumentId, "inline"),
+        getDocumentAcknowledgementStatus(currentDocumentId),
       ]);
       if (cancelled) return;
       if (stRes.success) {
         setSubtypes(stRes.subtypes.filter((s) => s.type === dRes.detail.row.type));
       }
       if (aRes.success) setActivity(aRes.items);
-      if (urlRes.success) setPreviewUrl(urlRes.url as string);
-      else setPreviewError(urlRes.error ?? "Could not load preview");
+      if (urlRes.success) {
+        setPreviewUrl(urlRes.url as string);
+        // CLE-219 — Preview loaded successfully → read-first gate
+        // unlocks. Users on a working-preview path can Acknowledge
+        // straight from the dialog. If preview fails, the gate can
+        // still unlock via a Download click (handled below).
+        setReadyToAck(true);
+      } else {
+        setPreviewError(urlRes.error ?? "Could not load preview");
+      }
+      if (ackRes.success) setAckStatus(ackRes.status);
 
       // The signed-URL call above writes a `document.viewed` audit row
       // as a side effect. That write races the parallel
@@ -320,6 +350,28 @@ export function DocumentDetailsDialog({
   async function notifySaved() {
     if (detail) dispatchMemberDocsChanged(detail.targetMemberId);
     if (onSaved) await onSaved();
+  }
+
+  /** CLE-219 — Fire the ack click. Guarded by `readyToAck` at the
+   *  UI level (button is disabled otherwise); this function is
+   *  defensive-only — it will still call the server if invoked. On
+   *  success, refresh the local ackStatus so the panel flips to the
+   *  "You acknowledged this on …" stamp, and dispatch member-docs-
+   *  changed so the dashboard chip decrements. */
+  function handleAcknowledge() {
+    setAckError(null);
+    startAckTransition(async () => {
+      const res = await acknowledgeDocument(currentDocumentId);
+      if (!res.success) {
+        setAckError(res.error);
+        return;
+      }
+      // Refetch status so we get the timestamp + IP freshly from the
+      // server (we don't have to construct it locally).
+      const statusRes = await getDocumentAcknowledgementStatus(currentDocumentId);
+      if (statusRes.success) setAckStatus(statusRes.status);
+      if (detail) dispatchMemberDocsChanged(detail.targetMemberId);
+    });
   }
 
   async function reloadActivity() {
@@ -467,7 +519,10 @@ export function DocumentDetailsDialog({
                     Preview not available for this file type.{" "}
                     <button
                       type="button"
-                      onClick={() => void downloadDocument(currentDocumentId, detail.row.fileName, reloadActivity)}
+                      onClick={() => {
+                        setReadyToAck(true);
+                        void downloadDocument(currentDocumentId, detail.row.fileName, reloadActivity);
+                      }}
                       className="underline hover:text-foreground"
                     >
                       Download
@@ -478,11 +533,17 @@ export function DocumentDetailsDialog({
                 {/* Floating Download button — always available when there's a
                     preview URL, positioned top-right of the pane. Fires a
                     distinct `document.downloaded` audit event so it shows up
-                    in Activity separately from views. */}
+                    in Activity separately from views. CLE-219 — clicking
+                    Download also unlocks the acknowledge button's read-first
+                    gate, so a caller who prefers reading the downloaded copy
+                    can Acknowledge without needing the in-dialog preview. */}
                 {previewUrl && (
                   <button
                     type="button"
-                    onClick={() => void downloadDocument(currentDocumentId, detail.row.fileName, reloadActivity)}
+                    onClick={() => {
+                      setReadyToAck(true);
+                      void downloadDocument(currentDocumentId, detail.row.fileName, reloadActivity);
+                    }}
                     className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-background hover:text-foreground"
                     aria-label="Download"
                     title="Download"
@@ -554,6 +615,26 @@ export function DocumentDetailsDialog({
                         </p>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* CLE-219 — Acknowledgement section. Renders only when
+                    the subtype requires acknowledgement AND the caller
+                    is looking at a live doc (Trash-view / `readOnly`
+                    suppresses it — a trashed doc's ack state is moot,
+                    and the audit story stays clean by not offering a
+                    click on a soon-to-be-deleted row). Content switches
+                    on caller identity + ack state — see spec §12 for
+                    the full grid. */}
+                {ackStatus?.requiresAcknowledgement && !readOnly && (
+                  <div className="border-b p-4">
+                    <AcknowledgementSection
+                      status={ackStatus}
+                      readyToAck={readyToAck}
+                      pending={ackPending}
+                      error={ackError}
+                      onAcknowledge={handleAcknowledge}
+                    />
                   </div>
                 )}
 
@@ -977,6 +1058,125 @@ function VerifyPencil({
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AcknowledgementSection — CLE-219
+// ---------------------------------------------------------------------------
+//
+// Renders the Acknowledgement panel below Replace. Content branches on
+// caller identity + ack state (see spec §12):
+//   - Expected + not yet acknowledged → button, disabled until
+//     `readyToAck` (preview loaded OR download clicked).
+//   - Expected + already acknowledged → read-only stamp.
+//   - Not expected (admin viewing) + coverage available → org-doc
+//     coverage summary.
+//   - Not expected + no coverage → simple info line so the admin knows
+//     the subtype flags require ack but they aren't in scope.
+
+function AcknowledgementSection({
+  status,
+  readyToAck,
+  pending,
+  error,
+  onAcknowledge,
+}: {
+  status: DocumentAcknowledgementStatus;
+  readyToAck: boolean;
+  pending: boolean;
+  error: string | null;
+  onAcknowledge: () => void;
+}) {
+  const { isCallerExpectedToAcknowledge, callerAcknowledgement, coverageSummary } = status;
+
+  // Branch 1 — Caller has ack'd. Show the read-only stamp.
+  if (callerAcknowledgement) {
+    const stamp = new Date(callerAcknowledgement.acknowledgedAt).toLocaleDateString("en-GB", {
+      day: "2-digit", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit", hour12: false,
+    });
+    return (
+      <div>
+        <p className="mb-1 flex items-center gap-2 text-base font-semibold">
+          <CheckSquare className="h-4 w-4 text-green-600" /> Acknowledgement
+        </p>
+        <p className="text-sm text-muted-foreground">
+          You acknowledged this document on <span className="font-medium text-foreground">{stamp}</span>.
+        </p>
+      </div>
+    );
+  }
+
+  // Branch 2 — Caller is the target Member, not yet ack'd. Actionable
+  // button + read-first gate + audit-note.
+  if (isCallerExpectedToAcknowledge) {
+    return (
+      <div>
+        <p className="mb-1 flex items-center gap-2 text-base font-semibold">
+          <CheckSquare className="h-4 w-4" /> Acknowledgement
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Confirm you have read and understood this document. Your acknowledgement will be recorded with your name, the date and time, and your IP address.
+        </p>
+        {error && (
+          <p className="mt-2 rounded-md bg-destructive/10 p-2 text-sm text-destructive">{error}</p>
+        )}
+        <div className="mt-3 flex items-center gap-2">
+          <Button
+            type="button"
+            onClick={onAcknowledge}
+            disabled={pending || !readyToAck}
+          >
+            {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            <CheckSquare className="mr-2 h-4 w-4" />
+            I have read and understood this document
+          </Button>
+          {!readyToAck && (
+            <p className="text-xs text-muted-foreground">Open or download the file first.</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Branch 3 — Admin viewing an org doc (or a member doc they don't
+  // own). Coverage summary if available.
+  if (coverageSummary) {
+    return (
+      <div>
+        <p className="mb-1 flex items-center gap-2 text-base font-semibold">
+          <CheckSquare className="h-4 w-4" /> Acknowledgement
+        </p>
+        <p className="text-sm text-muted-foreground">
+          <span className="font-medium text-foreground">
+            {coverageSummary.totalAcknowledged} of {coverageSummary.totalExpected}
+          </span>{" "}
+          acknowledged
+          {coverageSummary.outstanding > 0 && (
+            <> · <span className="font-medium text-amber-700 dark:text-amber-400">{coverageSummary.outstanding} outstanding</span></>
+          )}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          See the Compliance dashboard's Acknowledgements tab for the full list.
+        </p>
+      </div>
+    );
+  }
+
+  // Branch 4 — Fallback. Subtype requires ack but the caller isn't in
+  // scope AND has no coverage view. Rare: e.g. an admin without
+  // `can_view_organisation_documents` looking at an org doc via a
+  // deep link. Just show a static info line.
+  return (
+    <div>
+      <p className="mb-1 flex items-center gap-2 text-base font-semibold">
+        <CheckSquare className="h-4 w-4" /> Acknowledgement
+      </p>
+      <p className="text-sm text-muted-foreground">
+        This document requires acknowledgement from its target Member(s).
+      </p>
+    </div>
   );
 }
 

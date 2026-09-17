@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar, Clock, Sun, BarChart2, FileText } from "lucide-react";
 import { getMyDocumentsTrafficLight } from "@/app/(dashboard)/documents/compliance-actions";
+import { getMyOutstandingAcknowledgements } from "@/app/(dashboard)/documents/acknowledgement-actions";
 // Pure formatter — imported from the standalone module (not the
 // "use client" component) so this server component can call it at
 // render time without hitting a client-boundary reference.
@@ -55,6 +56,14 @@ export default async function DashboardPage() {
   const docsMemberId = docsRes.success ? docsRes.memberId : null;
   const docsColour = docsLight?.colour ?? null;
 
+  // CLE-219 — Outstanding-acknowledgement count for the "N to
+  // acknowledge" chip. Deliberately separate from the traffic-light
+  // colour (see Document Acknowledgement spec §8) — Chris's call is
+  // that pending-ack lives in its own chip so it doesn't get folded
+  // into the admin-attention count. Failure is soft; 0 == "no chip".
+  const acksRes = await getMyOutstandingAcknowledgements();
+  const outstandingAckCount = acksRes.success ? acksRes.rows.length : 0;
+
   // Traffic-light → card display values. Green + red/amber use the
   // shared summary text so we're in lockstep with the tooltip on
   // the other surfaces. Null (no required docs) is its own thing.
@@ -89,18 +98,51 @@ export default async function DashboardPage() {
   // the right destination from a self dashboard.
   const docsHref = docsColour && docsMemberId ? "/my-documents" : null;
 
-  // The card itself is the same markup either way — wrapping in a
-  // Link (or not) is a single conditional at the outermost level.
+  // The card holds two clickable regions when both are active — the
+  // main status area (Link → /my-documents) and the "N to acknowledge"
+  // chip (Link → /my-documents?filter=ack). Kept as siblings inside
+  // Card so a click on either doesn't accidentally trigger the other.
   const docsCard = (
-    <Card className={docsHref ? "transition-colors hover:bg-muted/50" : undefined}>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="text-sm font-medium">My documents</CardTitle>
-        <FileText className={`h-4 w-4 ${docsIconClass}`} />
-      </CardHeader>
-      <CardContent>
-        <p className={`text-2xl font-bold ${docsTextClass}`}>{docsBigText}</p>
-        <p className="mt-1 text-xs text-muted-foreground">{docsSubtext}</p>
-      </CardContent>
+    <Card>
+      {docsHref ? (
+        <Link href={docsHref} className="block transition-colors hover:bg-muted/50">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">My documents</CardTitle>
+            <FileText className={`h-4 w-4 ${docsIconClass}`} />
+          </CardHeader>
+          <CardContent>
+            <p className={`text-2xl font-bold ${docsTextClass}`}>{docsBigText}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{docsSubtext}</p>
+          </CardContent>
+        </Link>
+      ) : (
+        <>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">My documents</CardTitle>
+            <FileText className={`h-4 w-4 ${docsIconClass}`} />
+          </CardHeader>
+          <CardContent>
+            <p className={`text-2xl font-bold ${docsTextClass}`}>{docsBigText}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{docsSubtext}</p>
+          </CardContent>
+        </>
+      )}
+      {/* CLE-219 — pending-acknowledgement chip. Deliberately separate
+          from the traffic-light state (see spec §8) so a batch of
+          unacknowledged imports doesn't drown out admin-actionable
+          signals on the admin side, and so the employee sees a clear
+          "here's the thing you can fix right now" affordance. */}
+      {outstandingAckCount > 0 && (
+        <div className="border-t px-6 py-3">
+          <Link
+            href="/my-documents?filter=ack"
+            className="inline-flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/40"
+          >
+            <FileText className="h-3 w-3" />
+            {outstandingAckCount} to acknowledge
+          </Link>
+        </div>
+      )}
     </Card>
   );
 
@@ -167,16 +209,12 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* CLE-216 follow-up — My documents traffic light. Route to
-            the caller's own /docs tab when a light exists; null
-            (no required docs) renders as a non-linked card. */}
-        {docsHref ? (
-          <Link href={docsHref} className="block">
-            {docsCard}
-          </Link>
-        ) : (
-          docsCard
-        )}
+        {/* CLE-216 follow-up + CLE-219 — the "My documents" card
+            wraps its own Link internally now, because the pending-
+            acknowledgement chip is a second click target and nested
+            <Link>s aren't valid HTML. See the docsCard definition
+            above. */}
+        {docsCard}
       </div>
 
     </div>
