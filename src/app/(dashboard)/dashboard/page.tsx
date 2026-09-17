@@ -8,9 +8,13 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar, Clock, Sun, BarChart2, FileText } from "lucide-react";
 import { getMyDocumentsTrafficLight } from "@/app/(dashboard)/documents/compliance-actions";
-// CLE-220 — the standalone "N to acknowledge" chip on the Docs card
-// was dropped. The per-row "Please Ack" pill on /my-documents is now
-// the canonical signal, so no outstanding-ack fetch happens here.
+// CLE-220 follow-up — Chris reinstated the "N acks required" chip on
+// the Docs card, sitting alongside the per-row "Please Ack" pills.
+// Both signals are useful: the pill is per-row, the chip is a
+// dashboard-level summary and a deep link. The chip links into
+// whichever /my-documents tab has an outstanding ack (My preferred,
+// falls back to Org).
+import { getMyOutstandingAcknowledgements } from "@/app/(dashboard)/documents/acknowledgement-actions";
 // Pure formatter — imported from the standalone module (not the
 // "use client" component) so this server component can call it at
 // render time without hitting a client-boundary reference.
@@ -92,13 +96,24 @@ export default async function DashboardPage() {
   // the right destination from a self dashboard.
   const docsHref = docsColour && docsMemberId ? "/my-documents" : null;
 
-  // CLE-220 — the standalone "N to acknowledge" chip is gone. The
-  // canonical signal for outstanding acknowledgements is now the
-  // per-row "Please Ack" pill on the /my-documents tabs. The Docs
-  // card here simply shows the traffic-light status and routes into
-  // /my-documents on click; the tab-level pills surface pending acks
-  // at row granularity, without conflating them with the admin-facing
-  // attention states the traffic light already represents.
+  // CLE-220 follow-up — fetch outstanding acks for the chip. Split
+  // by owner_scope so we can route to whichever /my-documents tab has
+  // work outstanding: prefer the My Documents tab, fall back to Org
+  // Documents. Failure is soft — if the fetch errors we just drop the
+  // chip rather than blocking the whole dashboard.
+  const acksRes = await getMyOutstandingAcknowledgements();
+  const outstandingAcks = acksRes.success ? acksRes.acknowledgements : [];
+  const outstandingAckCount = outstandingAcks.length;
+  const hasMemberAck = outstandingAcks.some((a) => a.ownerScope === "member");
+  const ackTab = hasMemberAck ? "my" : "org";
+  const ackHref = outstandingAckCount > 0 ? `/my-documents?tab=${ackTab}` : null;
+
+  // The Docs card wraps its main content in the traffic-light Link
+  // and, when there are outstanding acks, sits alongside a sibling
+  // "N acks required" chip (also a Link, but into a specific tab).
+  // Two sibling Links avoids the nested-<Link> anti-pattern that
+  // caused problems before CLE-220. When there's no traffic-light
+  // signal to link, the plain header path renders instead.
   const docsCard = (
     <Card>
       {docsHref ? (
@@ -123,6 +138,20 @@ export default async function DashboardPage() {
             <p className="mt-1 text-xs text-muted-foreground">{docsSubtext}</p>
           </CardContent>
         </>
+      )}
+      {ackHref && (
+        <Link
+          href={ackHref}
+          className="mx-6 mb-4 flex items-center justify-between rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/70"
+        >
+          <span>
+            <span className="font-medium">{outstandingAckCount}</span>
+            {" "}to acknowledge
+          </span>
+          <span className="text-xs text-amber-800/80 dark:text-amber-200/70">
+            {hasMemberAck ? "My Documents" : "Org Documents"} →
+          </span>
+        </Link>
       )}
     </Card>
   );
@@ -191,10 +220,9 @@ export default async function DashboardPage() {
         </Card>
 
         {/* CLE-216 follow-up + CLE-220 — the "My documents" card
-            wraps its own Link internally. The CLE-219 "N to
-            acknowledge" chip was dropped here (see docsCard comment)
-            in favour of the per-row "Please Ack" pill on
-            /my-documents. */}
+            wraps its own Link internally, with a sibling "N to
+            acknowledge" chip beneath it that deep-links into the
+            /my-documents tab that has outstanding acks. */}
         {docsCard}
       </div>
 
