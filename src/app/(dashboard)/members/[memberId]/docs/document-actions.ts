@@ -1906,6 +1906,19 @@ export interface RequiredDocumentRow {
    *  will upload this for you" hint. Always false on the synthetic
    *  RTW aggregate row (there's no single subtype behind it). */
   employeeCanUpload: boolean;
+  /** CLE-220 — true when the row's subtype has
+   *  `requires_acknowledgement = true`. Consumers use this together
+   *  with `isAcknowledged` to render a "Please Ack" pill on rows the
+   *  caller still owes an acknowledgement on. Always false for the
+   *  synthetic RTW aggregate placeholder (no subtype behind it). */
+  requiresAcknowledgement: boolean;
+  /** CLE-220 — true when the *caller* has an outstanding
+   *  `document_acknowledgement` row on this document (superseded rows
+   *  ignored). Only meaningful when both `requiresAcknowledgement` is
+   *  true AND there is an actual `documentId` on the row — a
+   *  not-uploaded row can't have been acked, and this flag stays
+   *  false in that case. */
+  isAcknowledged: boolean;
   /** True on the RTW row nominated as "primary" — the one currently
    *  providing evidence (or nearest to providing it). Priority:
    *  verified & non-expired > non-expired > expired; ties broken by
@@ -1970,7 +1983,10 @@ export async function getMemberRequiredDocumentRows(
         // to render a "+ Add" affordance or a static "HR will upload
         // this for you" hint. The admin Required Documents card
         // simply ignores this field.
-        "id, type, name, retention_class, requires_verification, trackable_per_member, employee_can_upload",
+        // CLE-220 — `requires_acknowledgement` piped through so
+        // consumers can render a "Please Ack" pill per row without
+        // a second round-trip.
+        "id, type, name, retention_class, requires_verification, trackable_per_member, employee_can_upload, requires_acknowledgement",
       )
       .eq("organisation_id", caller.organisationId);
     if (sErr) return { success: false, error: sErr.message };
@@ -1982,6 +1998,7 @@ export async function getMemberRequiredDocumentRows(
       requires_verification: boolean;
       trackable_per_member: boolean;
       employee_can_upload: boolean;
+      requires_acknowledgement: boolean;
     };
     const subtypes = (subtypeRows ?? []) as unknown as SubtypeRow[];
     const subtypeById = new Map(subtypes.map((s) => [s.id, s]));
@@ -2032,6 +2049,26 @@ export async function getMemberRequiredDocumentRows(
       .filter((d) => !queued.has(d.id))
       .filter((d) => d.disposal_date === null || d.disposal_date > today);
 
+    // CLE-220 — Ack rows for the *target* member across every active
+    // doc. `isAcknowledged` on each row reflects whether this specific
+    // member has an outstanding (non-superseded) ack for the doc.
+    // Used together with `requiresAcknowledgement` (from the subtype)
+    // to drive the amber "Please Ack" pill on both the self-scope
+    // "My Documents" surface and the admin per-member Required
+    // Documents card.
+    const ackedDocIds = new Set<string>();
+    if (activeDocs.length > 0) {
+      const { data: acks } = await admin
+        .from("document_acknowledgement")
+        .select("document_id")
+        .eq("member_id", memberId)
+        .is("superseded_by_replace_at", null)
+        .in("document_id", activeDocs.map((d) => d.id));
+      for (const r of ((acks ?? []) as { document_id: string }[])) {
+        ackedDocIds.add(r.document_id);
+      }
+    }
+
     // Group active docs by subtype_id, newest-first.
     const bySubtype: Map<string, Doc[]> = new Map();
     for (const d of activeDocs) {
@@ -2065,6 +2102,8 @@ export async function getMemberRequiredDocumentRows(
         isOrgWideExpected: false,
         assignedPerMember: perMemberIds.has(s.id),
         employeeCanUpload: s.employee_can_upload,
+        requiresAcknowledgement: s.requires_acknowledgement === true,
+        isAcknowledged: newest ? ackedDocIds.has(newest.id) : false,
         documentId: newest?.id ?? null,
         fileName: newest?.file_name ?? null,
         verifiedOn: newest?.verified_on ?? null,
@@ -2125,6 +2164,8 @@ export async function getMemberRequiredDocumentRows(
           assignedPerMember: false,
           isRtwEvidence: true,
           employeeCanUpload: s.employee_can_upload,
+          requiresAcknowledgement: s.requires_acknowledgement === true,
+          isAcknowledged: ackedDocIds.has(newest.id),
           documentId: newest.id,
           fileName: newest.file_name,
           verifiedOn: newest.verified_on,
@@ -2150,6 +2191,12 @@ export async function getMemberRequiredDocumentRows(
           // it as read-only (an employee who wants to add RTW
           // evidence goes through HR).
           employeeCanUpload: false,
+          // CLE-220 — RTW aggregate is a placeholder for "no RTW doc
+          // yet"; there's no doc to acknowledge and no subtype whose
+          // flag to lift. Always false so the "Please Ack" pill never
+          // shows on this synthetic row.
+          requiresAcknowledgement: false,
+          isAcknowledged: false,
           rtwDocs: [],
           documentId: null,
           fileName: null,

@@ -98,6 +98,17 @@ interface Props {
    *  employees see their doc + download but not the internal audit
    *  chatter or comment history. */
   hideActivity?: boolean;
+  /** CLE-220 — when true, hide the four HR-facing metadata surfaces:
+   *  Expiry, Verify, Review, and Replace. The Acknowledgement section
+   *  (self-only, driven by subtype flag) stays visible so an employee
+   *  can still click "I have read and understood".
+   *
+   *  `hideHrMetadata` also implies "no Replace", but Replace is
+   *  already gated on `effectiveCanUpdate = canUpdate && !readOnly` so
+   *  a self-scope caller who passes `canUpdate={false}` never gets
+   *  Replace anyway — this prop is the explicit lever for the intent,
+   *  redundant-but-safe for the Replace surface. */
+  hideHrMetadata?: boolean;
 }
 
 function fmtDate(iso: string | null): string {
@@ -226,6 +237,7 @@ export function DocumentDetailsDialog({
   onSaved,
   readOnly = false,
   hideActivity = false,
+  hideHrMetadata = false,
 }: Props) {
   // A read-only opening (from the Trash list) forces every pencil off
   // and the composer off, regardless of whether the caller would
@@ -555,67 +567,84 @@ export function DocumentDetailsDialog({
 
               {/* Right pane — Expiry / Verify / Review / History */}
               <div className="flex flex-col overflow-hidden">
-                {/* Expiry */}
-                <div className="border-b p-4">
-                  <ExpirySection
-                    detail={detail}
-                    canUpdate={effectiveCanUpdate && !employeeStripped}
-                    onSaved={refreshDetailAndHistory}
-                  />
-                </div>
-
-                {/* Verify */}
-                <div className="border-b p-4">
-                  <VerifySection
-                    detail={detail}
-                    canUpdate={effectiveCanUpdate && !employeeStripped}
-                    onSaved={refreshDetailAndHistory}
-                  />
-                </div>
-
-                {/* Review */}
-                <div className="border-b p-4">
-                  <ReviewSection
-                    detail={detail}
-                    canUpdate={effectiveCanUpdate && !employeeStripped}
-                    onSaved={refreshDetailAndHistory}
-                  />
-                </div>
-
-                {/* Replace (CLE-217) — rendered whenever the caller has
-                    update rights, but the *content* switches on
-                    verification state:
-                    • Unverified → the active ReplaceSection with the two
-                      upload/photo entry points.
-                    • Verified → a short explanatory panel telling the
-                      admin why Replace is locked and what to do instead.
-                    Keeping the surface visible (rather than collapsing
-                    the whole section) means admins who go looking for
-                    Replace on a verified doc find the reason rather than
-                    an empty gap — the panel is the answer to "where did
-                    the Replace button go?". */}
-                {effectiveCanUpdate && !employeeStripped && (
-                  <div className="border-b p-4">
-                    {detail.row.verifiedOn === null ? (
-                      <ReplaceSection
-                        documentId={currentDocumentId}
-                        targetMemberId={detail.targetMemberId}
-                        targetMemberName={detail.targetMemberName}
-                        subtypeId={detail.row.subtypeId}
-                        subtypeName={detail.row.subtypeName}
-                        onReplaced={pivotToReplacement}
+                {/* CLE-220 — `hideHrMetadata` collapses the four HR-only
+                    sections (Expiry, Verify, Review, Replace) so the
+                    employee-facing surfaces (My Documents + Org
+                    Documents tabs on /my-documents) present a clean
+                    read-and-acknowledge dialog. The Acknowledgement
+                    section (below) stays visible so an employee can
+                    still click "I have read and understood". */}
+                {!hideHrMetadata && (
+                  <>
+                    {/* Expiry */}
+                    <div className="border-b p-4">
+                      <ExpirySection
+                        detail={detail}
+                        canUpdate={effectiveCanUpdate && !employeeStripped}
+                        onSaved={refreshDetailAndHistory}
                       />
-                    ) : (
-                      <div>
-                        <p className="mb-1 flex items-center gap-2 text-base font-semibold">
-                          <RefreshCw className="h-4 w-4" /> Replace file
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          This document has been verified and cannot be reloaded. If the wrong document is showing, please Delete and Reload.
-                        </p>
+                    </div>
+
+                    {/* Verify */}
+                    <div className="border-b p-4">
+                      <VerifySection
+                        detail={detail}
+                        canUpdate={effectiveCanUpdate && !employeeStripped}
+                        onSaved={refreshDetailAndHistory}
+                      />
+                    </div>
+
+                    {/* Review */}
+                    <div className="border-b p-4">
+                      <ReviewSection
+                        detail={detail}
+                        canUpdate={effectiveCanUpdate && !employeeStripped}
+                        onSaved={refreshDetailAndHistory}
+                      />
+                    </div>
+
+                    {/* Replace (CLE-217) — rendered whenever the caller has
+                        update rights, but the *content* switches on
+                        verification state:
+                        • Unverified → the active ReplaceSection with the two
+                          upload/photo entry points.
+                        • Verified → a short explanatory panel telling the
+                          admin why Replace is locked and what to do instead.
+                        Keeping the surface visible (rather than collapsing
+                        the whole section) means admins who go looking for
+                        Replace on a verified doc find the reason rather than
+                        an empty gap — the panel is the answer to "where did
+                        the Replace button go?".
+                        CLE-220 — `hideHrMetadata` also implies "no Replace",
+                        but Replace is already gated on
+                        `effectiveCanUpdate && !employeeStripped` so a self-
+                        scope caller (canUpdate=false) never sees it anyway;
+                        wrapping in the outer `!hideHrMetadata` block just
+                        makes the intent explicit. */}
+                    {effectiveCanUpdate && !employeeStripped && (
+                      <div className="border-b p-4">
+                        {detail.row.verifiedOn === null ? (
+                          <ReplaceSection
+                            documentId={currentDocumentId}
+                            targetMemberId={detail.targetMemberId}
+                            targetMemberName={detail.targetMemberName}
+                            subtypeId={detail.row.subtypeId}
+                            subtypeName={detail.row.subtypeName}
+                            onReplaced={pivotToReplacement}
+                          />
+                        ) : (
+                          <div>
+                            <p className="mb-1 flex items-center gap-2 text-base font-semibold">
+                              <RefreshCw className="h-4 w-4" /> Replace file
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              This document has been verified and cannot be reloaded. If the wrong document is showing, please Delete and Reload.
+                            </p>
+                          </div>
+                        )}
                       </div>
                     )}
-                  </div>
+                  </>
                 )}
 
                 {/* CLE-219 — Acknowledgement section. Renders only when

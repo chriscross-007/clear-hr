@@ -46,6 +46,14 @@ export interface OrgDocumentRow {
   expiresOn: string | null;
   uploadedBy: string;
   uploadedAt: string;
+  /** CLE-220 — true when the row's subtype has
+   *  `requires_acknowledgement = true`. UI pairs this with
+   *  `isAcknowledged` to render a "Please Ack" pill. */
+  requiresAcknowledgement: boolean;
+  /** CLE-220 — true when the caller has an outstanding
+   *  `document_acknowledgement` row on this document (superseded
+   *  rows ignored). */
+  isAcknowledged: boolean;
 }
 
 function getAdmin() {
@@ -110,7 +118,12 @@ export async function listOrgDocuments(): Promise<{
 
     const { data, error } = await admin
       .from("document")
-      .select("id, file_name, file_size, content_type, type, subtype_id, expires_on, uploaded_by, uploaded_at, document_subtype!subtype_id(name), members!uploaded_by(first_name, last_name)")
+      .select(
+        // CLE-220 — pull `requires_acknowledgement` off the subtype so
+        // the client can render a "Please Ack" pill without a second
+        // round-trip.
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, uploaded_by, uploaded_at, document_subtype!subtype_id(name, requires_acknowledgement), members!uploaded_by(first_name, last_name)",
+      )
       .eq("organisation_id", c.organisationId)
       .eq("owner_scope", "organisation")
       .order("uploaded_at", { ascending: false });
@@ -126,30 +139,51 @@ export async function listOrgDocuments(): Promise<{
       expires_on: string | null;
       uploaded_by: string | null;
       uploaded_at: string;
-      document_subtype: { name: string } | { name: string }[] | null;
+      document_subtype:
+        | { name: string; requires_acknowledgement?: boolean }
+        | { name: string; requires_acknowledgement?: boolean }[]
+        | null;
       members: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
     };
-    const rows: OrgDocumentRow[] = (data ?? [])
+    const visibleRows = (data ?? [])
       .map((r) => r as unknown as Row)
-      .filter((r) => !queuedIds.has(r.id))
-      .map((r) => {
-        const st = r.document_subtype;
-        const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
-        const mem = r.members;
-        const memPair = Array.isArray(mem) ? (mem[0] ?? null) : mem;
-        return {
-          id: r.id,
-          fileName: r.file_name,
-          fileSize: r.file_size,
-          contentType: r.content_type,
-          type: r.type,
-          subtypeId: r.subtype_id,
-          subtypeName: stObj?.name ?? null,
-          expiresOn: r.expires_on,
-          uploadedBy: `${memPair?.first_name ?? ""} ${memPair?.last_name ?? ""}`.trim() || "Unknown",
-          uploadedAt: r.uploaded_at,
-        };
-      });
+      .filter((r) => !queuedIds.has(r.id));
+
+    // CLE-220 — caller's ack rows across the visible set. One batch
+    // read; result feeds `isAcknowledged` per row.
+    const ackedSet = new Set<string>();
+    if (visibleRows.length > 0) {
+      const { data: acks } = await admin
+        .from("document_acknowledgement")
+        .select("document_id")
+        .eq("member_id", c.memberId)
+        .is("superseded_by_replace_at", null)
+        .in("document_id", visibleRows.map((r) => r.id));
+      for (const a of ((acks ?? []) as { document_id: string }[])) {
+        ackedSet.add(a.document_id);
+      }
+    }
+
+    const rows: OrgDocumentRow[] = visibleRows.map((r) => {
+      const st = r.document_subtype;
+      const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
+      const mem = r.members;
+      const memPair = Array.isArray(mem) ? (mem[0] ?? null) : mem;
+      return {
+        id: r.id,
+        fileName: r.file_name,
+        fileSize: r.file_size,
+        contentType: r.content_type,
+        type: r.type,
+        subtypeId: r.subtype_id,
+        subtypeName: stObj?.name ?? null,
+        expiresOn: r.expires_on,
+        uploadedBy: `${memPair?.first_name ?? ""} ${memPair?.last_name ?? ""}`.trim() || "Unknown",
+        uploadedAt: r.uploaded_at,
+        requiresAcknowledgement: stObj?.requires_acknowledgement === true,
+        isAcknowledged: ackedSet.has(r.id),
+      };
+    });
     return { success: true, rows };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred", rows: [] };

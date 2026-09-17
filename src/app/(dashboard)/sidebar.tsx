@@ -89,11 +89,12 @@ export function Sidebar({
   // CLE-196b-1 — visibility gates rewired onto the resolver flags.
   //   showEmployees: anyone whose scope reaches beyond themselves
   //   showShifts / adminShellLinks: Manager+ (anyone not on the self-only Employee shell)
-  //   showOrg / showBilling / showAudit: their own resolver flags
+  //   showBilling / showAudit: their own resolver flags
+  //   (showOrg was retired when the OrganisationEditDialog was removed
+  //    from the sidebar — organisation settings live under /settings now.)
   const isAdminShell = rank !== "employee";
   const showEmployees = crossUserAccess !== "self";
   const showShifts = isAdminShell;
-  const showOrg = canEditOrgSettings;
   const showBilling = canManageBilling;
   const showAudit = canViewAuditLogs;
   const showReports = hasPlanFeature(plan, "reports") && canRunReports;
@@ -207,18 +208,23 @@ export function Sidebar({
             <LayoutDashboard className="h-4 w-4 shrink-0" />
             Dashboard
           </Link>
-          {/* "My Documents" + "Planner" are self-scope surfaces —
-              only shown when the caller's effective view is
-              self-only. Real employees see them by default; admins
-              only see them after toggling into Employee view (which
-              flips `crossUserAccess` to "self"). Admins in normal
-              admin view manage docs / absences via the per-member
-              Employment tab and Employees Directory instead. */}
+          {/* "Documents" + "Planner" are self-scope surfaces — only
+              shown when the caller's effective view is self-only.
+              Real employees see them by default; admins only see
+              them after toggling into Employee view (which flips
+              `crossUserAccess` to "self"). Admins in normal admin
+              view manage docs / absences via the per-member
+              Employment tab and Employees Directory instead.
+              CLE-220 — the label collapsed from "My Documents" to
+              plain "Documents" because the target route now hosts
+              both the self-scope required-docs list AND the org-
+              docs read view under a tabbed shell; the separate
+              "Org Documents" self-scope entry was dropped. */}
           {!showEmployees && (
             <>
               <Link href="/my-documents" className={linkClass("/my-documents")}>
                 <FileText className="h-4 w-4 shrink-0" />
-                My Documents
+                Documents
               </Link>
               <Link href="/holiday" className={linkClass("/holiday")}>
                 <Palmtree className="h-4 w-4 shrink-0" />
@@ -296,15 +302,25 @@ export function Sidebar({
           </Link>
           {/* CLE-207 — Documents compliance dashboard. Everyone with
               documents.view sees at least their own docs; scope
-              (self/team/all) narrows the rows server-side. */}
-          <Link href="/documents/compliance" className={linkClass("/documents/compliance")}>
-            <FileText className="h-4 w-4 shrink-0" />
-            Doc Compliance
-          </Link>
+              (self/team/all) narrows the rows server-side.
+              CLE-220 — hidden for self-scope callers: they get a
+              single "Documents" entry (above) that consolidates
+              their own doc list + org docs into one tabbed page.
+              The Compliance dashboard is HR-facing and belongs on
+              the admin sidebar only. */}
+          {showEmployees && (
+            <Link href="/documents/compliance" className={linkClass("/documents/compliance")}>
+              <FileText className="h-4 w-4 shrink-0" />
+              Doc Compliance
+            </Link>
+          )}
           {/* CLE-208 → CLE-209 follow-up — Org Documents (list +
               CRUD if the caller has can_manage_organisation_documents).
-              Hidden entirely when the caller can't view. */}
-          {canViewOrganisationDocuments && (
+              Hidden entirely when the caller can't view.
+              CLE-220 — also hidden for self-scope callers: the
+              consolidated "Documents" entry above hosts the org-
+              docs read view inside its "Org Documents" tab. */}
+          {canViewOrganisationDocuments && showEmployees && (
             <Link href="/documents/organisation" className={linkClass("/documents/organisation")}>
               <FileText className="h-4 w-4 shrink-0" />
               Org Documents

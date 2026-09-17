@@ -1053,7 +1053,7 @@ export async function remindOutstanding(
                   <h2 style="margin:0 0 16px;color:#18181b">Reminder: document to acknowledge</h2>
                   <p>Hi ${first},</p>
                   <p>You have an outstanding <strong>${subtypeName}</strong> that needs your acknowledgement.</p>
-                  <p><a href="${baseUrl}/login?next=${encodeURIComponent("/my-documents?filter=ack")}" style="display:inline-block;padding:12px 24px;background:#18181b;color:#fff;text-decoration:none;border-radius:6px">Review &amp; acknowledge</a></p>
+                  <p><a href="${baseUrl}/login?next=${encodeURIComponent("/my-documents")}" style="display:inline-block;padding:12px 24px;background:#18181b;color:#fff;text-decoration:none;border-radius:6px">Review &amp; acknowledge</a></p>
                   <div style="margin-top:32px;padding-top:16px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:12px">You are receiving this because you are a member of ${orgName} on ClearHR.</div>
                 </div>
               `,

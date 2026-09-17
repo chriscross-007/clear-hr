@@ -1,39 +1,36 @@
 export const dynamic = "force-dynamic";
 
-// CLE-216 follow-up — "My Documents" top-level page.
+// CLE-216 follow-up / CLE-220 — "My Documents" top-level page.
 //
 // Visible to every authenticated member regardless of shell. Resolves
 // the caller's own memberId + name via the Rights Profiles v2
-// resolver, then hands that off to the shared <MyDocumentsCard>. The
-// card mirrors the admin Required Documents card's display shape but
-// omits every admin-only affordance (see the component header for
-// specifics).
+// resolver, then hands off to the shared <MyDocumentsClient> which
+// hosts two tabs:
+//   * My Documents — the caller's per-member required-docs list.
+//   * Org Documents — the org-wide docs list (only visible when the
+//     caller's profile grants `can_view_organisation_documents`).
+//
+// Tab state is URL-driven (`?tab=my|org`, default `my`).
 //
 // The resolver already RLS-scopes reads to the caller's own docs
 // (crossUserAccess='self' passes the memberId=self check in
 // `canViewTarget`), so an admin loading this page sees only their
 // own documents — same UX as an employee. That's intentional: the
-// route is "my documents", not "somebody's documents".
+// route is "my documents", not "somebody's documents". Admins can
+// still land here directly (or after using the view-mode toggle) and
+// preview the employee-facing surface.
 
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
-import { MyDocumentsCard } from "@/components/documents/my-documents-card";
-import { MyAcknowledgementsCard } from "@/components/documents/my-acknowledgements-card";
-import { cn } from "@/lib/utils";
-
-/** CLE-219 — Filter chip driven by `?filter=…` on the URL. Default is
- *  `all` (both cards). `ack` narrows to just the outstanding-
- *  acknowledgement card. Chips are server-rendered `<Link>`s so state
- *  survives a refresh and doesn't need any client-side plumbing. */
-type Filter = "all" | "ack";
+import { MyDocumentsClient } from "@/components/documents/my-documents-client";
+import { listOrgDocuments, type OrgDocumentRow } from "@/app/(dashboard)/documents/organisation/org-document-actions";
 
 export default async function MyDocumentsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ filter?: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -43,7 +40,7 @@ export default async function MyDocumentsPage({
   if (!resolved) redirect("/organisation-setup");
 
   const sp = await searchParams;
-  const filter: Filter = sp.filter === "ack" ? "ack" : "all";
+  const initialTab: "my" | "org" = sp.tab === "org" ? "org" : "my";
 
   // Look up the caller's display name for the New Document dialog's
   // header. Cheapest to do here with the admin client — the resolver
@@ -60,37 +57,25 @@ export default async function MyDocumentsPage({
     .single();
   const memberName = `${me?.first_name ?? ""} ${me?.last_name ?? ""}`.trim() || "You";
 
-  const chipClass = (active: boolean) =>
-    cn(
-      "inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-      active
-        ? "border-primary bg-primary text-primary-foreground"
-        : "border-muted-foreground/30 bg-background text-muted-foreground hover:bg-muted",
-    );
+  // Fetch initial org-doc rows for SSR of the Org tab. Skipped when
+  // the caller can't view org docs — the tab strip in the client
+  // degrades to a single "My Documents" trigger.
+  const canViewOrgDocs = resolved.rights.canViewOrganisationDocuments;
+  let initialOrgRows: OrgDocumentRow[] = [];
+  if (canViewOrgDocs) {
+    const orgRes = await listOrgDocuments();
+    if (orgRes.success) initialOrgRows = orgRes.rows;
+  }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-6">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold">My Documents</h1>
-        <div className="flex items-center gap-2">
-          <Link href="/my-documents" className={chipClass(filter === "all")}>
-            All
-          </Link>
-          <Link href="/my-documents?filter=ack" className={chipClass(filter === "ack")}>
-            To acknowledge
-          </Link>
-        </div>
-      </div>
-
-      {/* CLE-219 — the ack card renders at the top of both views. In
-          `ack` mode it's the only card on the page. In `all` mode it
-          sits above the Required Documents card so an outstanding
-          ack is the first thing the caller sees. */}
-      <MyAcknowledgementsCard memberId={resolved.ctx.memberId} />
-
-      {filter === "all" && (
-        <MyDocumentsCard memberId={resolved.ctx.memberId} memberName={memberName} />
-      )}
+    <div className="mx-auto max-w-5xl p-6">
+      <MyDocumentsClient
+        memberId={resolved.ctx.memberId}
+        memberName={memberName}
+        initialTab={initialTab}
+        canViewOrgDocs={canViewOrgDocs}
+        initialOrgRows={initialOrgRows}
+      />
     </div>
   );
 }

@@ -222,7 +222,19 @@ export function MyDocumentsCard({
                       }
                     >
                       <td className="px-3 py-2">
-                        <p className="font-medium">{subtypeLabel(r.subtypeType, r.subtypeName)}</p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-medium">{subtypeLabel(r.subtypeType, r.subtypeName)}</p>
+                          {/* CLE-220 — "Please Ack" pill. Renders when the
+                              subtype requires acknowledgement AND this
+                              row has an uploaded doc the caller hasn't
+                              acked yet. Not-uploaded rows never carry a
+                              pill (there's no doc to ack). */}
+                          {r.requiresAcknowledgement && r.documentId && !r.isAcknowledged && (
+                            <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                              Please Ack
+                            </span>
+                          )}
+                        </div>
                         {r.fileName && (
                           <p className="text-xs text-muted-foreground truncate">{r.fileName}</p>
                         )}
@@ -277,12 +289,14 @@ export function MyDocumentsCard({
         // (a) fire the misleading "In Trash" pill and (b) suppress the
         // Acknowledgement section, blocking the employee's only way to
         // click "I have read and understood this document" (CLE-219).
-        // Download + preview + Acknowledge stay visible; Replace is
-        // off because `effectiveCanUpdate` is already false.
+        // CLE-220 — `hideHrMetadata` drops Expiry / Verify / Review /
+        // Replace so the employee gets a clean read-and-acknowledge
+        // surface. Download + preview + Acknowledge stay visible.
         <DocumentDetailsDialog
           documentId={detailsDocId}
           canUpdate={false}
           hideActivity
+          hideHrMetadata
           onClose={() => setDetailsDocId(null)}
           onSaved={load}
         />
