@@ -333,71 +333,36 @@ export async function getMyOutstandingAcknowledgements(): Promise<
     // does — but Ticket B doesn't need to walk that yet since the ack
     // list is a separate concern. The `document` RLS + our app filter
     // handle scope.
+    // The `document` table's timestamp column is `uploaded_at` (not
+    // `created_at`). Same shape as the reads in
+    // `members/[memberId]/docs/document-actions.ts`.
     type DocJoin = {
       id: string;
       owner_scope: "member" | "organisation";
       owner_id: string | null;
       file_name: string;
       subtype_id: string;
-      created_at: string;
+      uploaded_at: string;
       document_subtype: { name?: string; type?: string; requires_acknowledgement?: boolean } | Array<{ name?: string; type?: string; requires_acknowledgement?: boolean }> | null;
     };
     const docsQuery = await admin
       .from("document")
       .select(
-        "id, owner_scope, owner_id, file_name, subtype_id, created_at, " +
+        "id, owner_scope, owner_id, file_name, subtype_id, uploaded_at, " +
         "document_subtype!subtype_id(name, type, requires_acknowledgement)",
       )
       .eq("organisation_id", caller.organisationId)
-      .order("created_at", { ascending: false });
-    // Temporary diagnostic (CLE-219) — remove once outstanding-ack
-    // list is verified working. Chris was seeing "Nothing to
-    // acknowledge" for an employee with a genuinely outstanding
-    // Contract, and the parallel details-dialog helper correctly
-    // said the same employee was expected to ack. Log the raw query
-    // shape so we can pinpoint whether the join is returning what
-    // the filter expects.
-    if (docsQuery.error) {
-      console.error("[CLE-219 outstanding] docsQuery error:", docsQuery.error);
-    }
+      .order("uploaded_at", { ascending: false });
     const rows = (docsQuery.data ?? []) as unknown as DocJoin[];
-    console.log("[CLE-219 outstanding] caller:", {
-      memberId: caller.memberId,
-      organisationId: caller.organisationId,
-      canViewOrgDocs: caller.canViewOrgDocs,
-    });
-    console.log("[CLE-219 outstanding] total docs fetched:", rows.length);
-    console.log("[CLE-219 outstanding] first 5 rows:",
-      rows.slice(0, 5).map((d) => ({
-        id: d.id,
-        owner_scope: d.owner_scope,
-        owner_id: d.owner_id,
-        file_name: d.file_name,
-        subtype_id: d.subtype_id,
-        document_subtype: d.document_subtype,
-      })));
 
     // Filter to ack-required docs the caller is expected to ack.
     const relevant = rows.filter((d) => {
       const st = Array.isArray(d.document_subtype) ? d.document_subtype[0] : d.document_subtype;
-      const ackReq = !!st?.requires_acknowledgement;
-      const ownerMatch = d.owner_scope === "member" && d.owner_id === caller.memberId;
-      const orgMatch = d.owner_scope === "organisation" && caller.canViewOrgDocs;
-      const keep = ackReq && (ownerMatch || orgMatch);
-      if (!keep) {
-        console.log("[CLE-219 outstanding] dropping row:", {
-          id: d.id,
-          file_name: d.file_name,
-          reason: !ackReq ? "subtype not ack-required" :
-                  d.owner_scope === "member" ? `owner ${d.owner_id} != caller ${caller.memberId}` :
-                  d.owner_scope === "organisation" ? `org-scope + canViewOrgDocs=${caller.canViewOrgDocs}` :
-                  `unknown owner_scope=${d.owner_scope}`,
-          st,
-        });
-      }
-      return keep;
+      if (!st?.requires_acknowledgement) return false;
+      if (d.owner_scope === "member") return d.owner_id === caller.memberId;
+      if (d.owner_scope === "organisation") return caller.canViewOrgDocs;
+      return false;
     });
-    console.log("[CLE-219 outstanding] relevant after filter:", relevant.length);
     if (relevant.length === 0) return { success: true, rows: [] };
 
     // Which of those has the caller already acked?
@@ -421,7 +386,7 @@ export async function getMyOutstandingAcknowledgements(): Promise<
           subtypeName: st?.name ?? "—",
           subtypeType: st?.type ?? "attachment",
           ownerScope: d.owner_scope,
-          createdAt: d.created_at,
+          createdAt: d.uploaded_at,
         };
       });
 
