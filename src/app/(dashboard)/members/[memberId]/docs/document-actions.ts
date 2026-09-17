@@ -747,10 +747,13 @@ export async function getMemberDocumentSignedUrl(
     }
 
     // CLE-219 — Accept both member and org-scope docs. Permission
-    // check branches on scope.
+    // check branches on scope; `target` is either the owning member
+    // (member-scope) or a synthetic org-scope placeholder used by
+    // the downstream audit metadata.
+    let target: { id: string; team_id: string | null; first_name: string; last_name: string } | null = null;
     if (doc.owner_scope === "member") {
       if (!doc.owner_id) return { success: false, error: "Document not found" };
-      const target = await getTarget(admin, doc.owner_id as string, caller.organisationId);
+      target = await getTarget(admin, doc.owner_id as string, caller.organisationId);
       if (!target) return { success: false, error: "Document not found" };
       if (!caller.canViewTarget({ memberId: target.id, teamId: target.team_id })) {
         return { success: false, error: "Document not found" };
@@ -759,6 +762,7 @@ export async function getMemberDocumentSignedUrl(
       if (!caller.canViewOrgDocs) {
         return { success: false, error: "Document not found" };
       }
+      target = { id: caller.memberId, team_id: null, first_name: "Organisation", last_name: "" };
     } else {
       return { success: false, error: "Document not found" };
     }
@@ -792,7 +796,10 @@ export async function getMemberDocumentSignedUrl(
       targetId: doc.id,
       targetLabel: doc.file_name,
       metadata: {
-        member: memberDisplay(target),
+        // `target` is guaranteed non-null by the branches above (each
+        // either returns early or assigns), but the flow-analyser
+        // needs a defensive fallback for the strict TS pass.
+        member: target ? memberDisplay(target) : "Organisation",
         type_subtype: typeSubtypeLabel(doc.type as string, subtypeNameStr),
       },
     });
