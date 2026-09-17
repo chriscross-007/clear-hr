@@ -191,8 +191,25 @@ export async function acknowledgeDocument(
     if (!caller) return { success: false, error: "Not authenticated" };
     const admin = getAdmin();
 
-    // Fetch the doc + subtype in a single join.
-    const { data: doc } = await admin
+    // Fetch the doc + subtype in a single join. Result is cast
+    // explicitly — Supabase's TS inference degrades to
+    // `GenericStringError` on some FK-join SELECT shapes, and the
+    // rest of the codebase's convention is to declare the local shape
+    // at the boundary rather than rely on inference.
+    type DocRow = {
+      id: string;
+      organisation_id: string;
+      owner_scope: "member" | "organisation";
+      owner_id: string | null;
+      file_name: string;
+      storage_path: string;
+      subtype_id: string;
+      document_subtype:
+        | { name?: string; requires_acknowledgement?: boolean }
+        | { name?: string; requires_acknowledgement?: boolean }[]
+        | null;
+    };
+    const docQuery = await admin
       .from("document")
       .select(
         "id, organisation_id, owner_scope, owner_id, file_name, storage_path, subtype_id, " +
@@ -200,13 +217,11 @@ export async function acknowledgeDocument(
       )
       .eq("id", documentId)
       .single();
+    const doc = docQuery.data as unknown as DocRow | null;
     if (!doc || doc.organisation_id !== caller.organisationId) {
       return { success: false, error: "Document not found" };
     }
-    const subtype = doc.document_subtype as unknown as
-      | { name?: string; requires_acknowledgement?: boolean }
-      | { name?: string; requires_acknowledgement?: boolean }[]
-      | null;
+    const subtype = doc.document_subtype;
     const subtypeRow = Array.isArray(subtype) ? subtype[0] : subtype;
     if (!subtypeRow?.requires_acknowledgement) {
       return { success: false, error: "This document does not require acknowledgement." };
@@ -318,15 +333,6 @@ export async function getMyOutstandingAcknowledgements(): Promise<
     // does — but Ticket B doesn't need to walk that yet since the ack
     // list is a separate concern. The `document` RLS + our app filter
     // handle scope.
-    const { data: docs } = await admin
-      .from("document")
-      .select(
-        "id, owner_scope, owner_id, file_name, subtype_id, created_at, " +
-        "document_subtype!subtype_id(name, type, requires_acknowledgement)",
-      )
-      .eq("organisation_id", caller.organisationId)
-      .order("created_at", { ascending: false });
-
     type DocJoin = {
       id: string;
       owner_scope: "member" | "organisation";
@@ -336,7 +342,15 @@ export async function getMyOutstandingAcknowledgements(): Promise<
       created_at: string;
       document_subtype: { name?: string; type?: string; requires_acknowledgement?: boolean } | Array<{ name?: string; type?: string; requires_acknowledgement?: boolean }> | null;
     };
-    const rows = (docs ?? []) as unknown as DocJoin[];
+    const docsQuery = await admin
+      .from("document")
+      .select(
+        "id, owner_scope, owner_id, file_name, subtype_id, created_at, " +
+        "document_subtype!subtype_id(name, type, requires_acknowledgement)",
+      )
+      .eq("organisation_id", caller.organisationId)
+      .order("created_at", { ascending: false });
+    const rows = (docsQuery.data ?? []) as unknown as DocJoin[];
 
     // Filter to ack-required docs the caller is expected to ack.
     const relevant = rows.filter((d) => {
@@ -421,7 +435,18 @@ export async function getDocumentAcknowledgementStatus(
     if (!caller) return { success: false, error: "Not authenticated" };
     const admin = getAdmin();
 
-    const { data: doc } = await admin
+    type DocRow = {
+      id: string;
+      organisation_id: string;
+      owner_scope: "member" | "organisation";
+      owner_id: string | null;
+      subtype_id: string;
+      document_subtype:
+        | { requires_acknowledgement?: boolean }
+        | { requires_acknowledgement?: boolean }[]
+        | null;
+    };
+    const docQuery = await admin
       .from("document")
       .select(
         "id, organisation_id, owner_scope, owner_id, subtype_id, " +
@@ -429,13 +454,11 @@ export async function getDocumentAcknowledgementStatus(
       )
       .eq("id", documentId)
       .single();
+    const doc = docQuery.data as unknown as DocRow | null;
     if (!doc || doc.organisation_id !== caller.organisationId) {
       return { success: false, error: "Document not found" };
     }
-    const subtype = doc.document_subtype as unknown as
-      | { requires_acknowledgement?: boolean }
-      | { requires_acknowledgement?: boolean }[]
-      | null;
+    const subtype = doc.document_subtype;
     const subtypeRow = Array.isArray(subtype) ? subtype[0] : subtype;
     const requiresAcknowledgement = subtypeRow?.requires_acknowledgement === true;
 
@@ -549,7 +572,19 @@ export async function getDocumentCoverage(
     const admin = getAdmin();
 
     // Doc + subtype.
-    const { data: doc } = await admin
+    type DocRow = {
+      id: string;
+      organisation_id: string;
+      owner_scope: "member" | "organisation";
+      owner_id: string | null;
+      file_name: string;
+      subtype_id: string;
+      document_subtype:
+        | { name?: string; requires_acknowledgement?: boolean }
+        | { name?: string; requires_acknowledgement?: boolean }[]
+        | null;
+    };
+    const docQuery = await admin
       .from("document")
       .select(
         "id, organisation_id, owner_scope, owner_id, file_name, subtype_id, " +
@@ -557,18 +592,16 @@ export async function getDocumentCoverage(
       )
       .eq("id", documentId)
       .single();
+    const doc = docQuery.data as unknown as DocRow | null;
     if (!doc || doc.organisation_id !== caller.organisationId) {
       return { success: false, error: "Document not found" };
     }
-    const subtype = doc.document_subtype as unknown as
-      | { name?: string; requires_acknowledgement?: boolean }
-      | { name?: string; requires_acknowledgement?: boolean }[]
-      | null;
+    const subtype = doc.document_subtype;
     const subtypeRow = Array.isArray(subtype) ? subtype[0] : subtype;
     if (!subtypeRow?.requires_acknowledgement) {
       return { success: false, error: "This document does not require acknowledgement." };
     }
-    const ownerScope = doc.owner_scope as "member" | "organisation";
+    const ownerScope = doc.owner_scope;
 
     // Denominator: expected-to-ack member set.
     let expectedIds: string[] = [];
