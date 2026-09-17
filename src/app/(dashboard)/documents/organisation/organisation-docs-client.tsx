@@ -6,7 +6,8 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ExternalLink, FileText, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { ExternalLink, FileText, Loader2, Plus, Trash2 } from "lucide-react";
+import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -39,7 +40,6 @@ import {
   getOrgDocumentSignedUrl,
   getOrgUploadSubtypes,
   softDeleteOrgDocument,
-  updateOrgDocumentMetadata,
   uploadOrgDocument,
   type OrgDocumentRow,
 } from "@/app/(dashboard)/documents/organisation/org-document-actions";
@@ -75,22 +75,15 @@ export function OrganisationDocsClient({
   const router = useRouter();
   const [rows, setRows] = useState<OrgDocumentRow[]>(initialRows);
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [editing, setEditing] = useState<OrgDocumentRow | null>(null);
+  const [detailsDocId, setDetailsDocId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<OrgDocumentRow | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [viewer, setViewer] = useState<{ url: string; fileName: string; contentType: string } | null>(null);
 
   async function reload() {
     router.refresh();
   }
   // Keep local rows in sync when props change (after router.refresh).
   useEffect(() => { setRows(initialRows); }, [initialRows]);
-
-  async function handleView(r: OrgDocumentRow) {
-    const res = await getOrgDocumentSignedUrl(r.id, "inline");
-    if (!res.success || !res.url) { setError(res.error ?? "Failed to open"); return; }
-    setViewer({ url: res.url, fileName: res.fileName ?? r.fileName, contentType: r.contentType });
-  }
 
   async function handleDownload(r: OrgDocumentRow) {
     const res = await getOrgDocumentSignedUrl(r.id, "download");
@@ -135,7 +128,12 @@ export function OrganisationDocsClient({
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30" onClick={() => handleView(r)}>
+                <tr
+                  key={r.id}
+                  className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
+                  onClick={() => setDetailsDocId(r.id)}
+                  title="Open document details"
+                >
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -161,14 +159,9 @@ export function OrganisationDocsClient({
                         <ExternalLink className="h-4 w-4" />
                       </Button>
                       {canEdit && (
-                        <>
-                          <Button variant="ghost" size="icon" aria-label="Edit" onClick={(e) => { e.stopPropagation(); setEditing(r); }}>
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" aria-label="Delete" onClick={(e) => { e.stopPropagation(); setDeleting(r); }}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </>
+                        <Button variant="ghost" size="icon" aria-label="Delete" onClick={(e) => { e.stopPropagation(); setDeleting(r); }}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
                       )}
                     </div>
                   </td>
@@ -179,30 +172,21 @@ export function OrganisationDocsClient({
         </div>
       )}
 
-      {viewer && (
-        <Dialog open onOpenChange={(o) => { if (!o) setViewer(null); }}>
-          <DialogContent className="flex max-h-[90vh] max-w-3xl flex-col">
-            <DialogHeader>
-              <DialogTitle className="truncate text-sm font-medium">{viewer.fileName}</DialogTitle>
-            </DialogHeader>
-            <div className="min-h-0 flex-1 overflow-auto rounded-md border bg-muted/30">
-              {viewer.contentType.startsWith("image/") ? (
-                /* eslint-disable-next-line @next/next/no-img-element */
-                <img src={viewer.url} alt={viewer.fileName} className="mx-auto max-h-[70vh] object-contain" />
-              ) : (
-                <iframe src={viewer.url} title={viewer.fileName} className="h-[70vh] w-full" />
-              )}
-            </div>
-          </DialogContent>
-        </Dialog>
+      {detailsDocId && (
+        // Row-click opens the shared Document Details dialog. `canUpdate`
+        // is bound to the caller's org-docs write flag — admins with
+        // `can_manage_organisation_documents` get the pencils inside;
+        // read-only viewers get preview + download only.
+        <DocumentDetailsDialog
+          documentId={detailsDocId}
+          canUpdate={canEdit}
+          onClose={() => setDetailsDocId(null)}
+          onSaved={async () => { await reload(); }}
+        />
       )}
 
       {uploadOpen && (
         <UploadDialog onClose={() => setUploadOpen(false)} onUploaded={async () => { setUploadOpen(false); await reload(); }} />
-      )}
-
-      {editing && (
-        <EditDialog row={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />
       )}
 
       {deleting && (
@@ -330,66 +314,3 @@ function UploadDialog({ onClose, onUploaded }: { onClose: () => void; onUploaded
   );
 }
 
-function EditDialog({ row, onClose, onSaved }: { row: OrgDocumentRow; onClose: () => void; onSaved: () => Promise<void> }) {
-  const [subtypes, setSubtypes] = useState<Awaited<ReturnType<typeof getOrgUploadSubtypes>>["subtypes"]>([]);
-  const [subtypeId, setSubtypeId] = useState(row.subtypeId ?? "");
-  const [expiresOn, setExpiresOn] = useState(row.expiresOn ?? "");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  useEffect(() => {
-    (async () => {
-      const res = await getOrgUploadSubtypes();
-      if (res.success) setSubtypes(res.subtypes.filter((s) => s.type === row.type));
-    })();
-  }, [row.type]);
-
-  function handleSave() {
-    startTransition(async () => {
-      const res = await updateOrgDocumentMetadata(row.id, {
-        subtypeId: subtypeId || null,
-        expiresOn: expiresOn || null,
-      });
-      if (!res.success) { setError(res.error ?? "Failed to save"); return; }
-      await onSaved();
-    });
-  }
-
-  return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Edit metadata</DialogTitle>
-          <DialogDescription>
-            Update the subtype and expiry. Document type is fixed.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4">
-          {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
-          <div className="space-y-2">
-            <Label>Subtype</Label>
-            <Select value={subtypeId} onValueChange={setSubtypeId}>
-              <SelectTrigger><SelectValue placeholder="Choose a subtype…" /></SelectTrigger>
-              <SelectContent>
-                {subtypes.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Expires on</Label>
-            <Input type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={pending}>Cancel</Button>
-          <Button onClick={handleSave} disabled={pending}>
-            {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Save
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}

@@ -124,7 +124,6 @@ export async function getDocumentSubtypes(): Promise<DocumentSubtypeDto[]> {
     .select(SELECT_COLUMNS)
     .eq("organisation_id", guard.organisationId)
     .order("type", { ascending: true })
-    .order("sort_order", { ascending: true })
     .order("name", { ascending: true });
   return ((data ?? []) as unknown as DbRow[]).map(rowToDto);
 }

@@ -324,6 +324,14 @@ function SubtypeEditorDialog({
   const scope = scopeForType(payload.type);
   const isOrgScope = scope === "organisation";
 
+  // Standing order: Save button is inactive until form data changes.
+  // For edit mode we compare the current payload with the initial one
+  // handed in on mount. For create mode any input counts as a change,
+  // so the dirty check is skipped (the name-required guard still
+  // stands).
+  const dirty =
+    mode === "create" ? true : JSON.stringify(payload) !== JSON.stringify(initial);
+
   function handleSave() {
     setError(null);
     // Force personal-only flags off when saving an org-scope subtype.
@@ -482,7 +490,7 @@ function SubtypeEditorDialog({
           <Button variant="outline" onClick={onClose} disabled={pending}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={pending || !payload.name.trim()}>
+          <Button onClick={handleSave} disabled={pending || !payload.name.trim() || !dirty}>
             {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             Save
           </Button>

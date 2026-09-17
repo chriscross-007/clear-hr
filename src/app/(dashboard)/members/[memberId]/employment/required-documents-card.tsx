@@ -221,7 +221,7 @@ export function RequiredDocumentsCard({
       <CardHeader>
         <CardTitle className="text-base">Required documents</CardTitle>
         <CardDescription>
-          Documents this {capitalize(memberLabel)} is expected to provide.
+          Documents this {capitalize(memberLabel)} is expected to have.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

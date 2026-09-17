@@ -216,7 +216,14 @@ const FIELD_LABELS: Record<string, string> = {
   tab_history: "History",
   member: "Member",
   type_subtype: "Type / Subtype",
+  // `file_size` used to render as its own row. Since CLE-219 follow-up
+  // the verbose panel folds it into a combined "File: <name> (<size>)"
+  // row (see MetadataDetail) so the auditor can tell which file was
+  // read/downloaded/etc., not just the generic subtype label. The
+  // label below is only shown if `file_size` ever arrives without a
+  // matching filename to pair with.
   file_size: "File size",
+  file_name: "File",
   force_delete_reason: "Force-delete reason",
   subtype_id: "Subtype",
   expires_on: "Expires on",
@@ -438,11 +445,71 @@ function prettifyTypeSubtype(raw: unknown): string {
   return `${prettyType} / ${subtype}`;
 }
 
-function MetadataDetail({ metadata }: { metadata: Record<string, unknown> }) {
-  const entries = Object.entries(metadata).filter(([field]) => !HIDDEN_METADATA_KEYS.has(field));
-  if (entries.length === 0) return null;
+// Render a byte count as B / KB / MB — same rounding as the document
+// lists (whole KB, one decimal for MB). Falls through to raw bytes for
+// unexpected non-number inputs so legacy audit rows never crash the panel.
+function fmtBytes(bytes: unknown): string {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes)) return String(bytes);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function MetadataDetail({
+  metadata,
+  targetLabel,
+  action,
+}: {
+  metadata: Record<string, unknown>;
+  /** Row-level filename; used as a fallback when metadata carries
+   *  `file_size` but no explicit `file_name` (legacy audit rows), or
+   *  as the sole filename source for view/download actions that don't
+   *  write file_* keys into their metadata. */
+  targetLabel?: string | null;
+  /** Action key; used to decide whether to render a "File" row from
+   *  the target label even when the metadata itself carries no
+   *  file_name/file_size. Any `document.*` action qualifies. */
+  action?: string;
+}) {
+  const rawEntries = Object.entries(metadata).filter(([field]) => !HIDDEN_METADATA_KEYS.has(field));
+  if (rawEntries.length === 0) return null;
+
+  // Fold file_name + file_size into a single "File: <name> (<size>)"
+  // row. Trades a small chunk of UI real estate for the audit trail's
+  // most useful fact — which file was actually read/downloaded/etc.
+  // For view/download/verify/etc. audit rows that don't write file_*
+  // keys, we still surface the filename via the row's target_label so
+  // the verbose panel always tells you which file was touched.
+  const hasFileName = "file_name" in metadata;
+  const hasFileSize = "file_size" in metadata;
+  const isDocAction = typeof action === "string" && action.startsWith("document.");
+  const fallbackHasName =
+    isDocAction && typeof targetLabel === "string" && targetLabel.length > 0;
+  const foldFile = hasFileName || hasFileSize || fallbackHasName;
+  const fileName = hasFileName
+    ? (metadata.file_name as unknown)
+    : (targetLabel ?? null);
+  const fileSize = hasFileSize ? metadata.file_size : null;
+
+  const entries = foldFile
+    ? rawEntries.filter(([f]) => f !== "file_name" && f !== "file_size")
+    : rawEntries;
+
   return (
     <div className="mt-2 space-y-1 rounded-md border bg-muted/30 p-3 text-sm">
+      {foldFile && (
+        <div className="flex gap-2">
+          <span className="font-medium min-w-[120px]">File:</span>
+          <span>
+            {typeof fileName === "string" && fileName.length > 0
+              ? fileName
+              : <span className="text-muted-foreground">—</span>}
+            {hasFileSize && (
+              <span className="text-muted-foreground">{` (${fmtBytes(fileSize)})`}</span>
+            )}
+          </span>
+        </div>
+      )}
       {entries.map(([field, value]) => (
         <div key={field} className="flex gap-2">
           <span className="font-medium min-w-[120px]">{FIELD_LABELS[field] ?? field}:</span>
@@ -816,7 +883,7 @@ export function AuditClient({ initialEntries, editors }: AuditClientProps) {
                 )}
                 {isExpanded && entry.metadata && Object.keys(entry.metadata).length > 0 && (
                   <div className="ml-7">
-                    <MetadataDetail metadata={entry.metadata} />
+                    <MetadataDetail metadata={entry.metadata} targetLabel={entry.target_label} action={entry.action} />
                   </div>
                 )}
               </div>
