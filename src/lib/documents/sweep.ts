@@ -121,7 +121,7 @@ export async function runDocumentsSweep(
     let q = admin
       .from("document")
       .select(
-        "id, organisation_id, file_name, type, owner_scope, owner_id, expires_on, document_subtype!subtype_id(name, requires_verification)",
+        "id, organisation_id, file_name, file_size, type, owner_scope, owner_id, expires_on, document_subtype!subtype_id(name, requires_verification)",
       )
       .lte("expires_on", today)
       .not("verified_on", "is", null);
@@ -150,6 +150,9 @@ export async function runDocumentsSweep(
           metadata: {
             type_subtype: typeSubtypeLabel(row.type as string, stObj.name ?? null),
             ...(member ? { member } : {}),
+            // CLE-219 — file_name + file_size on every doc audit.
+            file_name: (row.file_name as string) ?? "",
+            file_size: row.file_size as number,
           },
         });
         expired++;
@@ -170,7 +173,7 @@ export async function runDocumentsSweep(
     let q = admin
       .from("document")
       .select(
-        "id, organisation_id, file_name, type, owner_scope, owner_id, expires_on, document_subtype!subtype_id(name, requires_verification)",
+        "id, organisation_id, file_name, file_size, type, owner_scope, owner_id, expires_on, document_subtype!subtype_id(name, requires_verification)",
       )
       .lte("next_review_on", today)
       .not("verified_on", "is", null);
@@ -201,6 +204,9 @@ export async function runDocumentsSweep(
           metadata: {
             type_subtype: typeSubtypeLabel(row.type as string, stObj.name ?? null),
             ...(member ? { member } : {}),
+            // CLE-219 — file_name + file_size on every doc audit.
+            file_name: (row.file_name as string) ?? "",
+            file_size: row.file_size as number,
           },
         });
         overdueReview++;
@@ -226,7 +232,7 @@ export async function runDocumentsSweep(
         try {
           const { data: doc } = await admin
             .from("document")
-            .select("id, organisation_id, owner_scope, storage_path, file_name, type, document_subtype!subtype_id(name)")
+            .select("id, organisation_id, owner_scope, storage_path, file_name, file_size, type, document_subtype!subtype_id(name)")
             .eq("id", q.document_id as string)
             .single();
 
@@ -258,6 +264,12 @@ export async function runDocumentsSweep(
               metadata: {
                 type_subtype: typeSubtypeLabel(doc.type as string, stName),
                 queued_at: q.queued_at as string,
+                // CLE-219 — file_name + file_size on every doc audit.
+                // Recorded here at purge time from the row about to be
+                // deleted, so the audit trail retains the file's
+                // identifying details after the document row is gone.
+                file_name: (doc.file_name as string) ?? "",
+                file_size: doc.file_size as number,
               },
             });
             if (!auditRes.success) {

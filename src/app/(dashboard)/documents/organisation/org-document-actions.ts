@@ -172,7 +172,7 @@ export async function getOrgDocumentSignedUrl(
 
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, storage_path, file_name, content_type, type, document_subtype!subtype_id(name)")
+      .select("id, organisation_id, owner_scope, storage_path, file_name, file_size, content_type, type, document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== c.organisationId || doc.owner_scope !== "organisation") {
@@ -203,6 +203,9 @@ export async function getOrgDocumentSignedUrl(
       targetLabel: doc.file_name,
       metadata: {
         type_subtype: subtypeName ? `${doc.type} / ${subtypeName}` : doc.type,
+        // CLE-219 — file_name + file_size on every doc audit.
+        file_name: doc.file_name as string,
+        file_size: doc.file_size as number,
       },
     });
 
@@ -301,6 +304,8 @@ export async function uploadOrgDocument(
       targetLabel: file.name,
       metadata: {
         type_subtype: `${subtype.type} / ${subtype.name}`,
+        // CLE-219 — file_name + file_size on every doc audit.
+        file_name: file.name.substring(0, 255),
         file_size: file.size,
       },
     });
@@ -329,7 +334,7 @@ export async function updateOrgDocumentMetadata(
 
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, type, subtype_id, expires_on, file_name, document_subtype!subtype_id(name)")
+      .select("id, organisation_id, owner_scope, type, subtype_id, expires_on, file_name, file_size, document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== c.organisationId || doc.owner_scope !== "organisation") {
@@ -391,6 +396,9 @@ export async function updateOrgDocumentMetadata(
         changes,
         metadata: {
           type_subtype: subtypeName ? `${doc.type} / ${subtypeName}` : (doc.type as string),
+          // CLE-219 — file_name + file_size on every doc audit.
+          file_name: doc.file_name as string,
+          file_size: doc.file_size as number,
         },
       });
     }
@@ -414,7 +422,7 @@ export async function softDeleteOrgDocument(
 
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, file_name, type, document_subtype!subtype_id(name)")
+      .select("id, organisation_id, owner_scope, file_name, file_size, type, document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== c.organisationId || doc.owner_scope !== "organisation") {
@@ -442,6 +450,9 @@ export async function softDeleteOrgDocument(
       targetLabel: doc.file_name as string,
       metadata: {
         type_subtype: subtypeName ? `${doc.type} / ${subtypeName}` : (doc.type as string),
+        // CLE-219 — file_name + file_size on every doc audit.
+        file_name: doc.file_name as string,
+        file_size: doc.file_size as number,
       },
     });
 

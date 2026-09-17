@@ -207,6 +207,7 @@ export async function acknowledgeDocument(
       owner_scope: "member" | "organisation";
       owner_id: string | null;
       file_name: string;
+      file_size: number;
       storage_path: string;
       subtype_id: string;
       document_subtype:
@@ -217,7 +218,7 @@ export async function acknowledgeDocument(
     const docQuery = await admin
       .from("document")
       .select(
-        "id, organisation_id, owner_scope, owner_id, file_name, storage_path, subtype_id, " +
+        "id, organisation_id, owner_scope, owner_id, file_name, file_size, storage_path, subtype_id, " +
         "document_subtype!subtype_id(name, requires_acknowledgement)",
       )
       .eq("id", documentId)
@@ -294,6 +295,9 @@ export async function acknowledgeDocument(
         document_version_hash: hash,
         ip,
         user_agent: userAgent,
+        // CLE-219 — file_name + file_size on every doc audit.
+        file_name: doc.file_name,
+        file_size: doc.file_size,
       },
     });
 
@@ -926,6 +930,7 @@ export async function remindOutstanding(
       id: string;
       organisation_id: string;
       file_name: string;
+      file_size: number;
       owner_scope: "member" | "organisation";
       owner_id: string | null;
       reminders_last_sent_at: string | null;
@@ -937,7 +942,7 @@ export async function remindOutstanding(
     const docQuery = await admin
       .from("document")
       .select(
-        "id, organisation_id, file_name, owner_scope, owner_id, reminders_last_sent_at, " +
+        "id, organisation_id, file_name, file_size, owner_scope, owner_id, reminders_last_sent_at, " +
         "document_subtype!subtype_id(name, requires_acknowledgement)",
       )
       .eq("id", documentId)
@@ -1084,6 +1089,9 @@ export async function remindOutstanding(
       metadata: {
         sent_count: sentCount,
         subtype_name: subtypeRow.name ?? null,
+        // CLE-219 — file_name + file_size on every doc audit.
+        file_name: doc.file_name,
+        file_size: doc.file_size,
       },
     });
 

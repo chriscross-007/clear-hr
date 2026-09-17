@@ -197,6 +197,8 @@ export async function POST(request: Request) {
       metadata: {
         member: targetName,
         type_subtype: `${subtype.type} / ${subtype.name}`,
+        // CLE-219 — file_name + file_size on every doc audit.
+        file_name: displayName,
         file_size: file.size,
         capture_source: "mobile_adhoc",
       },

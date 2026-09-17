@@ -734,7 +734,7 @@ export async function getMemberDocumentSignedUrl(
 
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, owner_id, storage_path, file_name, content_type, disposal_date, type, document_subtype!subtype_id(name)")
+      .select("id, organisation_id, owner_scope, owner_id, storage_path, file_name, file_size, content_type, disposal_date, type, document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== caller.organisationId) {
@@ -801,6 +801,11 @@ export async function getMemberDocumentSignedUrl(
         // needs a defensive fallback for the strict TS pass.
         member: target ? memberDisplay(target) : "Organisation",
         type_subtype: typeSubtypeLabel(doc.type as string, subtypeNameStr),
+        // CLE-219 — file_name + file_size on every doc audit so the
+        // Audit page's verbose panel can render the "File: … (size)"
+        // row consistently across every doc action.
+        file_name: doc.file_name as string,
+        file_size: doc.file_size as number,
       },
     });
 
@@ -923,6 +928,8 @@ export async function uploadMemberDocument(
       metadata: {
         member: memberDisplay(target),
         type_subtype: typeSubtypeLabel(subtype.type, subtype.name),
+        // CLE-219 — file_name + file_size on every doc audit.
+        file_name: file.name.substring(0, 255),
         file_size: file.size,
       },
     });
@@ -1095,6 +1102,10 @@ export async function replaceMemberDocument(
         member: memberDisplay(target),
         type_subtype: typeSubtypeLabel(oldDoc.type as string, subtypeName),
         replaces_document_id: oldDocumentId,
+        // CLE-219 — file_name + file_size on every doc audit; current
+        // values here reflect the new (post-replace) file.
+        file_name: file.name.substring(0, 255),
+        file_size: file.size,
       },
     });
 
@@ -1215,6 +1226,10 @@ export async function finalizeDocumentReplace(
           member: memberDisplay(target),
           type_subtype: typeSubtypeLabel(oldRow.type, subtypeName ?? null),
           replaces_document_id: oldDocumentId,
+          // CLE-219 — file_name + file_size on every doc audit; current
+          // values here reflect the new (post-replace) file.
+          file_name: newRow.file_name,
+          file_size: newRow.file_size,
         },
       });
     }
@@ -1241,7 +1256,7 @@ export async function updateMemberDocumentMetadata(
 
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, owner_id, type, subtype_id, expires_on, next_review_on, file_name, document_subtype!subtype_id(name)")
+      .select("id, organisation_id, owner_scope, owner_id, type, subtype_id, expires_on, next_review_on, file_name, file_size, document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== caller.organisationId || doc.owner_scope !== "member") {
@@ -1324,6 +1339,9 @@ export async function updateMemberDocumentMetadata(
         metadata: {
           member: memberDisplay(target),
           type_subtype: typeSubtypeLabel(doc.type as string, subtypeName),
+          // CLE-219 — file_name + file_size on every doc audit.
+          file_name: doc.file_name as string,
+          file_size: doc.file_size as number,
         },
       });
     }
@@ -1349,7 +1367,7 @@ export async function softDeleteMemberDocument(
     const admin = getAdmin();
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, owner_id, file_name, retention_class, disposal_date, type, document_subtype!subtype_id(name)")
+      .select("id, organisation_id, owner_scope, owner_id, file_name, file_size, retention_class, disposal_date, type, document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== caller.organisationId || doc.owner_scope !== "member") {
@@ -1404,6 +1422,9 @@ export async function softDeleteMemberDocument(
       metadata: {
         member: memberDisplay(target),
         type_subtype: typeSubtypeLabel(doc.type as string, subtypeNameDel),
+        // CLE-219 — file_name + file_size on every doc audit.
+        file_name: doc.file_name as string,
+        file_size: doc.file_size as number,
         ...(requiresForce ? { force_delete_reason: reason } : {}),
       },
     });
@@ -1487,7 +1508,7 @@ export async function restoreMemberDocument(
 
     const { data: doc } = await admin
       .from("document")
-      .select("owner_id, file_name, type, document_subtype!subtype_id(name)")
+      .select("owner_id, file_name, file_size, type, document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
 
@@ -1508,6 +1529,9 @@ export async function restoreMemberDocument(
       metadata: {
         ...(targetMember ? { member: memberDisplay(targetMember) } : {}),
         ...(doc?.type ? { type_subtype: typeSubtypeLabel(doc.type as string, subtypeNameRes) } : {}),
+        // CLE-219 — file_name + file_size on every doc audit.
+        ...(doc?.file_name ? { file_name: doc.file_name as string } : {}),
+        ...(doc?.file_size !== undefined && doc?.file_size !== null ? { file_size: doc.file_size as number } : {}),
       },
     });
 
@@ -1537,7 +1561,7 @@ async function verifyOrRenew(
     const admin = getAdmin();
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, owner_id, type, expires_on, file_name, document_subtype!subtype_id(name, requires_verification, review_period_months)")
+      .select("id, organisation_id, owner_scope, owner_id, type, expires_on, file_name, file_size, document_subtype!subtype_id(name, requires_verification, review_period_months)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== caller.organisationId || doc.owner_scope !== "member") {
@@ -1617,6 +1641,9 @@ async function verifyOrRenew(
         // i.e. the subtype has a review period. Otherwise the doc's
         // manually-managed deadline is untouched by verify/renew.
         ...(nextReviewOn !== null ? { next_review_on: nextReviewOn } : {}),
+        // CLE-219 — file_name + file_size on every doc audit.
+        file_name: doc.file_name as string,
+        file_size: doc.file_size as number,
         // verification_notes intentionally omitted — never in audit.
       },
     });
