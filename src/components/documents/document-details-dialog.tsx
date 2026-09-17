@@ -647,15 +647,22 @@ export function DocumentDetailsDialog({
                   </>
                 )}
 
-                {/* CLE-219 — Acknowledgement section. Renders only when
-                    the subtype requires acknowledgement AND the caller
-                    is looking at a live doc (Trash-view / `readOnly`
-                    suppresses it — a trashed doc's ack state is moot,
-                    and the audit story stays clean by not offering a
-                    click on a soon-to-be-deleted row). Content switches
+                {/* CLE-219 — Acknowledgement section. Content switches
                     on caller identity + ack state — see spec §12 for
-                    the full grid. */}
-                {ackStatus?.requiresAcknowledgement && !readOnly && (
+                    the full grid.
+                    Trash-view (`readOnly`) suppresses it entirely — a
+                    trashed doc's ack state is moot, and the audit
+                    story stays clean by not offering a click on a
+                    soon-to-be-deleted row.
+                    CLE-220 follow-up: for the employee-view dialog
+                    (`hideActivity`, which is the marker for the
+                    self-scope My Documents / Org Documents surface)
+                    we render the section even when the doc DOESN'T
+                    require acknowledgement — so the employee gets
+                    "No acknowledgement needed" instead of an empty
+                    right half. Admins keep the old "only show when
+                    required" behaviour to avoid clutter. */}
+                {!readOnly && ackStatus && (ackStatus.requiresAcknowledgement || hideActivity) && (
                   <div className="border-b p-4">
                     <AcknowledgementSection
                       status={ackStatus}
@@ -1117,7 +1124,24 @@ function AcknowledgementSection({
   error: string | null;
   onAcknowledge: () => void;
 }) {
-  const { isCallerExpectedToAcknowledge, callerAcknowledgement, coverageSummary } = status;
+  const { requiresAcknowledgement, isCallerExpectedToAcknowledge, callerAcknowledgement, coverageSummary } = status;
+
+  // Branch 0 (CLE-220 follow-up) — Doc doesn't require acknowledgement
+  // at all. Only reached in the employee-view dialog (`hideActivity`
+  // in the parent), where we render the section anyway so the panel
+  // isn't half-empty. Plain info line — no action, no state.
+  if (!requiresAcknowledgement) {
+    return (
+      <div>
+        <p className="mb-1 flex items-center gap-2 text-base font-semibold">
+          <CheckSquare className="h-4 w-4 text-muted-foreground" /> Acknowledgement
+        </p>
+        <p className="text-sm text-muted-foreground">
+          No acknowledgement is required for this document.
+        </p>
+      </div>
+    );
+  }
 
   // Branch 1 — Caller has ack'd. Show the read-only stamp.
   if (callerAcknowledgement) {
