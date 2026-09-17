@@ -350,16 +350,54 @@ export async function getMyOutstandingAcknowledgements(): Promise<
       )
       .eq("organisation_id", caller.organisationId)
       .order("created_at", { ascending: false });
+    // Temporary diagnostic (CLE-219) — remove once outstanding-ack
+    // list is verified working. Chris was seeing "Nothing to
+    // acknowledge" for an employee with a genuinely outstanding
+    // Contract, and the parallel details-dialog helper correctly
+    // said the same employee was expected to ack. Log the raw query
+    // shape so we can pinpoint whether the join is returning what
+    // the filter expects.
+    if (docsQuery.error) {
+      console.error("[CLE-219 outstanding] docsQuery error:", docsQuery.error);
+    }
     const rows = (docsQuery.data ?? []) as unknown as DocJoin[];
+    console.log("[CLE-219 outstanding] caller:", {
+      memberId: caller.memberId,
+      organisationId: caller.organisationId,
+      canViewOrgDocs: caller.canViewOrgDocs,
+    });
+    console.log("[CLE-219 outstanding] total docs fetched:", rows.length);
+    console.log("[CLE-219 outstanding] first 5 rows:",
+      rows.slice(0, 5).map((d) => ({
+        id: d.id,
+        owner_scope: d.owner_scope,
+        owner_id: d.owner_id,
+        file_name: d.file_name,
+        subtype_id: d.subtype_id,
+        document_subtype: d.document_subtype,
+      })));
 
     // Filter to ack-required docs the caller is expected to ack.
     const relevant = rows.filter((d) => {
       const st = Array.isArray(d.document_subtype) ? d.document_subtype[0] : d.document_subtype;
-      if (!st?.requires_acknowledgement) return false;
-      if (d.owner_scope === "member") return d.owner_id === caller.memberId;
-      if (d.owner_scope === "organisation") return caller.canViewOrgDocs;
-      return false;
+      const ackReq = !!st?.requires_acknowledgement;
+      const ownerMatch = d.owner_scope === "member" && d.owner_id === caller.memberId;
+      const orgMatch = d.owner_scope === "organisation" && caller.canViewOrgDocs;
+      const keep = ackReq && (ownerMatch || orgMatch);
+      if (!keep) {
+        console.log("[CLE-219 outstanding] dropping row:", {
+          id: d.id,
+          file_name: d.file_name,
+          reason: !ackReq ? "subtype not ack-required" :
+                  d.owner_scope === "member" ? `owner ${d.owner_id} != caller ${caller.memberId}` :
+                  d.owner_scope === "organisation" ? `org-scope + canViewOrgDocs=${caller.canViewOrgDocs}` :
+                  `unknown owner_scope=${d.owner_scope}`,
+          st,
+        });
+      }
+      return keep;
     });
+    console.log("[CLE-219 outstanding] relevant after filter:", relevant.length);
     if (relevant.length === 0) return { success: true, rows: [] };
 
     // Which of those has the caller already acked?
