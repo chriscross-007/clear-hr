@@ -19,6 +19,7 @@ import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 import { STATUS_LABEL, STATUS_TONE, type DocumentStatus } from "@/lib/document-status";
 import type { ComplianceRow } from "../compliance-actions";
 import { getComplianceRows } from "../compliance-actions";
+import { ComplianceTabs } from "./compliance-tabs";
 
 const STATUS_OPTIONS: (DocumentStatus | "not_uploaded")[] = [
   "expired",
@@ -159,6 +160,7 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
             </p>
           </div>
         </div>
+        <ComplianceTabs active="management" />
       </StickyPageHeader>
 
       {/* Filter row */}
