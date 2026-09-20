@@ -6,6 +6,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { useMemberLabel } from "@/contexts/member-label-context";
 import { Plus, Trash2, Loader2, ShieldCheck, Clock, CheckSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -313,6 +314,11 @@ function SubtypeEditorDialog({
   const [payload, setPayload] = useState<DocumentSubtypeWritePayload>(initial);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Standing rule (CLAUDE.md → Dynamic Member Label): never hardcode
+  // "employee". Resolve via context so the subtext reads e.g. "an
+  // employee" / "a colleague" / "a member" per org config. The context
+  // returns `{ memberLabel: string }`, not a bare string.
+  const { memberLabel } = useMemberLabel();
 
   function update<K extends keyof DocumentSubtypeWritePayload>(
     key: K,
@@ -439,8 +445,10 @@ function SubtypeEditorDialog({
                   onChange={(v) => update("requiresVerification", v)}
                 />
                 <FlagRow
-                  label="Trackable per member"
-                  description="Available in the Required Documents picker on the Employment tab so specific members can be marked as needing this."
+                  label="Can be required"
+                  description={`Can be set as Required for ${
+                    /^[aeiouAEIOU]/.test(memberLabel) ? "an" : "a"
+                  } ${memberLabel}.`}
                   value={payload.trackablePerMember}
                   onChange={(v) => update("trackablePerMember", v)}
                 />
@@ -465,21 +473,30 @@ function SubtypeEditorDialog({
             />
           </div>
 
-          {/* Review cadence is a per-member concept (DBS every 3 yrs
-              etc.). Meaningless for org docs. */}
+          {/* Review interval is a per-member concept (DBS every 3 yrs
+              etc.). Meaningless for org docs.
+              inputMode="numeric" + pattern gets a numeric-only keypad
+              on mobile without the desktop spinner arrows the plain
+              type="number" renders. Empty string = no interval set. */}
           {!isOrgScope && (
             <div className="flex flex-col gap-3">
               <div className="space-y-2">
-                <Label>Review cadence (months)</Label>
+                <Label>Review interval (months)</Label>
+                <p className="text-xs text-muted-foreground">
+                  Check and reverify after a number of months.
+                </p>
                 <Input
-                  type="number"
-                  min={0}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   value={payload.reviewPeriodMonths ?? ""}
-                  onChange={(e) => update(
-                    "reviewPeriodMonths",
-                    e.target.value === "" ? null : Number(e.target.value),
-                  )}
-                  placeholder="e.g. 36 for DBS"
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^0-9]/g, "");
+                    update(
+                      "reviewPeriodMonths",
+                      raw === "" ? null : Number(raw),
+                    );
+                  }}
                 />
               </div>
             </div>

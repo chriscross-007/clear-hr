@@ -37,6 +37,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { STATUS_LABEL, STATUS_TONE, type DocumentStatus } from "@/lib/document-status";
+import { fmtBytes } from "@/lib/format-bytes";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
 import { NewMemberDocumentDialog } from "@/components/documents/new-document-dialog";
 import {
@@ -236,7 +237,12 @@ export function MyDocumentsCard({
                           )}
                         </div>
                         {r.fileName && (
-                          <p className="text-xs text-muted-foreground truncate">{r.fileName}</p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {r.fileName}
+                            {r.fileSize !== null && (
+                              <span className="ml-1 text-muted-foreground/70">({fmtBytes(r.fileSize)})</span>
+                            )}
+                          </p>
                         )}
                         {!hasDoc && !canOpenNew && (
                           <p className="mt-0.5 text-xs text-muted-foreground italic">

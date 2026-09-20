@@ -18,6 +18,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 import { MyDocumentsCard } from "@/components/documents/my-documents-card";
+import { MyOtherDocumentsCard } from "@/components/documents/my-other-documents-card";
 import { MyOrgDocumentsList } from "@/components/documents/my-org-documents-list";
 import type { OrgDocumentRow } from "@/app/(dashboard)/documents/organisation/org-document-actions";
 
@@ -76,6 +77,10 @@ export function MyDocumentsClient({
       <TabsContent value="my" className="mt-4">
         <div className="mx-auto max-w-4xl space-y-6">
           <MyDocumentsCard memberId={memberId} memberName={memberName} />
+          {/* CLE-221 — informational tail. Every member-scope doc the
+              caller owns that the required card does NOT already
+              surface. Read-only; refreshes off the same event bus. */}
+          <MyOtherDocumentsCard memberId={memberId} />
         </div>
       </TabsContent>
 

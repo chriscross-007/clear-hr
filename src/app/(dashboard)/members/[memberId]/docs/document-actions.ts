@@ -1929,6 +1929,11 @@ export interface RequiredDocumentRow {
    *  "not_uploaded" instead. */
   documentId: string | null;
   fileName: string | null;
+  /** CLE-221 follow-up — bytes. Null on not-uploaded / synthetic
+   *  aggregate rows. Consumed by the "name (size)" render in the
+   *  Subtype cell of My Documents / My other documents / Org Docs
+   *  so the three cards read consistently. */
+  fileSize: number | null;
   verifiedOn: string | null;
   expiresOn: string | null;
   nextReviewOn: string | null;
@@ -2024,7 +2029,7 @@ export async function getMemberRequiredDocumentRows(
     // and past-disposal_date rows — same rules the docs page uses.
     const { data: docRows } = await admin
       .from("document")
-      .select("id, subtype_id, file_name, uploaded_at, expires_on, next_review_on, verified_on, disposal_date")
+      .select("id, subtype_id, file_name, file_size, uploaded_at, expires_on, next_review_on, verified_on, disposal_date")
       .eq("organisation_id", caller.organisationId)
       .eq("owner_scope", "member")
       .eq("owner_id", memberId);
@@ -2032,6 +2037,10 @@ export async function getMemberRequiredDocumentRows(
       id: string;
       subtype_id: string | null;
       file_name: string;
+      // CLE-221 follow-up — file size on the row so the self-scope
+      // My Documents / other-docs cards can render "name (size)" in
+      // the Subtype column, matching the Org Documents layout.
+      file_size: number;
       uploaded_at: string;
       expires_on: string | null;
       next_review_on: string | null;
@@ -2106,6 +2115,7 @@ export async function getMemberRequiredDocumentRows(
         isAcknowledged: newest ? ackedDocIds.has(newest.id) : false,
         documentId: newest?.id ?? null,
         fileName: newest?.file_name ?? null,
+        fileSize: newest?.file_size ?? null,
         verifiedOn: newest?.verified_on ?? null,
         expiresOn: newest?.expires_on ?? null,
         nextReviewOn: newest?.next_review_on ?? null,
@@ -2168,6 +2178,7 @@ export async function getMemberRequiredDocumentRows(
           isAcknowledged: ackedDocIds.has(newest.id),
           documentId: newest.id,
           fileName: newest.file_name,
+          fileSize: newest.file_size,
           verifiedOn: newest.verified_on,
           expiresOn: newest.expires_on,
           nextReviewOn: newest.next_review_on,
@@ -2200,6 +2211,7 @@ export async function getMemberRequiredDocumentRows(
           rtwDocs: [],
           documentId: null,
           fileName: null,
+          fileSize: null,
           verifiedOn: null,
           expiresOn: null,
           nextReviewOn: null,

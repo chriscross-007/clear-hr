@@ -118,9 +118,14 @@ export function OrganisationDocsClient({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-                <th className="px-4 py-2 font-medium">File</th>
+                {/* CLE-221 follow-up — Col 1 now mirrors the My Documents cards:
+                    Subtype heading (bold) on top, file name + size below.
+                    The standalone Subtype column is folded in — no separate
+                    column needed. Type column stays (all rows are
+                    "Organisation Document" today; kept for parity with
+                    future org-scope doc types). */}
+                <th className="px-4 py-2 font-medium">Subtype</th>
                 <th className="px-4 py-2 font-medium hidden sm:table-cell">Type</th>
-                <th className="px-4 py-2 font-medium hidden md:table-cell">Subtype</th>
                 <th className="px-4 py-2 font-medium hidden lg:table-cell">Expires</th>
                 <th className="px-4 py-2 font-medium hidden lg:table-cell">Uploaded</th>
                 <th className="px-4 py-2 text-right" />
@@ -135,21 +140,24 @@ export function OrganisationDocsClient({
                   title="Open document details"
                 >
                   <td className="px-4 py-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <div className="flex items-start gap-2 min-w-0">
+                      <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                       <div className="min-w-0">
-                        <p className="font-medium truncate">{r.fileName}</p>
-                        <p className="text-xs text-muted-foreground">{fmtSize(r.fileSize)}</p>
+                        {/* Subtype line on top so this cell reads the same
+                            way as the My Documents cards. Falls back to
+                            an em-dash for the rare row with no subtype. */}
+                        <p className="font-medium">
+                          {r.subtypeName ?? <span className="text-muted-foreground">—</span>}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {r.fileName}
+                          <span className="ml-1 text-muted-foreground/70">({fmtSize(r.fileSize)})</span>
+                        </p>
                       </div>
                     </div>
                   </td>
                   <td className="px-4 py-2 text-muted-foreground hidden sm:table-cell">
                     {TYPE_LABEL[r.type] ?? r.type}
-                  </td>
-                  <td className="px-4 py-2 hidden md:table-cell">
-                    {r.subtypeName ? (
-                      <span className="inline-block rounded bg-muted px-2 py-0.5 text-xs">{r.subtypeName}</span>
-                    ) : <span className="text-muted-foreground">—</span>}
                   </td>
                   <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">{fmtDate(r.expiresOn)}</td>
                   <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">{fmtDateTime(r.uploadedAt)}</td>
