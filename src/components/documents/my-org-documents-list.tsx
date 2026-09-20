@@ -24,6 +24,7 @@ import {
   type OrgDocumentRow,
 } from "@/app/(dashboard)/documents/organisation/org-document-actions";
 import { onMemberDocsChanged } from "@/lib/member-docs-events";
+import { fmtBytes } from "@/lib/format-bytes";
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
@@ -35,11 +36,6 @@ function fmtDateTime(iso: string): string {
   return new Date(iso).toLocaleDateString("en-GB", {
     day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
   });
-}
-function fmtSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function MyOrgDocumentsList({
@@ -90,8 +86,11 @@ export function MyOrgDocumentsList({
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-                  <th className="px-3 py-2 font-medium">File</th>
-                  <th className="px-3 py-2 font-medium hidden md:table-cell">Subtype</th>
+                  {/* CLE-221 follow-up — Col 1 now folds Subtype (bold) +
+                      file name + size into one cell so this list reads
+                      the same way as the two My Documents cards on the
+                      other tab. Separate Subtype column dropped. */}
+                  <th className="px-3 py-2 font-medium">Subtype</th>
                   <th className="px-3 py-2 font-medium hidden lg:table-cell">Expires</th>
                   <th className="px-3 py-2 font-medium hidden lg:table-cell">Uploaded</th>
                 </tr>
@@ -105,11 +104,13 @@ export function MyOrgDocumentsList({
                     title="Open document details"
                   >
                     <td className="px-3 py-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <div className="flex items-start gap-2 min-w-0">
+                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-medium truncate">{r.fileName}</p>
+                            <p className="font-medium">
+                              {r.subtypeName ?? <span className="text-muted-foreground">—</span>}
+                            </p>
                             {/* CLE-220 — "Please Ack" pill on any org
                                 doc whose subtype requires ack AND the
                                 caller has not yet acknowledged it. */}
@@ -119,14 +120,12 @@ export function MyOrgDocumentsList({
                               </span>
                             )}
                           </div>
-                          <p className="text-xs text-muted-foreground">{fmtSize(r.fileSize)}</p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {r.fileName}
+                            <span className="ml-1 text-muted-foreground/70">({fmtBytes(r.fileSize)})</span>
+                          </p>
                         </div>
                       </div>
-                    </td>
-                    <td className="px-3 py-2 hidden md:table-cell">
-                      {r.subtypeName ? (
-                        <span className="inline-block rounded bg-muted px-2 py-0.5 text-xs">{r.subtypeName}</span>
-                      ) : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell">{fmtDate(r.expiresOn)}</td>
                     <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell">{fmtDateTime(r.uploadedAt)}</td>
