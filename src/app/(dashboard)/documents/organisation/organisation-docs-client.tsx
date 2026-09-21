@@ -118,14 +118,14 @@ export function OrganisationDocsClient({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-                {/* CLE-221 follow-up — Col 1 now mirrors the My Documents cards:
-                    Subtype heading (bold) on top, file name + size below.
-                    The standalone Subtype column is folded in — no separate
-                    column needed. Type column stays (all rows are
-                    "Organisation Document" today; kept for parity with
-                    future org-scope doc types). */}
+                {/* CLE-221 follow-up — Col 1 folds Subtype (bold) + file
+                    name + size into one cell so this list reads the
+                    same way as the two My Documents cards.
+                    Type column dropped: every row today is "Organisation
+                    Document", so the column carried no information —
+                    trivial to reinstate if we ever add a second org-
+                    scope doc type. */}
                 <th className="px-4 py-2 font-medium">Subtype</th>
-                <th className="px-4 py-2 font-medium hidden sm:table-cell">Type</th>
                 <th className="px-4 py-2 font-medium hidden lg:table-cell">Expires</th>
                 <th className="px-4 py-2 font-medium hidden lg:table-cell">Uploaded</th>
                 <th className="px-4 py-2 text-right" />
@@ -155,9 +155,6 @@ export function OrganisationDocsClient({
                         </p>
                       </div>
                     </div>
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground hidden sm:table-cell">
-                    {TYPE_LABEL[r.type] ?? r.type}
                   </td>
                   <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">{fmtDate(r.expiresOn)}</td>
                   <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">{fmtDateTime(r.uploadedAt)}</td>

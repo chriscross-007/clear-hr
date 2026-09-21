@@ -48,6 +48,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { StickyPageHeader } from "@/components/ui/sticky-page-header";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+// CLE-223 — Admin variant of the org-docs list, per-target ack state.
+import { MemberOrgDocumentsList } from "@/components/documents/member-org-documents-list";
+import { useMemberLabel } from "@/contexts/member-label-context";
+import { capitalize } from "@/lib/label-utils";
 import {
   listMemberDocuments,
   listTrashedMemberDocuments,
@@ -130,11 +135,26 @@ export function DocsClient({
   canForceDelete,
 }: DocsClientProps) {
   const router = useRouter();
+  const { memberLabel } = useMemberLabel();
   const [rows, setRows] = useState<MemberDocumentRow[]>([]);
   const [trashRows, setTrashRows] = useState<TrashedMemberDocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showTrash, setShowTrash] = useState(false);
+  // CLE-223 — Two-tab shell. Default lands on the member tab so the
+  // existing #required-documents deep link (traffic-light click-
+  // through from the Employees Directory / sidebar avatar badge)
+  // still resolves inside the Required Documents card.
+  const [activeTab, setActiveTab] = useState<"member" | "org">("member");
+
+  // CLE-223 — First-name label for tab 1. Fall back to
+  // `capitalize(memberLabel) + "'s Documents"` for edge cases where
+  // the member row has no name yet (e.g. pre-invite created via
+  // email only). Never hardcode "Employee's".
+  const firstName = memberName.trim().split(/\s+/)[0] ?? "";
+  const memberTabLabel = firstName
+    ? `${firstName}'s Documents`
+    : `${capitalize(memberLabel)}'s Documents`;
 
   const [viewerDoc, setViewerDoc] = useState<{
     url: string;
@@ -200,30 +220,49 @@ export function DocsClient({
           {toastMessage}
         </div>
       )}
-      {/* CLE-222 follow-up — "Add Document" moved out of the sticky
-          header into the "Other Documents" card's Live tab (see below).
-          Required Documents has its own add controls (+ subtype picker
-          and per-row +/− on the required table). Trash view has no
-          Add — you don't upload into the trash. */}
-      <StickyPageHeader>
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-bold">Documents</h1>
-        </div>
-      </StickyPageHeader>
+      {/* CLE-223 — Two-tab shell. Tab 1 = the existing per-member
+          Required + Other cards. Tab 2 = the org-docs list scoped to
+          this member's ack state. Follows CLAUDE.md's "Tabs in the
+          sticky header" convention: <Tabs> spans both the sticky
+          header and the tab content, TabsList lives inside the
+          sticky band so triggers stay pinned. */}
+      <Tabs
+        value={activeTab}
+        onValueChange={(v) => setActiveTab(v === "org" ? "org" : "member")}
+        className="w-full"
+      >
+        {/* CLE-222 follow-up — "Add Document" moved out of the sticky
+            header into the "Other Documents" card's Live tab (see
+            below). Required Documents has its own add controls
+            (+ subtype picker and per-row +/− on the required table).
+            Trash view has no Add — you don't upload into the trash.
+            CLE-223 — no "+ Add" button leaks into the sticky header
+            on the Org tab either; admins add org docs from
+            /documents/organisation. */}
+        <StickyPageHeader>
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h1 className="text-2xl font-bold">Documents</h1>
+          </div>
+          <TabsList>
+            <TabsTrigger value="member">{memberTabLabel}</TabsTrigger>
+            <TabsTrigger value="org">Org Documents</TabsTrigger>
+          </TabsList>
+        </StickyPageHeader>
 
-      {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive mt-4">{error}</div>}
+        {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive mt-4">{error}</div>}
 
-      {/* CLE-222 — Two-card stack mirroring the employee's own
-          /my-documents view: Required Documents on top, Other
-          Documents (the free-form live/trash lists) below. */}
-      <div className="mt-4 space-y-4">
-        <RequiredDocumentsCard
-          memberId={memberId}
-          memberName={memberName}
-          canEdit={canUpdate}
-        />
+        <TabsContent value="member" className="mt-4">
+          {/* CLE-222 — Two-card stack mirroring the employee's own
+              /my-documents view: Required Documents on top, Other
+              Documents (the free-form live/trash lists) below. */}
+          <div className="space-y-4">
+            <RequiredDocumentsCard
+              memberId={memberId}
+              memberName={memberName}
+              canEdit={canUpdate}
+            />
 
-        <Card>
+            <Card>
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
               <CardTitle className="text-base">
@@ -301,7 +340,15 @@ export function DocsClient({
             )}
           </CardContent>
         </Card>
-      </div>
+          </div>
+        </TabsContent>
+
+        {/* CLE-223 — Org Documents tab. Component owns its own Card
+            wrapper (same convention as <MyOrgDocumentsList>). */}
+        <TabsContent value="org" className="mt-4">
+          <MemberOrgDocumentsList memberId={memberId} memberName={memberName} />
+        </TabsContent>
+      </Tabs>
 
       {detailsDocId && (
         <DocumentDetailsDialog
