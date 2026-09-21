@@ -374,7 +374,7 @@ function CoverageTable({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-            <th className="px-4 py-2 font-medium">Subtype</th>
+            <th className="px-4 py-2 font-medium">Document</th>
             <th className="px-4 py-2 font-medium">File</th>
             <th className="px-4 py-2 font-medium">Scope</th>
             <th className="px-4 py-2 font-medium">Owner</th>

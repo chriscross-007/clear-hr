@@ -26,7 +26,7 @@ import {
   setMemberOrgDocumentVisibility,
   type OrgDocumentRowForMember,
 } from "@/app/(dashboard)/documents/organisation/org-document-actions";
-import { dispatchMemberDocsChanged, onMemberDocsChanged } from "@/lib/member-docs-events";
+import { onMemberDocsChanged } from "@/lib/member-docs-events";
 import { fmtBytes } from "@/lib/format-bytes";
 
 function fmtDate(iso: string | null): string {
@@ -55,30 +55,38 @@ export function MemberOrgDocumentsList({
   memberName: string;
 }) {
   const [rows, setRows] = useState<OrgDocumentRowForMember[]>([]);
-  const [loading, setLoading] = useState(true);
+  // CLE-224 follow-up — initial vs. background refresh. The spinner
+  // shows only for the very first mount; subsequent refreshes (event
+  // bus fires, optimistic-toggle post-hoc syncs) happen silently so
+  // the grid never disappears mid-interaction.
+  const [initialLoaded, setInitialLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detailsDocId, setDetailsDocId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
     setError(null);
     const res = await getOrgDocumentsForMember(memberId);
-    setLoading(false);
-    if (!res.success) { setError(res.error ?? "Failed to load"); return; }
+    if (!res.success) { setError(res.error ?? "Failed to load"); setInitialLoaded(true); return; }
     setRows(res.rows);
+    setInitialLoaded(true);
   }, [memberId]);
 
   useEffect(() => { void load(); }, [load]);
 
-  // Refresh on the same shared bus the required + other cards use,
-  // keyed on the target's memberId so future HR-ack-on-behalf flows
-  // (not shipped today) refresh the list automatically.
+  // Refresh on the shared bus keyed on the target's memberId so future
+  // HR-ack-on-behalf flows or other sibling surfaces can trigger a
+  // silent refetch. Runs without setting loading=true, so the grid
+  // stays visible throughout.
   useEffect(() => onMemberDocsChanged(memberId, () => { void load(); }), [memberId, load]);
 
   // CLE-224 — optimistic toggle for the Viewable column. Flips local
-  // state first, fires the server action, reverts on failure. On
-  // success we also fire the shared bus so any sibling surface (the
-  // required-docs card, etc.) can react if it starts to care.
+  // state first, fires the server action, reverts on failure. We
+  // deliberately do NOT dispatch `member-docs-changed` from this
+  // handler — the local state already reflects the change, and firing
+  // the bus would trigger our own listener above (silent now, but
+  // still an unnecessary round-trip). Sibling surfaces that need to
+  // react to visibility changes should subscribe to a distinct event
+  // if that becomes a real need.
   const toggleViewable = useCallback(
     async (documentId: string, next: boolean) => {
       setRows((prev) => prev.map((r) => (r.id === documentId ? { ...r, viewable: next } : r)));
@@ -87,9 +95,7 @@ export function MemberOrgDocumentsList({
       if (!res.success) {
         setError(res.error ?? "Failed to update visibility");
         setRows((prev) => prev.map((r) => (r.id === documentId ? { ...r, viewable: !next } : r)));
-        return;
       }
-      dispatchMemberDocsChanged(memberId);
     },
     [memberId],
   );
@@ -103,7 +109,7 @@ export function MemberOrgDocumentsList({
         {error && (
           <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">{error}</div>
         )}
-        {loading ? (
+        {!initialLoaded ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
@@ -123,7 +129,7 @@ export function MemberOrgDocumentsList({
                       target's `/my-documents` view and drops the
                       pair out of ack coverage denominators. */}
                   <th className="px-3 py-2 font-medium w-24">Viewable</th>
-                  <th className="px-3 py-2 font-medium">Subtype</th>
+                  <th className="px-3 py-2 font-medium">Document</th>
                   <th className="px-3 py-2 font-medium hidden lg:table-cell">Expires</th>
                   <th className="px-3 py-2 font-medium hidden lg:table-cell">Uploaded</th>
                 </tr>

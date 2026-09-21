@@ -125,7 +125,7 @@ export function OrganisationDocsClient({
                     Document", so the column carried no information —
                     trivial to reinstate if we ever add a second org-
                     scope doc type. */}
-                <th className="px-4 py-2 font-medium">Subtype</th>
+                <th className="px-4 py-2 font-medium">Document</th>
                 <th className="px-4 py-2 font-medium hidden lg:table-cell">Expires</th>
                 <th className="px-4 py-2 font-medium hidden lg:table-cell">Uploaded</th>
                 <th className="px-4 py-2 text-right" />

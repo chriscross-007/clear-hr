@@ -122,7 +122,7 @@ export function MyDocumentsCard({
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-                  <th className="px-3 py-2 font-medium">Subtype</th>
+                  <th className="px-3 py-2 font-medium">Document</th>
                   <th className="px-3 py-2 font-medium">Status</th>
                   <th className="px-3 py-2 font-medium hidden md:table-cell">Verified</th>
                   <th className="px-3 py-2 font-medium hidden md:table-cell">Expires</th>

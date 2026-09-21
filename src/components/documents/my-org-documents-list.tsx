@@ -90,7 +90,7 @@ export function MyOrgDocumentsList({
                       file name + size into one cell so this list reads
                       the same way as the two My Documents cards on the
                       other tab. Separate Subtype column dropped. */}
-                  <th className="px-3 py-2 font-medium">Subtype</th>
+                  <th className="px-3 py-2 font-medium">Document</th>
                   <th className="px-3 py-2 font-medium hidden lg:table-cell">Expires</th>
                   <th className="px-3 py-2 font-medium hidden lg:table-cell">Uploaded</th>
                 </tr>
