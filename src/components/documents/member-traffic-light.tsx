@@ -17,9 +17,9 @@ import { onMemberDocsChanged } from "@/lib/member-docs-events";
 export function MemberDocumentsTrafficLight({
   memberId,
   /** When set, clicking the badge routes to this path. Defaults to
-   *  the member's Employment tab — where the Required Documents
-   *  card lives — so admins can act on whatever's driving the
-   *  colour. */
+   *  the member's Documents tab — where the Required Documents
+   *  card lives (CLE-222) — so admins can act on whatever's driving
+   *  the colour. */
   onClickHref,
 }: {
   memberId: string;

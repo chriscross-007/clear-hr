@@ -24,6 +24,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -58,6 +64,10 @@ import { STATUS_LABEL, STATUS_TONE } from "@/lib/document-status";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
 import { NewMemberDocumentDialog } from "@/components/documents/new-document-dialog";
 import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
+// CLE-222 — Required Documents card mirrors the employee's own
+// /my-documents view. Lives here (not on the Employment tab)
+// so the admin surface stacks the two docs cards on one page.
+import { RequiredDocumentsCard } from "@/app/(dashboard)/members/[memberId]/employment/required-documents-card";
 const TYPE_LABEL: Record<string, string> = {
   contract: "Contract",
   certificate: "Certificate",
@@ -190,75 +200,108 @@ export function DocsClient({
           {toastMessage}
         </div>
       )}
+      {/* CLE-222 follow-up — "Add Document" moved out of the sticky
+          header into the "Other Documents" card's Live tab (see below).
+          Required Documents has its own add controls (+ subtype picker
+          and per-row +/− on the required table). Trash view has no
+          Add — you don't upload into the trash. */}
       <StickyPageHeader>
         <div className="flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-bold">
-            Documents <span className="text-muted-foreground font-normal">— {showTrash ? "Trash" : "Live"}</span>
-          </h1>
-          <div className="flex items-center gap-2">
-            {canManageDeleted && (
-              <Button
-                type="button"
-                variant={showTrash ? "default" : "outline"}
-                size="sm"
-                onClick={() => setShowTrash((v) => !v)}
-              >
-                <RotateCcw className="mr-1.5 h-4 w-4" />
-                Trash ({trashRows.length})
-              </Button>
-            )}
-            {canUpdate && (
-              <Button type="button" size="sm" onClick={() => setUploadOpen(true)}>
-                <Plus className="mr-1.5 h-4 w-4" />
-                Add Document
-              </Button>
-            )}
-          </div>
+          <h1 className="text-2xl font-bold">Documents</h1>
         </div>
       </StickyPageHeader>
 
       {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive mt-4">{error}</div>}
-      {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-        </div>
-      ) : showTrash ? (
-        <TrashList
-          rows={trashRows}
-          onRestore={async (id) => {
-            const res = await restoreMemberDocument(id);
-            if (!res.success) { setError(res.error ?? "Failed to restore"); return; }
-            // CLE-216 — Sidebar avatar traffic light listens for this.
-            dispatchMemberDocsChanged(memberId);
-            await load();
-            router.refresh();
-          }}
-          onBackdate={async (id, newQueuedAt) => {
-            const res = await backdateDisposalQueue(id, newQueuedAt);
-            if (!res.success) { setError(res.error ?? "Failed to backdate"); return; }
-            await load();
-            router.refresh();
-          }}
-          onView={(d) => {
-            // Read-only Document Details dialog — everything the live
-            // dialog offers (Preview / Expiry / Verify / Review /
-            // Activity / Download) except the pencils and composer.
-            setDetailsReadOnly(true);
-            setDetailsDocId(d.id);
-          }}
+
+      {/* CLE-222 — Two-card stack mirroring the employee's own
+          /my-documents view: Required Documents on top, Other
+          Documents (the free-form live/trash lists) below. */}
+      <div className="mt-4 space-y-4">
+        <RequiredDocumentsCard
+          memberId={memberId}
+          memberName={memberName}
+          canEdit={canUpdate}
         />
-      ) : (
-        <DocList
-          rows={rows}
-          canUpdate={canUpdate}
-          onOpen={(r) => {
-            setDetailsReadOnly(false);
-            setDetailsDocId(r.id);
-          }}
-          onDownload={handleDownload}
-          onDelete={(r) => setDeleting(r)}
-        />
-      )}
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between gap-3">
+              <CardTitle className="text-base">
+                Other documents
+                <span className="ml-2 font-normal text-muted-foreground">
+                  — {showTrash ? "Trash" : "Live"}
+                </span>
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                {/* Add Document — visible only on the Live sub-view.
+                    Required Documents has its own +/− controls, so this
+                    button is scoped to the free-form Other Documents
+                    list, not the whole page. */}
+                {canUpdate && !showTrash && (
+                  <Button type="button" size="sm" onClick={() => setUploadOpen(true)}>
+                    <Plus className="mr-1.5 h-4 w-4" />
+                    Add Document
+                  </Button>
+                )}
+                {canManageDeleted && (
+                  <Button
+                    type="button"
+                    variant={showTrash ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setShowTrash((v) => !v)}
+                  >
+                    <RotateCcw className="mr-1.5 h-4 w-4" />
+                    Trash ({trashRows.length})
+                  </Button>
+                )}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : showTrash ? (
+              <TrashList
+                rows={trashRows}
+                onRestore={async (id) => {
+                  const res = await restoreMemberDocument(id);
+                  if (!res.success) { setError(res.error ?? "Failed to restore"); return; }
+                  // CLE-216 — Sidebar avatar traffic light listens for this.
+                  dispatchMemberDocsChanged(memberId);
+                  await load();
+                  router.refresh();
+                }}
+                onBackdate={async (id, newQueuedAt) => {
+                  const res = await backdateDisposalQueue(id, newQueuedAt);
+                  if (!res.success) { setError(res.error ?? "Failed to backdate"); return; }
+                  await load();
+                  router.refresh();
+                }}
+                onView={(d) => {
+                  // Read-only Document Details dialog — everything the live
+                  // dialog offers (Preview / Expiry / Verify / Review /
+                  // Activity / Download) except the pencils and composer.
+                  setDetailsReadOnly(true);
+                  setDetailsDocId(d.id);
+                }}
+              />
+            ) : (
+              <DocList
+                rows={rows}
+                canUpdate={canUpdate}
+                onOpen={(r) => {
+                  setDetailsReadOnly(false);
+                  setDetailsDocId(r.id);
+                }}
+                onDownload={handleDownload}
+                onDelete={(r) => setDeleting(r)}
+              />
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       {detailsDocId && (
         <DocumentDetailsDialog

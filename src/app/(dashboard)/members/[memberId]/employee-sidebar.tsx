@@ -114,13 +114,13 @@ export function EmployeeSidebar({
               <span className="text-xl font-medium text-muted-foreground">{initials}</span>
             </div>
           )}
-          {/* Clicking the badge routes to the Employment tab's
-              Required Documents card — that's where the admin acts
-              on whatever's driving the colour. */}
+          {/* CLE-222 — Required Documents card now lives on the
+              Documents tab. Clicking the badge routes there so admins
+              land on the card driving the colour. */}
           <div className="absolute -bottom-1 -right-1 rounded-full border-2 border-background bg-background p-0.5">
             <MemberDocumentsTrafficLight
               memberId={member.id}
-              onClickHref={`/members/${member.id}/employment#required-documents`}
+              onClickHref={`/members/${member.id}/docs#required-documents`}
             />
           </div>
         </div>

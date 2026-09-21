@@ -552,7 +552,9 @@ export function AdminDashboardClient() {
                 <button
                   key={r.memberId}
                   type="button"
-                  onClick={() => router.push(`/members/${r.memberId}/employment#required-documents`)}
+                  // CLE-222 — Required Documents card moved from
+                  // Employment tab to Documents tab.
+                  onClick={() => router.push(`/members/${r.memberId}/docs#required-documents`)}
                   className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm hover:bg-muted/50 transition-colors text-left"
                 >
                   <div className="flex items-center gap-3 min-w-0">

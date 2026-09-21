@@ -150,8 +150,8 @@ export function RequiredDocumentsCard({
         spacer.setAttribute("aria-hidden", "true");
         spacer.style.height = "70vh";
         // Append to the card's own scrolling ancestor's flow — the
-        // page wrapper (max-w-4xl space-y-6) works because it's the
-        // outermost content box on Employment.
+        // stack wrapper (CLE-222: `space-y-4` on the Documents tab)
+        // is the outermost content box holding both docs cards.
         card.parentElement?.appendChild(spacer);
       }
       card.scrollIntoView({ block: "start", behavior: "auto" });

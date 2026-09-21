@@ -242,11 +242,11 @@ export function EmployeesClient({
     canViewSensitiveFields: canSeeCurrency,
     // CLE-216 — pre-fetched traffic lights power the Docs column.
     trafficLights,
-    // CLE-216 — Docs icon routes to the Employment tab's Required
+    // CLE-222 — Docs icon routes to the Documents tab's Required
     // Documents card (rather than /calendar via the row click), so
     // admins land where they can act on whatever's driving the colour.
     onDocsHealthClick: (memberId) =>
-      router.push(`/members/${memberId}/employment#required-documents`),
+      router.push(`/members/${memberId}/docs#required-documents`),
   });
 
   const selectColumn: ColumnDef<Member> = useMemo(() => ({

@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/server";
 import { getEffectiveRightsForUser, resolveTab } from "@/lib/rights-resolver";
 import { EmploymentForm } from "./employment-form";
 import { BookingsCard } from "./bookings-card";
-import { RequiredDocumentsCard } from "./required-documents-card";
 import { RtwNotRequiredSection } from "./rtw-not-required-section";
 import { getAssignableProfiles } from "@/app/(dashboard)/settings/rights-profiles/actions";
 import type { WorkProfileAssignmentRow } from "./work-profile-section";
@@ -42,7 +41,6 @@ export default async function EmploymentPage({
   }
 
   const canEdit = resolveTab(rights, "employment").update;
-  const canEditDocuments = resolveTab(rights, "documents").update;
   const canSeeCurrency = rights.canViewSensitiveFields;
   const canEditSensitiveFields = rights.canEditSensitiveFields;
   const currencySymbol = (caller.organisations as unknown as { currency_symbol: string } | null)?.currency_symbol ?? "£";
@@ -150,15 +148,9 @@ export default async function EmploymentPage({
         canEdit={canEdit}
       />
 
-      {/* CLE-213 — Required documents. Per-member list of doc subtypes
-          this specific employee must supply. Additive to
-          `expected_for_every_member`. Gated on documents.update on the
-          target so admins without doc-write rights don't see it. */}
-      <RequiredDocumentsCard
-        memberId={member.id}
-        memberName={`${member.first_name} ${member.last_name}`.trim() || "—"}
-        canEdit={canEditDocuments}
-      />
+      {/* CLE-222 — Required documents card now lives on the Documents
+          tab (`docs/docs-client.tsx`), mirroring the two-card shape
+          of the employee's own /my-documents view. */}
 
       {/* CLE-188 — Member Bookings utility. Admin/owner with manage-members
           rights only. Lets admins find and delete orphaned bookings (e.g.
