@@ -708,7 +708,9 @@ function DeleteDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="overflow-y-auto max-h-[60vh] px-1 space-y-3">
+        {/* CLE-225 follow-up — small vertical padding so the focus ring
+            on the Textarea isn't clipped by the scroll container. */}
+        <div className="overflow-y-auto max-h-[60vh] p-1 space-y-3">
           {requiresForce && (
             <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-900/20">
               <div className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-300">
