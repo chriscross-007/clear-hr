@@ -34,16 +34,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 // CLE-223 — Admin variant of the org-docs list, per-target ack state.
@@ -514,7 +504,9 @@ function TrashList({
           <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
             <th className="px-4 py-2 font-medium">Document</th>
             <th className="px-4 py-2 font-medium">Queued for Deletion</th>
-            <th className="px-4 py-2 font-medium hidden lg:table-cell">Force-delete reason</th>
+            {/* CLE-225 — Column renamed from "Force-delete reason" to
+                "Reason" now that a reason is captured on every soft-delete. */}
+            <th className="px-4 py-2 font-medium hidden lg:table-cell">Reason</th>
             <th className="px-4 py-2 font-medium text-right" />
           </tr>
         </thead>
@@ -539,7 +531,13 @@ function TrashList({
               <td className="px-4 py-2 text-muted-foreground" title={`Queued at ${fmtDateTime(r.queuedAt)}`}>
                 {fmtDateTime(addDaysIso(r.queuedAt, 30))}
               </td>
-              <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell max-w-xs truncate">
+              {/* CLE-225 — Now populated for every user-initiated delete;
+                  em-dash only appears on legacy rows or auto-Replace queue
+                  entries. `title` gives a hover-preview of the full text. */}
+              <td
+                className="px-4 py-2 text-muted-foreground hidden lg:table-cell max-w-xs truncate"
+                title={r.forceDeleteReason ?? undefined}
+              >
                 {r.forceDeleteReason ?? "—"}
               </td>
               <td className="px-4 py-2 text-right">
@@ -669,6 +667,9 @@ function DeleteDialog({
   onClose: () => void;
   onDeleted: () => Promise<void>;
 }) {
+  // CLE-225 — Reason is now mandatory on every soft-delete, not just
+  // retention-protected ones. Switched from AlertDialog to Dialog to
+  // pick up the standard scrollable-body layout for forms.
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -681,58 +682,73 @@ function DeleteDialog({
       setError(`${row.retentionClass} evidence can't be deleted while the employee is still active.`);
       return;
     }
+    const trimmed = reason.trim();
+    if (trimmed.length < 3) {
+      setError("Please give a reason (at least 3 characters).");
+      return;
+    }
+    setError(null);
     startTransition(async () => {
-      const res = await softDeleteMemberDocument(row.id, { forceDeleteReason: reason || null });
+      const res = await softDeleteMemberDocument(row.id, { reason: trimmed });
       if (!res.success) { setError(res.error ?? "Failed to delete"); return; }
       await onDeleted();
     });
   }
 
-  return (
-    <AlertDialog open onOpenChange={(o) => { if (!o && !pending) onClose(); }}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete document</AlertDialogTitle>
-          <AlertDialogDescription>
-            <span className="font-medium">{row.fileName}</span> will move to Trash for 30 days,
-            then be permanently deleted from storage.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
+  const canSave = !pending && reason.trim().length >= 3 && (!requiresForce || canForceDelete);
 
-        {requiresForce && (
-          <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-900/20">
-            <div className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-300">
-              <Calendar className="h-4 w-4" />
-              Force-delete required
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o && !pending) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Move to Trash?</DialogTitle>
+          <DialogDescription>
+            <span className="font-medium">{row.fileName}</span> will move to Trash for 30 days,
+            then be permanently deleted. Enter a reason for the audit trail.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="overflow-y-auto max-h-[60vh] px-1 space-y-3">
+          {requiresForce && (
+            <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-900/20">
+              <div className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-300">
+                <Calendar className="h-4 w-4" />
+                Force-delete required
+              </div>
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                This subtype is retention-protected while the member is active. Deleting
+                it requires the <em>Force-delete documents</em> right on your profile.
+              </p>
             </div>
-            <p className="text-xs text-amber-800 dark:text-amber-300">
-              This subtype is retention-protected while the member is active. Force-delete requires
-              a reason and the <em>Force-delete documents</em> right on your profile.
-            </p>
+          )}
+
+          <div className="space-y-2">
+            <Label>Reason <span className="text-destructive">*</span></Label>
             <Textarea
-              placeholder="Reason (recorded in the audit trail)"
+              placeholder="Recorded in the audit trail"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               rows={3}
               maxLength={500}
+              disabled={pending}
             />
           </div>
-        )}
 
-        {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+          {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+        </div>
 
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            disabled={pending || (requiresForce && !reason.trim())}
-            onClick={(e) => { e.preventDefault(); handleDelete(); }}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={pending}>Cancel</Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={!canSave}
           >
             {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Delete
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+            Move to Trash
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

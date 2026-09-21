@@ -1359,7 +1359,11 @@ export async function updateMemberDocumentMetadata(
 
 export async function softDeleteMemberDocument(
   documentId: string,
-  opts: { forceDeleteReason?: string | null } = {},
+  // CLE-225 — reason is now required on every soft-delete, not only
+  // force-deletes. The `opts.reason` key is the current path; the
+  // legacy `opts.forceDeleteReason` key is accepted as an alias for
+  // back-compat while any in-flight callers are migrated.
+  opts: { reason?: string | null; forceDeleteReason?: string | null } = {},
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const caller = await resolveCaller();
@@ -1379,33 +1383,43 @@ export async function softDeleteMemberDocument(
       return { success: false, error: "You don't have permission to change this document." };
     }
 
+    // CLE-225 — Reason is required on every soft-delete regardless of
+    // retention class. 3-char minimum (blocks drive-by "a"), 500-char
+    // cap enforced via silent truncation. The `requiresForce` gate
+    // stays — it now governs *permission* to delete, not whether a
+    // reason is captured.
+    const rawReason = (opts.reason ?? opts.forceDeleteReason ?? "").trim();
+    if (rawReason.length < 3) {
+      return {
+        success: false,
+        error: "Please give a reason for deleting this document (at least 3 characters).",
+      };
+    }
+    const reason = rawReason.slice(0, 500);
+
     // Retention block: certain classes cannot be deleted while the
     // target member is active (disposal_date IS NULL). Force-delete
-    // requires can_force_delete_documents + a reason.
+    // requires can_force_delete_documents.
     const requiresForce = PROTECTED_RETENTION_CLASSES.has(doc.retention_class as string)
       && doc.disposal_date === null;
-    const reason = (opts.forceDeleteReason ?? "").trim();
-    if (requiresForce) {
-      if (!caller.canForceDelete) {
-        return {
-          success: false,
-          error: `${doc.retention_class} evidence can't be deleted while the employee is still active.`,
-        };
-      }
-      if (!reason) {
-        return { success: false, error: "Please give a reason for force-deleting this document." };
-      }
+    if (requiresForce && !caller.canForceDelete) {
+      return {
+        success: false,
+        error: `${doc.retention_class} evidence can't be deleted while the employee is still active.`,
+      };
     }
 
     // Insert into the queue. Uniqueness on document_id prevents
     // double-queuing.
+    // CLE-225 — `force_delete_reason` column now carries the reason
+    // for every user-initiated delete, not only force-deletes.
     const { error } = await admin
       .from("disposal_queue")
       .insert({
         organisation_id: caller.organisationId,
         document_id: documentId,
         queued_by: caller.memberId,
-        force_delete_reason: requiresForce ? reason : null,
+        force_delete_reason: reason,
       });
     if (error) return { success: false, error: error.message };
 
@@ -1425,6 +1439,13 @@ export async function softDeleteMemberDocument(
         // CLE-219 — file_name + file_size on every doc audit.
         file_name: doc.file_name as string,
         file_size: doc.file_size as number,
+        // CLE-225 — `reason` is the new canonical metadata key for
+        // both delete actions. The legacy `force_delete_reason` key
+        // is kept on force-deletes so any historical consumer that
+        // reads it still gets a value; new consumers should read
+        // `reason` and fall back to `force_delete_reason` for
+        // pre-CLE-225 audit rows.
+        reason,
         ...(requiresForce ? { force_delete_reason: reason } : {}),
       },
     });

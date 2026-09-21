@@ -591,8 +591,10 @@ function RtwDeleteDialog({
     }
     setError(null);
     startTransition(async () => {
+      // CLE-225 — Reason is now the canonical opt key on
+      // softDeleteMemberDocument (mandatory on every delete path).
       const res = await softDeleteMemberDocument(row.documentId as string, {
-        forceDeleteReason: reason.trim(),
+        reason: reason.trim(),
       });
       if (!res.success) { setError(res.error ?? "Failed to delete"); return; }
       await onDeleted();

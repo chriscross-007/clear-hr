@@ -705,11 +705,36 @@ export function DocumentDetailsDialog({
                         {visibleActivity.map((item) =>
                           item.kind === "audit" ? (
                             <li key={`a-${item.entry.id}`} className="text-xs text-muted-foreground">
-                              <span className="font-medium text-foreground">{item.entry.actorName}</span>
-                              {" · "}
-                              <span className="text-foreground">{actionLabel(item.entry.action)}</span>
-                              {" · "}
-                              <span>{fmtDateTime(item.entry.createdAt)}</span>
+                              {(() => {
+                                // CLE-225 — For delete events, append the
+                                // reason inline to the action label so the
+                                // feed reads as e.g. "Moved to Trash — Old
+                                // passport superseded". `metadata.reason` is
+                                // the current key; `metadata.force_delete_reason`
+                                // is the legacy key on pre-CLE-225 rows.
+                                const md = item.entry.metadata as Record<string, unknown> | null;
+                                const rawReason = md
+                                  ? (md.reason ?? md.force_delete_reason)
+                                  : null;
+                                const reason = typeof rawReason === "string" && rawReason.trim() !== ""
+                                  ? rawReason.trim()
+                                  : null;
+                                const isDelete = item.entry.action === "document.deleted"
+                                  || item.entry.action === "document.force_deleted";
+                                const label = actionLabel(item.entry.action);
+                                return (
+                                  <>
+                                    <span className="font-medium text-foreground">{item.entry.actorName}</span>
+                                    {" · "}
+                                    <span className="text-foreground">
+                                      {label}
+                                      {isDelete && reason ? ` — ${reason}` : null}
+                                    </span>
+                                    {" · "}
+                                    <span>{fmtDateTime(item.entry.createdAt)}</span>
+                                  </>
+                                );
+                              })()}
                               {item.entry.changes && Object.keys(item.entry.changes).length > 0 && (
                                 <div className="mt-0.5 pl-3">
                                   {Object.entries(item.entry.changes).map(([field, val]) => {
@@ -723,24 +748,6 @@ export function DocumentDetailsDialog({
                                   })}
                                 </div>
                               )}
-                              {(() => {
-                                // Surface a small set of "context" keys from
-                                // audit metadata — the ones that read as
-                                // human-visible detail rather than routing
-                                // plumbing. Currently just the force-delete
-                                // reason, which used to be invisible in the
-                                // Activity feed even though the audit row
-                                // captured it.
-                                const md = item.entry.metadata as Record<string, unknown> | null;
-                                if (!md) return null;
-                                const reason = md.force_delete_reason;
-                                if (typeof reason !== "string" || reason.trim() === "") return null;
-                                return (
-                                  <div className="mt-0.5 pl-3">
-                                    <span className="font-medium">Reason:</span> <span>{reason}</span>
-                                  </div>
-                                );
-                              })()}
                             </li>
                           ) : (
                             <li key={`c-${item.comment.id}`} className="rounded-md border bg-muted/30 p-2">
