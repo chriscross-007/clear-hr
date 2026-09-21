@@ -17,7 +17,7 @@
 //     <MyDocumentsCard>).
 
 import { useCallback, useEffect, useState } from "react";
-import { FileText, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
@@ -164,34 +164,31 @@ export function MemberOrgDocumentsList({
                       />
                     </td>
                     <td className="px-3 py-2">
-                      <div className="flex items-start gap-2 min-w-0">
-                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-medium">
-                              {r.subtypeName ?? <span className="text-muted-foreground">—</span>}
-                            </p>
-                            {/* CLE-223 — "Awaiting Ack" pill: the
-                                doc requires acknowledgement AND the
-                                target member has not yet acked it.
-                                Distinct copy from the employee's
-                                "Please Ack" since the admin isn't
-                                the one who owes the ack.
-                                CLE-224 — Suppress the pill when the
-                                doc is hidden from this employee: an
-                                ack that isn't expected shouldn't
-                                read as "awaited". */}
-                            {r.viewable && r.requiresAcknowledgement && !r.isAcknowledgedByTarget && (
-                              <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
-                                Awaiting Ack
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {r.fileName}
-                            <span className="ml-1 text-muted-foreground/70">({fmtBytes(r.fileSize)})</span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-medium">
+                            {r.subtypeName ?? <span className="text-muted-foreground">—</span>}
                           </p>
+                          {/* CLE-223 — "Awaiting Ack" pill: the
+                              doc requires acknowledgement AND the
+                              target member has not yet acked it.
+                              Distinct copy from the employee's
+                              "Please Ack" since the admin isn't
+                              the one who owes the ack.
+                              CLE-224 — Suppress the pill when the
+                              doc is hidden from this employee: an
+                              ack that isn't expected shouldn't
+                              read as "awaited". */}
+                          {r.viewable && r.requiresAcknowledgement && !r.isAcknowledgedByTarget && (
+                            <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                              Awaiting Ack
+                            </span>
+                          )}
                         </div>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {r.fileName}
+                          <span className="ml-1 text-muted-foreground/70">({fmtBytes(r.fileSize)})</span>
+                        </p>
                       </div>
                     </td>
                     <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell">{fmtDate(r.expiresOn)}</td>

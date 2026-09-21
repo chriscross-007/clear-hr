@@ -434,6 +434,7 @@ function DocList({
               key={r.id}
               className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
               onClick={() => onOpen(r)}
+              title="Open document details"
             >
               <td className="px-4 py-2">
                 <div className="min-w-0">
@@ -477,7 +478,7 @@ function DocList({
                       is redundant. Delete stays here because it's a
                       destructive row-level action, not a dialog affordance. */}
                   {canUpdate && (
-                    <Button variant="ghost" size="icon" aria-label="Delete" onClick={(e) => { e.stopPropagation(); onDelete(r); }}>
+                    <Button variant="ghost" size="icon" aria-label="Move to Trash" title="Move to Trash" onClick={(e) => { e.stopPropagation(); onDelete(r); }}>
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
                   )}
