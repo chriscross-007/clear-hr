@@ -9,15 +9,12 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Calendar,
-  Camera,
-  ExternalLink,
   FileText,
   Loader2,
   Plus,
   RotateCcw,
   Trash2,
   Undo2,
-  Upload as UploadIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -199,17 +196,11 @@ export function DocsClient({
     setViewerDoc({ url: res.url, fileName: res.fileName ?? doc.fileName, contentType: doc.contentType });
   }, []);
 
-  const handleDownload = useCallback(async (doc: MemberDocumentRow) => {
-    const res = await getMemberDocumentSignedUrl(doc.id, "download");
-    if (!res.success || !res.url) return;
-    const a = document.createElement("a");
-    a.href = res.url;
-    a.download = res.fileName ?? doc.fileName;
-    a.rel = "noopener noreferrer";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }, []);
+  // CLE-224 follow-up — `handleDownload` was the row-level download
+  // shortcut on the Live + Trash lists. Removed because the Details
+  // dialog (opened on row-click) carries its own download control, so
+  // a per-row icon was redundant. `getMemberDocumentSignedUrl` still
+  // fires from inside the Details dialog.
 
   return (
     <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
@@ -334,7 +325,6 @@ export function DocsClient({
                   setDetailsReadOnly(false);
                   setDetailsDocId(r.id);
                 }}
-                onDownload={handleDownload}
                 onDelete={(r) => setDeleting(r)}
               />
             )}
@@ -414,14 +404,12 @@ function DocList({
   rows,
   canUpdate,
   onOpen,
-  onDownload,
   onDelete,
 }: {
   rows: MemberDocumentRow[];
   canUpdate: boolean;
   /** Row click → open the Document Details dialog (§7b.13). */
   onOpen: (r: MemberDocumentRow) => void;
-  onDownload: (r: MemberDocumentRow) => void;
   onDelete: (r: MemberDocumentRow) => void;
 }) {
   if (rows.length === 0) {
@@ -432,7 +420,6 @@ function DocList({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-            <th className="w-8 px-4 py-2 font-medium" title="Source" />
             <th className="px-4 py-2 font-medium">Document</th>
             <th className="px-4 py-2 font-medium">Status</th>
             <th className="px-4 py-2 font-medium hidden lg:table-cell">Expires</th>
@@ -448,11 +435,6 @@ function DocList({
               className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
               onClick={() => onOpen(r)}
             >
-              <td className="px-4 py-2 text-muted-foreground" title={r.captureSource === "photo" ? "Captured on mobile" : "Uploaded from computer"}>
-                {r.captureSource === "photo"
-                  ? <Camera className="h-4 w-4" />
-                  : <UploadIcon className="h-4 w-4" />}
-              </td>
               <td className="px-4 py-2">
                 <div className="min-w-0">
                   <p className="font-medium">
@@ -489,9 +471,11 @@ function DocList({
               </td>
               <td className="px-4 py-2 text-right">
                 <div className="flex items-center justify-end gap-0.5">
-                  <Button variant="ghost" size="icon" aria-label="Download" onClick={(e) => { e.stopPropagation(); onDownload(r); }}>
-                    <ExternalLink className="h-4 w-4" />
-                  </Button>
+                  {/* CLE-224 follow-up — Download icon removed from the
+                      row; the Details dialog opened on row-click carries
+                      its own download control, so a row-level shortcut
+                      is redundant. Delete stays here because it's a
+                      destructive row-level action, not a dialog affordance. */}
                   {canUpdate && (
                     <Button variant="ghost" size="icon" aria-label="Delete" onClick={(e) => { e.stopPropagation(); onDelete(r); }}>
                       <Trash2 className="h-4 w-4 text-destructive" />
@@ -527,7 +511,6 @@ function TrashList({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-            <th className="w-8 px-4 py-2 font-medium" title="Source" />
             <th className="px-4 py-2 font-medium">Document</th>
             <th className="px-4 py-2 font-medium">Queued for Deletion</th>
             <th className="px-4 py-2 font-medium hidden lg:table-cell">Force-delete reason</th>
@@ -541,11 +524,6 @@ function TrashList({
               className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
               onClick={() => onView(r)}
             >
-              <td className="px-4 py-2 text-muted-foreground" title={r.captureSource === "photo" ? "Captured on mobile" : "Uploaded from computer"}>
-                {r.captureSource === "photo"
-                  ? <Camera className="h-4 w-4" />
-                  : <UploadIcon className="h-4 w-4" />}
-              </td>
               <td className="px-4 py-2">
                 <div className="min-w-0">
                   <p className="font-medium">

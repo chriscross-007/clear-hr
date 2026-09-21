@@ -16,7 +16,6 @@
 // (CLE-220), so no second round-trip is needed for the pill.
 
 import { useCallback, useEffect, useState } from "react";
-import { FileText } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
 import {
@@ -104,9 +103,7 @@ export function MyOrgDocumentsList({
                     title="Open document details"
                   >
                     <td className="px-3 py-2">
-                      <div className="flex items-start gap-2 min-w-0">
-                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                        <div className="min-w-0">
+                      <div className="min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className="font-medium">
                               {r.subtypeName ?? <span className="text-muted-foreground">—</span>}
@@ -125,7 +122,6 @@ export function MyOrgDocumentsList({
                             <span className="ml-1 text-muted-foreground/70">({fmtBytes(r.fileSize)})</span>
                           </p>
                         </div>
-                      </div>
                     </td>
                     <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell">{fmtDate(r.expiresOn)}</td>
                     <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell">{fmtDateTime(r.uploadedAt)}</td>
