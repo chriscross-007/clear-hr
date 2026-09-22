@@ -186,7 +186,7 @@ Impl siblings live at:
 - `(dashboard)/documents/acknowledgement-actions-impl.ts`
 - `(dashboard)/members/[memberId]/docs/document-actions-impl.ts`
 
-Shared traffic-light helper at `src/lib/documents-traffic-light.ts` (types `TrafficLight` / `TrafficLightCounts` still re-exported from `compliance-actions.ts` for downstream import stability).
+Shared traffic-light helper at `src/lib/documents-traffic-light.ts`; import `TrafficLight` / `TrafficLightCounts` directly from there (types are NOT re-exported from `compliance-actions.ts` — see the Turbopack note above).
 
 ### Cross-user server-side queries: always use getAdminClient()
 Any server action that needs to read data belonging to other members in the same org (e.g. team member lists, colleague bookings, team sizes) must use `getAdminClient()` (service role client) for those queries — NOT the caller's Supabase session client.
