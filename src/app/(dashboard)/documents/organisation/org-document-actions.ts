@@ -11,6 +11,8 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { logAudit } from "@/lib/audit";
+import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
+import { _listOrgDocuments } from "./org-document-actions-impl";
 
 const ALLOWED_CONTENT_TYPES = [
   "application/pdf",
@@ -35,26 +37,14 @@ const BUCKET = "org-documents";
 // migration 20260904000001.
 const ORG_TYPES = new Set(["organisation_document"]);
 
-export interface OrgDocumentRow {
-  id: string;
-  fileName: string;
-  fileSize: number;
-  contentType: string;
-  type: string;
-  subtypeId: string | null;
-  subtypeName: string | null;
-  expiresOn: string | null;
-  uploadedBy: string;
-  uploadedAt: string;
-  /** CLE-220 — true when the row's subtype has
-   *  `requires_acknowledgement = true`. UI pairs this with
-   *  `isAcknowledged` to render a "Please Ack" pill. */
-  requiresAcknowledgement: boolean;
-  /** CLE-220 — true when the caller has an outstanding
-   *  `document_acknowledgement` row on this document (superseded
-   *  rows ignored). */
-  isAcknowledged: boolean;
-}
+// CLE-227 — `OrgDocumentRow` moved to `./org-document-actions-impl`
+// so the mobile API-route wrapper at /api/mobile/documents/org can
+// import it without pulling in the "use server" module. Re-imported
+// locally (so `OrgDocumentRowForMember extends OrgDocumentRow` still
+// resolves) and re-exported so downstream consumers keep importing
+// from the action file.
+import type { OrgDocumentRow } from "./org-document-actions-impl";
+export type { OrgDocumentRow };
 
 function getAdmin() {
   return createAdminClient(
@@ -98,119 +88,24 @@ async function callerName(admin: ReturnType<typeof getAdmin>, memberId: string):
 // List
 // ---------------------------------------------------------------------------
 
+// CLE-227 — thin cookies-auth passthrough over `_listOrgDocuments`.
+// Impl body lives in `./org-document-actions-impl` and is shared with
+// the mobile API-route wrapper at /api/mobile/documents/org.
 export async function listOrgDocuments(): Promise<{
   success: boolean;
   error?: string;
   rows: OrgDocumentRow[];
 }> {
-  try {
-    const c = await ctx();
-    if (!c) return { success: false, error: "Not authenticated", rows: [] };
-    if (!c.canView) return { success: false, error: "Forbidden", rows: [] };
-    const admin = getAdmin();
-
-    // Skip queued rows (soft-deleted).
-    const { data: queued } = await admin
-      .from("disposal_queue")
-      .select("document_id")
-      .eq("organisation_id", c.organisationId);
-    const queuedIds = new Set<string>((queued ?? []).map((r) => r.document_id as string));
-
-    // CLE-224 — Docs explicitly hidden from this caller. Any pair in
-    // `member_org_document_hidden` means the caller must not see the
-    // doc, regardless of their rights_profile — an admin who was
-    // hidden a doc doesn't see it here either. Per-member surfaces
-    // (getOrgDocumentsForMember + compliance dashboard) still show
-    // the doc with the Viewable state exposed.
-    const { data: hiddenRows } = await admin
-      .from("member_org_document_hidden")
-      .select("document_id")
-      .eq("member_id", c.memberId);
-    const hiddenIds = new Set<string>(
-      ((hiddenRows ?? []) as { document_id: string }[]).map((r) => r.document_id),
-    );
-
-    const { data, error } = await admin
-      .from("document")
-      .select(
-        // CLE-220 — pull `requires_acknowledgement` off the subtype so
-        // the client can render a "Please Ack" pill without a second
-        // round-trip.
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, uploaded_by, uploaded_at, document_subtype!subtype_id(name, requires_acknowledgement), members!uploaded_by(first_name, last_name)",
-      )
-      .eq("organisation_id", c.organisationId)
-      .eq("owner_scope", "organisation")
-      .order("uploaded_at", { ascending: false });
-    if (error) return { success: false, error: error.message, rows: [] };
-
-    type Row = {
-      id: string;
-      file_name: string;
-      file_size: number;
-      content_type: string;
-      type: string;
-      subtype_id: string | null;
-      expires_on: string | null;
-      uploaded_by: string | null;
-      uploaded_at: string;
-      document_subtype:
-        | { name: string; requires_acknowledgement?: boolean }
-        | { name: string; requires_acknowledgement?: boolean }[]
-        | null;
-      members: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
-    };
-    const visibleRows = (data ?? [])
-      .map((r) => r as unknown as Row)
-      .filter((r) => !queuedIds.has(r.id))
-      // CLE-224 — subtract per-member hides.
-      .filter((r) => !hiddenIds.has(r.id));
-
-    // CLE-220 — caller's ack rows across the visible set. One batch
-    // read; result feeds `isAcknowledged` per row.
-    const ackedSet = new Set<string>();
-    if (visibleRows.length > 0) {
-      const { data: acks } = await admin
-        .from("document_acknowledgement")
-        .select("document_id")
-        .eq("member_id", c.memberId)
-        .is("superseded_by_replace_at", null)
-        .in("document_id", visibleRows.map((r) => r.id));
-      for (const a of ((acks ?? []) as { document_id: string }[])) {
-        ackedSet.add(a.document_id);
-      }
-    }
-
-    const rows: OrgDocumentRow[] = visibleRows.map((r) => {
-      const st = r.document_subtype;
-      const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
-      const mem = r.members;
-      const memPair = Array.isArray(mem) ? (mem[0] ?? null) : mem;
-      return {
-        id: r.id,
-        fileName: r.file_name,
-        fileSize: r.file_size,
-        contentType: r.content_type,
-        type: r.type,
-        subtypeId: r.subtype_id,
-        subtypeName: stObj?.name ?? null,
-        expiresOn: r.expires_on,
-        uploadedBy: `${memPair?.first_name ?? ""} ${memPair?.last_name ?? ""}`.trim() || "Unknown",
-        uploadedAt: r.uploaded_at,
-        requiresAcknowledgement: stObj?.requires_acknowledgement === true,
-        isAcknowledged: ackedSet.has(r.id),
-      };
-    });
-    return { success: true, rows };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "An error occurred", rows: [] };
-  }
+  const caller = await buildDocumentsCallerFromCookies();
+  if (!caller) return { success: false, error: "Not authenticated", rows: [] };
+  return _listOrgDocuments(caller);
 }
 
 // ---------------------------------------------------------------------------
-// List for a target member (CLE-223)
+// List for a target member (CLE-224)
 // ---------------------------------------------------------------------------
 
-// CLE-223 — Same OrgDocumentRow shape as `listOrgDocuments` but the
+// CLE-224 — Same OrgDocumentRow shape as `listOrgDocuments` but the
 // per-row ack state is scoped to the target member rather than the
 // caller. Powers the "Org Documents" tab on the admin's per-member
 // docs surface (`/members/[memberId]/docs`), so an admin can see
@@ -220,7 +115,7 @@ export interface OrgDocumentRowForMember extends OrgDocumentRow {
   /** True when the target member has an outstanding
    *  `document_acknowledgement` row (superseded rows ignored). */
   isAcknowledgedByTarget: boolean;
-  /** CLE-224 — false when a row exists in member_org_document_hidden
+  /** CLE-225 — false when a row exists in member_org_document_hidden
    *  for this pair. Drives the "Viewable" checkbox on the admin's
    *  per-member Org Docs tab. When false, the target does not see
    *  the doc on `/my-documents` and it is not counted for the target
@@ -330,7 +225,7 @@ export async function getOrgDocumentsForMember(
       }
     }
 
-    // CLE-224 — Target's hidden set. Presence of a row in
+    // CLE-225 — Target's hidden set. Presence of a row in
     // `member_org_document_hidden` means the doc is hidden from the
     // target. Powers the Viewable checkbox on the admin's per-member
     // Org Docs tab. Deliberately fetched even when the target has no
@@ -371,7 +266,7 @@ export async function getOrgDocumentsForMember(
         // admin surfaces should read `isAcknowledgedByTarget`.
         isAcknowledged: false,
         isAcknowledgedByTarget,
-        // CLE-224 — Row present in `member_org_document_hidden` means
+        // CLE-225 — Row present in `member_org_document_hidden` means
         // hidden from the target; absence means visible (the default).
         viewable: !targetHiddenSet.has(r.id),
       };
@@ -691,11 +586,11 @@ export async function softDeleteOrgDocument(
 }
 
 // ---------------------------------------------------------------------------
-// Per-member visibility toggle (CLE-224)
+// Per-member visibility toggle (CLE-225)
 // ---------------------------------------------------------------------------
 
 /**
- * CLE-224 — Toggle whether a specific org-scope document is visible
+ * CLE-225 — Toggle whether a specific org-scope document is visible
  * to a specific target member.
  *
  * `viewable=true`  → DELETE any row in `member_org_document_hidden`
@@ -784,7 +679,7 @@ export async function setMemberOrgDocumentVisibility(
       organisationId: c.organisationId,
       actorId: c.memberId,
       actorName: await callerName(admin, c.memberId),
-      // CLE-224 — a distinct audit action from doc.metadata_updated so
+      // CLE-225 — a distinct audit action from doc.metadata_updated so
       // the visibility log is filterable on its own in the audit page.
       action: "document.visibility_changed",
       targetType: "document",

@@ -226,9 +226,9 @@ const FIELD_LABELS: Record<string, string> = {
   // matching filename to pair with.
   file_size: "File size",
   file_name: "File",
-  // CLE-225 — `reason` is the current key for user-typed delete
+  // CLE-226 — `reason` is the current key for user-typed delete
   // reasons on document.deleted / document.force_deleted audit rows.
-  // `force_delete_reason` is retained so pre-CLE-225 rows still label
+  // `force_delete_reason` is retained so pre-CLE-226 rows still label
   // correctly.
   reason: "Reason",
   force_delete_reason: "Force-delete reason",

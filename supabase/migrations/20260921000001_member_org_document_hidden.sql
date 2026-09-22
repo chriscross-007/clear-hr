@@ -1,4 +1,4 @@
--- CLE-224 — Per-member Org Document visibility.
+-- CLE-225 — Per-member Org Document visibility.
 --
 -- Presence of a row means the doc is hidden from that member.
 -- Default: no row = visible. Existing employees continue to see every
@@ -28,7 +28,7 @@ create index if not exists idx_modh_doc on public.member_org_document_hidden (do
 alter table public.member_org_document_hidden enable row level security;
 
 -- SELECT: caller sees rows in their own org. Broad by design (see
--- CLE-224 header note); server actions narrow further.
+-- CLE-225 header note); server actions narrow further.
 drop policy if exists modh_select_by_org on public.member_org_document_hidden;
 create policy modh_select_by_org on public.member_org_document_hidden
   for select to authenticated
@@ -57,4 +57,4 @@ create policy modh_write on public.member_org_document_hidden
   );
 
 comment on table public.member_org_document_hidden is
-  'CLE-224 — Per-member hides on organisation-scope documents. Row present = hidden for that (member_id, document_id). No row = visible. App-layer enforces the admin-only write gate via can_manage_organisation_documents.';
+  'CLE-225 — Per-member hides on organisation-scope documents. Row present = hidden for that (member_id, document_id). No row = visible. App-layer enforces the admin-only write gate via can_manage_organisation_documents.';

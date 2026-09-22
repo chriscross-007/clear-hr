@@ -591,7 +591,7 @@ function RtwDeleteDialog({
     }
     setError(null);
     startTransition(async () => {
-      // CLE-225 — Reason is now the canonical opt key on
+      // CLE-226 — Reason is now the canonical opt key on
       // softDeleteMemberDocument (mandatory on every delete path).
       const res = await softDeleteMemberDocument(row.documentId as string, {
         reason: reason.trim(),

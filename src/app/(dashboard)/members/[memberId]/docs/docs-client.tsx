@@ -36,7 +36,7 @@ import {
 } from "@/components/ui/dialog";
 import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-// CLE-223 — Admin variant of the org-docs list, per-target ack state.
+// CLE-224 — Admin variant of the org-docs list, per-target ack state.
 import { MemberOrgDocumentsList } from "@/components/documents/member-org-documents-list";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize } from "@/lib/label-utils";
@@ -128,13 +128,13 @@ export function DocsClient({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showTrash, setShowTrash] = useState(false);
-  // CLE-223 — Two-tab shell. Default lands on the member tab so the
+  // CLE-224 — Two-tab shell. Default lands on the member tab so the
   // existing #required-documents deep link (traffic-light click-
   // through from the Employees Directory / sidebar avatar badge)
   // still resolves inside the Required Documents card.
   const [activeTab, setActiveTab] = useState<"member" | "org">("member");
 
-  // CLE-223 — First-name label for tab 1. Fall back to
+  // CLE-224 — First-name label for tab 1. Fall back to
   // `capitalize(memberLabel) + "'s Documents"` for edge cases where
   // the member row has no name yet (e.g. pre-invite created via
   // email only). Never hardcode "Employee's".
@@ -186,7 +186,7 @@ export function DocsClient({
     setViewerDoc({ url: res.url, fileName: res.fileName ?? doc.fileName, contentType: doc.contentType });
   }, []);
 
-  // CLE-224 follow-up — `handleDownload` was the row-level download
+  // CLE-225 follow-up — `handleDownload` was the row-level download
   // shortcut on the Live + Trash lists. Removed because the Details
   // dialog (opened on row-click) carries its own download control, so
   // a per-row icon was redundant. `getMemberDocumentSignedUrl` still
@@ -201,7 +201,7 @@ export function DocsClient({
           {toastMessage}
         </div>
       )}
-      {/* CLE-223 — Two-tab shell. Tab 1 = the existing per-member
+      {/* CLE-224 — Two-tab shell. Tab 1 = the existing per-member
           Required + Other cards. Tab 2 = the org-docs list scoped to
           this member's ack state. Follows CLAUDE.md's "Tabs in the
           sticky header" convention: <Tabs> spans both the sticky
@@ -217,7 +217,7 @@ export function DocsClient({
             below). Required Documents has its own add controls
             (+ subtype picker and per-row +/− on the required table).
             Trash view has no Add — you don't upload into the trash.
-            CLE-223 — no "+ Add" button leaks into the sticky header
+            CLE-224 — no "+ Add" button leaks into the sticky header
             on the Org tab either; admins add org docs from
             /documents/organisation. */}
         <StickyPageHeader>
@@ -323,7 +323,7 @@ export function DocsClient({
           </div>
         </TabsContent>
 
-        {/* CLE-223 — Org Documents tab. Component owns its own Card
+        {/* CLE-224 — Org Documents tab. Component owns its own Card
             wrapper (same convention as <MyOrgDocumentsList>). */}
         <TabsContent value="org" className="mt-4">
           <MemberOrgDocumentsList memberId={memberId} memberName={memberName} />
@@ -462,7 +462,7 @@ function DocList({
               </td>
               <td className="px-4 py-2 text-right">
                 <div className="flex items-center justify-end gap-0.5">
-                  {/* CLE-224 follow-up — Download icon removed from the
+                  {/* CLE-225 follow-up — Download icon removed from the
                       row; the Details dialog opened on row-click carries
                       its own download control, so a row-level shortcut
                       is redundant. Delete stays here because it's a
@@ -504,7 +504,7 @@ function TrashList({
           <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
             <th className="px-4 py-2 font-medium">Document</th>
             <th className="px-4 py-2 font-medium">Queued for Deletion</th>
-            {/* CLE-225 — Column renamed from "Force-delete reason" to
+            {/* CLE-226 — Column renamed from "Force-delete reason" to
                 "Reason" now that a reason is captured on every soft-delete. */}
             <th className="px-4 py-2 font-medium hidden lg:table-cell">Reason</th>
             <th className="px-4 py-2 font-medium text-right" />
@@ -531,7 +531,7 @@ function TrashList({
               <td className="px-4 py-2 text-muted-foreground" title={`Queued at ${fmtDateTime(r.queuedAt)}`}>
                 {fmtDateTime(addDaysIso(r.queuedAt, 30))}
               </td>
-              {/* CLE-225 — Now populated for every user-initiated delete;
+              {/* CLE-226 — Now populated for every user-initiated delete;
                   em-dash only appears on legacy rows or auto-Replace queue
                   entries. `title` gives a hover-preview of the full text. */}
               <td
@@ -667,7 +667,7 @@ function DeleteDialog({
   onClose: () => void;
   onDeleted: () => Promise<void>;
 }) {
-  // CLE-225 — Reason is now mandatory on every soft-delete, not just
+  // CLE-226 — Reason is now mandatory on every soft-delete, not just
   // retention-protected ones. Switched from AlertDialog to Dialog to
   // pick up the standard scrollable-body layout for forms.
   const [reason, setReason] = useState("");
@@ -708,7 +708,7 @@ function DeleteDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* CLE-225 follow-up — small vertical padding so the focus ring
+        {/* CLE-226 follow-up — small vertical padding so the focus ring
             on the Textarea isn't clipped by the scroll container. */}
         <div className="overflow-y-auto max-h-[60vh] p-1 space-y-3">
           {requiresForce && (

@@ -706,12 +706,12 @@ export function DocumentDetailsDialog({
                           item.kind === "audit" ? (
                             <li key={`a-${item.entry.id}`} className="text-xs text-muted-foreground">
                               {(() => {
-                                // CLE-225 — For delete events, append the
+                                // CLE-226 — For delete events, append the
                                 // reason inline to the action label so the
                                 // feed reads as e.g. "Moved to Trash — Old
                                 // passport superseded". `metadata.reason` is
                                 // the current key; `metadata.force_delete_reason`
-                                // is the legacy key on pre-CLE-225 rows.
+                                // is the legacy key on pre-CLE-226 rows.
                                 const md = item.entry.metadata as Record<string, unknown> | null;
                                 const rawReason = md
                                   ? (md.reason ?? md.force_delete_reason)

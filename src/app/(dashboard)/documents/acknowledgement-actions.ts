@@ -31,6 +31,12 @@ import { createHash } from "node:crypto";
 import { Resend } from "resend";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { logAudit } from "@/lib/audit";
+import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
+import {
+  _acknowledgeDocument,
+  _getMyOutstandingAcknowledgements,
+  _getDocumentAcknowledgementStatus,
+} from "./acknowledgement-actions-impl";
 
 // ---------------------------------------------------------------------------
 // Constants / helpers
@@ -129,17 +135,11 @@ async function computeDocumentVersionHash(
 // DTOs
 // ---------------------------------------------------------------------------
 
-export interface OutstandingAcknowledgement {
-  documentId: string;
-  fileName: string;
-  subtypeId: string;
-  subtypeName: string;
-  subtypeType: string;
-  ownerScope: "member" | "organisation";
-  /** When the doc landed — used to sort newest-first and to render a
-   *  "published" or "uploaded on" line in the outstanding list. */
-  createdAt: string;
-}
+// CLE-227 — `OutstandingAcknowledgement` moved to
+// `./acknowledgement-actions-impl` so the mobile route wrapper can
+// import it. Re-exported here for downstream consumers.
+import type { OutstandingAcknowledgement } from "./acknowledgement-actions-impl";
+export type { OutstandingAcknowledgement };
 
 export interface DocumentCoverageRow {
   memberId: string;
@@ -191,125 +191,13 @@ export async function acknowledgeDocument(
   | { success: true; alreadyAcknowledged: boolean }
   | { success: false; error: string }
 > {
-  try {
-    const caller = await resolveCaller();
-    if (!caller) return { success: false, error: "Not authenticated" };
-    const admin = getAdmin();
-
-    // Fetch the doc + subtype in a single join. Result is cast
-    // explicitly — Supabase's TS inference degrades to
-    // `GenericStringError` on some FK-join SELECT shapes, and the
-    // rest of the codebase's convention is to declare the local shape
-    // at the boundary rather than rely on inference.
-    type DocRow = {
-      id: string;
-      organisation_id: string;
-      owner_scope: "member" | "organisation";
-      owner_id: string | null;
-      file_name: string;
-      file_size: number;
-      storage_path: string;
-      subtype_id: string;
-      document_subtype:
-        | { name?: string; requires_acknowledgement?: boolean }
-        | { name?: string; requires_acknowledgement?: boolean }[]
-        | null;
-    };
-    const docQuery = await admin
-      .from("document")
-      .select(
-        "id, organisation_id, owner_scope, owner_id, file_name, file_size, storage_path, subtype_id, " +
-        "document_subtype!subtype_id(name, requires_acknowledgement)",
-      )
-      .eq("id", documentId)
-      .single();
-    const doc = docQuery.data as unknown as DocRow | null;
-    if (!doc || doc.organisation_id !== caller.organisationId) {
-      return { success: false, error: "Document not found" };
-    }
-    const subtype = doc.document_subtype;
-    const subtypeRow = Array.isArray(subtype) ? subtype[0] : subtype;
-    if (!subtypeRow?.requires_acknowledgement) {
-      return { success: false, error: "This document does not require acknowledgement." };
-    }
-
-    // Expectation check.
-    const ownerScope = doc.owner_scope as "member" | "organisation";
-    if (ownerScope === "member") {
-      if (doc.owner_id !== caller.memberId) {
-        return {
-          success: false,
-          error: "Only this document's owner can acknowledge it.",
-        };
-      }
-    } else if (ownerScope === "organisation") {
-      if (!caller.canViewOrgDocs) {
-        return {
-          success: false,
-          error: "You don't have access to acknowledge organisation documents.",
-        };
-      }
-    }
-
-    // Idempotency check — was already there?
-    const { data: existing } = await admin
-      .from("document_acknowledgement")
-      .select("id")
-      .eq("document_id", documentId)
-      .eq("member_id", caller.memberId)
-      .maybeSingle();
-    if (existing) return { success: true, alreadyAcknowledged: true };
-
-    // Compute the version hash. Non-fatal on failure — null is
-    // deliberately in the schema for exactly this case.
-    const hash = await computeDocumentVersionHash(admin, doc.storage_path as string, ownerScope);
-    const ip = await readClientIp();
-    const userAgent = await readUserAgent();
-
-    const { error: insertError } = await admin
-      .from("document_acknowledgement")
-      .insert({
-        organisation_id: caller.organisationId,
-        document_id: documentId,
-        member_id: caller.memberId,
-        acknowledged_at: new Date().toISOString(),
-        ip,
-        user_agent: userAgent,
-        document_version_hash: hash,
-        document_file_name: doc.file_name as string,
-        document_subtype_name: subtypeRow.name ?? "—",
-      });
-    if (insertError) return { success: false, error: insertError.message };
-
-    await logAudit({
-      organisationId: caller.organisationId,
-      actorId: caller.memberId,
-      actorName: await callerName(admin, caller.memberId),
-      action: "document.acknowledged",
-      targetType: "document",
-      targetId: documentId,
-      targetLabel: doc.file_name as string,
-      metadata: {
-        subtype_name: subtypeRow.name ?? null,
-        owner_scope: ownerScope,
-        document_version_hash: hash,
-        ip,
-        user_agent: userAgent,
-        // CLE-219 — file_name + file_size on every doc audit.
-        file_name: doc.file_name,
-        file_size: doc.file_size,
-      },
-    });
-
-    // Refresh the surfaces that render outstanding-ack counts.
-    revalidatePath("/dashboard");
-    revalidatePath("/my-documents");
-    revalidatePath("/documents/compliance");
-
-    return { success: true, alreadyAcknowledged: false };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
-  }
+  // CLE-227 — thin cookies-auth passthrough over `_acknowledgeDocument`.
+  // Impl body lives in `./acknowledgement-actions-impl` and is shared
+  // with the mobile API-route wrapper at
+  // /api/mobile/documents/{id}/acknowledge.
+  const caller = await buildDocumentsCallerFromCookies();
+  if (!caller) return { success: false, error: "Not authenticated" };
+  return _acknowledgeDocument(caller, documentId);
 }
 
 // ---------------------------------------------------------------------------
@@ -332,92 +220,13 @@ export async function getMyOutstandingAcknowledgements(): Promise<
   | { success: true; rows: OutstandingAcknowledgement[] }
   | { success: false; error: string }
 > {
-  try {
-    const caller = await resolveCaller();
-    if (!caller) return { success: false, error: "Not authenticated" };
-    const admin = getAdmin();
-
-    // Every ack-required doc in scope for this caller. Excludes
-    // soft-deleted (via disposal_queue) as the compliance dashboard
-    // does — but Ticket B doesn't need to walk that yet since the ack
-    // list is a separate concern. The `document` RLS + our app filter
-    // handle scope.
-    // The `document` table's timestamp column is `uploaded_at` (not
-    // `created_at`). Same shape as the reads in
-    // `members/[memberId]/docs/document-actions.ts`.
-    type DocJoin = {
-      id: string;
-      owner_scope: "member" | "organisation";
-      owner_id: string | null;
-      file_name: string;
-      subtype_id: string;
-      uploaded_at: string;
-      document_subtype: { name?: string; type?: string; requires_acknowledgement?: boolean } | Array<{ name?: string; type?: string; requires_acknowledgement?: boolean }> | null;
-    };
-    const docsQuery = await admin
-      .from("document")
-      .select(
-        "id, owner_scope, owner_id, file_name, subtype_id, uploaded_at, " +
-        "document_subtype!subtype_id(name, type, requires_acknowledgement)",
-      )
-      .eq("organisation_id", caller.organisationId)
-      .order("uploaded_at", { ascending: false });
-    const rows = (docsQuery.data ?? []) as unknown as DocJoin[];
-
-    // CLE-224 — Org-scope docs hidden from the caller are not part
-    // of "expected to acknowledge". Load once, subtract below.
-    const { data: hiddenRows } = await admin
-      .from("member_org_document_hidden")
-      .select("document_id")
-      .eq("member_id", caller.memberId);
-    const hiddenFromCaller = new Set<string>(
-      ((hiddenRows ?? []) as { document_id: string }[]).map((r) => r.document_id),
-    );
-
-    // Filter to ack-required docs the caller is expected to ack.
-    const relevant = rows.filter((d) => {
-      const st = Array.isArray(d.document_subtype) ? d.document_subtype[0] : d.document_subtype;
-      if (!st?.requires_acknowledgement) return false;
-      if (d.owner_scope === "member") return d.owner_id === caller.memberId;
-      if (d.owner_scope === "organisation") {
-        if (!caller.canViewOrgDocs) return false;
-        // CLE-224 — hidden org docs drop out of the caller's list.
-        if (hiddenFromCaller.has(d.id)) return false;
-        return true;
-      }
-      return false;
-    });
-    if (relevant.length === 0) return { success: true, rows: [] };
-
-    // Which of those has the caller already acked?
-    const docIds = relevant.map((d) => d.id);
-    const { data: acked } = await admin
-      .from("document_acknowledgement")
-      .select("document_id")
-      .eq("member_id", caller.memberId)
-      .is("superseded_by_replace_at", null)
-      .in("document_id", docIds);
-    const ackedSet = new Set(((acked ?? []) as { document_id: string }[]).map((r) => r.document_id));
-
-    const out: OutstandingAcknowledgement[] = relevant
-      .filter((d) => !ackedSet.has(d.id))
-      .map((d) => {
-        const st = Array.isArray(d.document_subtype) ? d.document_subtype[0] : d.document_subtype;
-        return {
-          documentId: d.id,
-          fileName: d.file_name,
-          subtypeId: d.subtype_id,
-          subtypeName: st?.name ?? "—",
-          subtypeType: st?.type ?? "attachment",
-          ownerScope: d.owner_scope,
-          createdAt: d.uploaded_at,
-        };
-      });
-
-    return { success: true, rows: out };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
-  }
+  // CLE-227 — thin cookies-auth passthrough over
+  // `_getMyOutstandingAcknowledgements`. Impl body lives in
+  // `./acknowledgement-actions-impl` and is shared with the mobile
+  // API-route wrapper at /api/mobile/documents/outstanding-acks.
+  const caller = await buildDocumentsCallerFromCookies();
+  if (!caller) return { success: false, error: "Not authenticated" };
+  return _getMyOutstandingAcknowledgements(caller);
 }
 
 // ---------------------------------------------------------------------------
@@ -430,26 +239,11 @@ export async function getMyOutstandingAcknowledgements(): Promise<
  *  (for admins viewing an org doc) a compact coverage summary suitable
  *  for the read-only admin panel. Full drill-down uses
  *  `getDocumentCoverage` above. */
-export interface DocumentAcknowledgementStatus {
-  requiresAcknowledgement: boolean;
-  /** True when the caller is one of the Members expected to ack this
-   *  doc (owner for member-scope; view-rights holder for org-scope). */
-  isCallerExpectedToAcknowledge: boolean;
-  /** The caller's own ack row, if they've acknowledged. */
-  callerAcknowledgement: {
-    acknowledgedAt: string;
-    ip: string | null;
-  } | null;
-  /** Populated only for org-scope docs and only for callers with
-   *  `can_view_organisation_documents`. Member-scope docs and non-
-   *  privileged callers get null here — the caller's own ack state
-   *  is enough for them. */
-  coverageSummary: {
-    totalExpected: number;
-    totalAcknowledged: number;
-    outstanding: number;
-  } | null;
-}
+// CLE-227 — `DocumentAcknowledgementStatus` moved to
+// `./acknowledgement-actions-impl`. Re-exported here for downstream
+// consumers.
+import type { DocumentAcknowledgementStatus } from "./acknowledgement-actions-impl";
+export type { DocumentAcknowledgementStatus };
 
 export async function getDocumentAcknowledgementStatus(
   documentId: string,
@@ -457,126 +251,13 @@ export async function getDocumentAcknowledgementStatus(
   | { success: true; status: DocumentAcknowledgementStatus }
   | { success: false; error: string }
 > {
-  try {
-    const caller = await resolveCaller();
-    if (!caller) return { success: false, error: "Not authenticated" };
-    const admin = getAdmin();
-
-    type DocRow = {
-      id: string;
-      organisation_id: string;
-      owner_scope: "member" | "organisation";
-      owner_id: string | null;
-      subtype_id: string;
-      document_subtype:
-        | { requires_acknowledgement?: boolean }
-        | { requires_acknowledgement?: boolean }[]
-        | null;
-    };
-    const docQuery = await admin
-      .from("document")
-      .select(
-        "id, organisation_id, owner_scope, owner_id, subtype_id, " +
-        "document_subtype!subtype_id(requires_acknowledgement)",
-      )
-      .eq("id", documentId)
-      .single();
-    const doc = docQuery.data as unknown as DocRow | null;
-    if (!doc || doc.organisation_id !== caller.organisationId) {
-      return { success: false, error: "Document not found" };
-    }
-    const subtype = doc.document_subtype;
-    const subtypeRow = Array.isArray(subtype) ? subtype[0] : subtype;
-    const requiresAcknowledgement = subtypeRow?.requires_acknowledgement === true;
-
-    // Short-circuit: no section renders if subtype doesn't require ack.
-    if (!requiresAcknowledgement) {
-      return {
-        success: true,
-        status: {
-          requiresAcknowledgement: false,
-          isCallerExpectedToAcknowledge: false,
-          callerAcknowledgement: null,
-          coverageSummary: null,
-        },
-      };
-    }
-
-    const ownerScope = doc.owner_scope as "member" | "organisation";
-    const isCallerExpectedToAcknowledge =
-      ownerScope === "member"
-        ? doc.owner_id === caller.memberId
-        : caller.canViewOrgDocs;
-
-    // Caller's own ack row.
-    const { data: ownAck } = await admin
-      .from("document_acknowledgement")
-      .select("acknowledged_at, ip")
-      .eq("document_id", documentId)
-      .eq("member_id", caller.memberId)
-      .is("superseded_by_replace_at", null)
-      .maybeSingle();
-    const callerAcknowledgement = ownAck
-      ? { acknowledgedAt: (ownAck as { acknowledged_at: string }).acknowledged_at, ip: (ownAck as { ip: string | null }).ip ?? null }
-      : null;
-
-    // Coverage summary for admin org-doc view. Skipped for member
-    // docs (where the coverage is trivially 0/1 or 1/1) and for
-    // callers without org-doc view rights.
-    let coverageSummary: DocumentAcknowledgementStatus["coverageSummary"] = null;
-    if (ownerScope === "organisation" && caller.canViewOrgDocs) {
-      const { data: members } = await admin
-        .from("members")
-        .select("id, rights_profiles(can_view_organisation_documents)")
-        .eq("organisation_id", caller.organisationId)
-        .not("user_id", "is", null);
-      let expectedIds = ((members ?? []) as Array<{
-        id: string;
-        rights_profiles: { can_view_organisation_documents?: boolean } | { can_view_organisation_documents?: boolean }[] | null;
-      }>)
-        .filter((m) => {
-          const rp = Array.isArray(m.rights_profiles) ? m.rights_profiles[0] : m.rights_profiles;
-          return rp?.can_view_organisation_documents === true;
-        })
-        .map((m) => m.id);
-      // CLE-224 — mirrors `getDocumentCoverage`: hidden members drop
-      // out of the denominator.
-      const { data: hiddenForDoc } = await admin
-        .from("member_org_document_hidden")
-        .select("member_id")
-        .eq("document_id", documentId);
-      const hiddenSet = new Set<string>(
-        ((hiddenForDoc ?? []) as { member_id: string }[]).map((r) => r.member_id),
-      );
-      if (hiddenSet.size > 0) {
-        expectedIds = expectedIds.filter((id) => !hiddenSet.has(id));
-      }
-      const { data: acks } = await admin
-        .from("document_acknowledgement")
-        .select("member_id")
-        .eq("document_id", documentId)
-        .is("superseded_by_replace_at", null);
-      const ackedSet = new Set(((acks ?? []) as { member_id: string }[]).map((r) => r.member_id));
-      const totalAcknowledged = expectedIds.filter((id) => ackedSet.has(id)).length;
-      coverageSummary = {
-        totalExpected: expectedIds.length,
-        totalAcknowledged,
-        outstanding: expectedIds.length - totalAcknowledged,
-      };
-    }
-
-    return {
-      success: true,
-      status: {
-        requiresAcknowledgement: true,
-        isCallerExpectedToAcknowledge,
-        callerAcknowledgement,
-        coverageSummary,
-      },
-    };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
-  }
+  // CLE-227 — thin cookies-auth passthrough over
+  // `_getDocumentAcknowledgementStatus`. Impl body lives in
+  // `./acknowledgement-actions-impl` and is shared with the mobile
+  // API-route wrapper at /api/mobile/documents/{id}/ack-status.
+  const caller = await buildDocumentsCallerFromCookies();
+  if (!caller) return { success: false, error: "Not authenticated" };
+  return _getDocumentAcknowledgementStatus(caller, documentId);
 }
 
 // ---------------------------------------------------------------------------
@@ -664,7 +345,7 @@ export async function getDocumentCoverage(
         })
         .map((m) => m.id);
 
-      // CLE-224 — Subtract members explicitly hidden from THIS doc.
+      // CLE-225 — Subtract members explicitly hidden from THIS doc.
       // Hidden pairs drop out of both the denominator and the
       // outstanding list — they're not expected to ack.
       const { data: hiddenForDoc } = await admin
@@ -843,7 +524,7 @@ export async function getOrgAcknowledgementCoverage(): Promise<
     // Denominator for org-scope docs: base = Live members whose
     // rights profile grants `can_view_organisation_documents`.
     //
-    // CLE-224 — the denominator is no longer sharable across docs.
+    // CLE-225 — the denominator is no longer sharable across docs.
     // Each doc has its own per-member "hidden" set, so the base
     // eligible set must be trimmed per-doc. We batch the hidden-rows
     // read once and group by document_id in memory to keep this O(1)
@@ -871,7 +552,7 @@ export async function getOrgAcknowledgementCoverage(): Promise<
         })
         .map((m) => m.id);
 
-      // CLE-224 — Load every per-member hide row for the org-scope
+      // CLE-225 — Load every per-member hide row for the org-scope
       // docs in this batch, group by document_id. One round-trip.
       const orgDocIds = relevant.filter((d) => d.owner_scope === "organisation").map((d) => d.id);
       if (orgDocIds.length > 0) {
@@ -925,7 +606,7 @@ export async function getOrgAcknowledgementCoverage(): Promise<
 
     const rows: AcknowledgementCoverageRow[] = relevant.map((d) => {
       const st = Array.isArray(d.document_subtype) ? d.document_subtype[0] : d.document_subtype;
-      // CLE-224 — per-doc denominator: base eligible set minus this
+      // CLE-225 — per-doc denominator: base eligible set minus this
       // doc's hidden set. Member-scope docs are unaffected (always 1).
       let totalExpected: number;
       if (d.owner_scope === "member") {
@@ -1070,7 +751,7 @@ export async function remindOutstanding(
           return rp?.can_view_organisation_documents === true;
         })
         .map((m) => m.id);
-      // CLE-224 — Never remind a member about a doc they've been
+      // CLE-225 — Never remind a member about a doc they've been
       // hidden from — the pair isn't expected to ack.
       const { data: hiddenForDoc } = await admin
         .from("member_org_document_hidden")

@@ -1,6 +1,6 @@
 "use client";
 
-// CLE-223 — Admin view of the org-documents list scoped to a specific
+// CLE-224 — Admin view of the org-documents list scoped to a specific
 // target member. Renders inside the "Org Documents" tab on
 // /members/[memberId]/docs.
 //
@@ -55,7 +55,7 @@ export function MemberOrgDocumentsList({
   memberName: string;
 }) {
   const [rows, setRows] = useState<OrgDocumentRowForMember[]>([]);
-  // CLE-224 follow-up — initial vs. background refresh. The spinner
+  // CLE-225 follow-up — initial vs. background refresh. The spinner
   // shows only for the very first mount; subsequent refreshes (event
   // bus fires, optimistic-toggle post-hoc syncs) happen silently so
   // the grid never disappears mid-interaction.
@@ -79,7 +79,7 @@ export function MemberOrgDocumentsList({
   // stays visible throughout.
   useEffect(() => onMemberDocsChanged(memberId, () => { void load(); }), [memberId, load]);
 
-  // CLE-224 — optimistic toggle for the Viewable column. Flips local
+  // CLE-225 — optimistic toggle for the Viewable column. Flips local
   // state first, fires the server action, reverts on failure. We
   // deliberately do NOT dispatch `member-docs-changed` from this
   // handler — the local state already reflects the change, and firing
@@ -122,7 +122,7 @@ export function MemberOrgDocumentsList({
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-                  {/* CLE-224 — Viewable toggle. Real interactive
+                  {/* CLE-225 — Viewable toggle. Real interactive
                       Checkbox (not a display icon), so the
                       Boolean-values-in-tables convention doesn't
                       apply here. Unchecked hides the doc from the
@@ -146,7 +146,7 @@ export function MemberOrgDocumentsList({
                   >
                     <td
                       className="px-3 py-2"
-                      // CLE-224 — swallow the row-level click so
+                      // CLE-225 — swallow the row-level click so
                       // toggling the checkbox doesn't also open the
                       // details dialog.
                       onClick={(e) => e.stopPropagation()}
@@ -169,13 +169,13 @@ export function MemberOrgDocumentsList({
                           <p className="font-medium">
                             {r.subtypeName ?? <span className="text-muted-foreground">—</span>}
                           </p>
-                          {/* CLE-223 — "Awaiting Ack" pill: the
+                          {/* CLE-224 — "Awaiting Ack" pill: the
                               doc requires acknowledgement AND the
                               target member has not yet acked it.
                               Distinct copy from the employee's
                               "Please Ack" since the admin isn't
                               the one who owes the ack.
-                              CLE-224 — Suppress the pill when the
+                              CLE-225 — Suppress the pill when the
                               doc is hidden from this employee: an
                               ack that isn't expected shouldn't
                               read as "awaited". */}
@@ -202,7 +202,7 @@ export function MemberOrgDocumentsList({
       </CardContent>
 
       {detailsDocId && (
-        // CLE-223 — Admin viewing employee's org-doc coverage. Full
+        // CLE-224 — Admin viewing employee's org-doc coverage. Full
         // HR panels (Expiry / Verify / Review / Activity) stay
         // visible so the admin can drill down, but `canUpdate=false`
         // stops accidental edits from a per-member surface. Org-doc
