@@ -18,10 +18,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
-import {
-  listOrgDocuments,
-  type OrgDocumentRow,
-} from "@/app/(dashboard)/documents/organisation/org-document-actions";
+import { listOrgDocuments } from "@/app/(dashboard)/documents/organisation/org-document-actions";
+import type { OrgDocumentRow } from "@/app/(dashboard)/documents/organisation/org-document-actions-impl";
 import { onMemberDocsChanged } from "@/lib/member-docs-events";
 import { fmtBytes } from "@/lib/format-bytes";
 

@@ -19,7 +19,7 @@ import {
   DocumentsTrafficLight,
   trafficLightSortRank,
 } from "@/components/documents/documents-traffic-light";
-import type { TrafficLight } from "@/app/(dashboard)/documents/compliance-actions";
+import type { TrafficLight } from "@/lib/documents-traffic-light";
 
 // ---------------------------------------------------------------------------
 // TanStack Table module augmentation — adds filterElement + class helpers to

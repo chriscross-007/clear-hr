@@ -20,7 +20,7 @@ import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 import { MyDocumentsCard } from "@/components/documents/my-documents-card";
 import { MyOtherDocumentsCard } from "@/components/documents/my-other-documents-card";
 import { MyOrgDocumentsList } from "@/components/documents/my-org-documents-list";
-import type { OrgDocumentRow } from "@/app/(dashboard)/documents/organisation/org-document-actions";
+import type { OrgDocumentRow } from "@/app/(dashboard)/documents/organisation/org-document-actions-impl";
 
 type TabKey = "my" | "org";
 

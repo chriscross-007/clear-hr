@@ -41,8 +41,8 @@ import {
   getOrgUploadSubtypes,
   softDeleteOrgDocument,
   uploadOrgDocument,
-  type OrgDocumentRow,
 } from "@/app/(dashboard)/documents/organisation/org-document-actions";
+import type { OrgDocumentRow } from "@/app/(dashboard)/documents/organisation/org-document-actions-impl";
 
 const TYPE_LABEL: Record<string, string> = {
   organisation_document: "Organisation document",

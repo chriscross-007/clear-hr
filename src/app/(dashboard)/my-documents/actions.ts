@@ -15,10 +15,10 @@ import {
   type OtherMemberDocumentRow,
 } from "./actions-impl";
 
-// Re-export the DTO type so downstream consumers can keep importing
-// from `@/app/(dashboard)/my-documents/actions` — the migration to
-// the impl sibling is invisible to them.
-export type { OtherMemberDocumentRow };
+// CLE-227 — `OtherMemberDocumentRow` moved to `./actions-impl`;
+// consumers import the type from the impl sibling. Not re-exported
+// here because Turbopack's production build fails on `export type`
+// from a `"use server"` file.
 
 export async function getMyOtherMemberDocuments(): Promise<
   { success: true; rows: OtherMemberDocumentRow[] } | { success: false; error: string }

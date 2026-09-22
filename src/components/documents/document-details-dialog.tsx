@@ -67,8 +67,8 @@ import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 import {
   acknowledgeDocument,
   getDocumentAcknowledgementStatus,
-  type DocumentAcknowledgementStatus,
 } from "@/app/(dashboard)/documents/acknowledgement-actions";
+import type { DocumentAcknowledgementStatus } from "@/app/(dashboard)/documents/acknowledgement-actions-impl";
 
 const TYPE_LABEL: Record<string, string> = {
   contract: "Contract",

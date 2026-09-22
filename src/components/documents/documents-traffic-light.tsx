@@ -12,7 +12,7 @@
 // spec §7b.16 and compliance-actions.ts / computeTrafficLightsForMembers).
 
 import { FileText } from "lucide-react";
-import type { TrafficLight } from "@/app/(dashboard)/documents/compliance-actions";
+import type { TrafficLight } from "@/lib/documents-traffic-light";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 // Pure formatters live outside this "use client" module so server
 // components can import them too. Re-exported here so existing

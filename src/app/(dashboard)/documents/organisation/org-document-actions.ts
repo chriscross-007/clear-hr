@@ -37,14 +37,12 @@ const BUCKET = "org-documents";
 // migration 20260904000001.
 const ORG_TYPES = new Set(["organisation_document"]);
 
-// CLE-227 — `OrgDocumentRow` moved to `./org-document-actions-impl`
-// so the mobile API-route wrapper at /api/mobile/documents/org can
-// import it without pulling in the "use server" module. Re-imported
-// locally (so `OrgDocumentRowForMember extends OrgDocumentRow` still
-// resolves) and re-exported so downstream consumers keep importing
-// from the action file.
+// CLE-227 — `OrgDocumentRow` moved to `./org-document-actions-impl`.
+// Locally imported so `OrgDocumentRowForMember extends OrgDocumentRow`
+// still resolves, but NOT re-exported — Turbopack's production build
+// fails on `export type` from a `"use server"` file. Consumers import
+// `OrgDocumentRow` directly from `./org-document-actions-impl`.
 import type { OrgDocumentRow } from "./org-document-actions-impl";
-export type { OrgDocumentRow };
 
 function getAdmin() {
   return createAdminClient(

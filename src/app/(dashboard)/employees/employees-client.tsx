@@ -47,10 +47,8 @@ import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 import { AddEmployeeDialog } from "./add-employee-dialog";
 import type { FieldDef } from "./custom-field-actions";
 import { formatMemberForPdf } from "@/lib/format-member-pdf-row";
-import {
-  getOrgDocumentsTrafficLights,
-  type TrafficLight,
-} from "@/app/(dashboard)/documents/compliance-actions";
+import { getOrgDocumentsTrafficLights } from "@/app/(dashboard)/documents/compliance-actions";
+import type { TrafficLight } from "@/lib/documents-traffic-light";
 import { cn } from "@/lib/utils";
 
 export type { Team, Member };

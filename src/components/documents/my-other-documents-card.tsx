@@ -28,10 +28,8 @@ import {
 import { STATUS_LABEL, STATUS_TONE, type DocumentStatus } from "@/lib/document-status";
 import { fmtBytes } from "@/lib/format-bytes";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
-import {
-  getMyOtherMemberDocuments,
-  type OtherMemberDocumentRow,
-} from "@/app/(dashboard)/my-documents/actions";
+import { getMyOtherMemberDocuments } from "@/app/(dashboard)/my-documents/actions";
+import type { OtherMemberDocumentRow } from "@/app/(dashboard)/my-documents/actions-impl";
 import { onMemberDocsChanged } from "@/lib/member-docs-events";
 
 // Mirrors the required card's TYPE_LABEL map so the two lists read

@@ -137,9 +137,11 @@ async function computeDocumentVersionHash(
 
 // CLE-227 — `OutstandingAcknowledgement` moved to
 // `./acknowledgement-actions-impl` so the mobile route wrapper can
-// import it. Re-exported here for downstream consumers.
+// import it. Downstream consumers now import the type directly from
+// the impl sibling — Turbopack's production build treats `export type`
+// re-exports from a `"use server"` file as Server-Action forwarders
+// and fails to resolve them (types have no runtime binding).
 import type { OutstandingAcknowledgement } from "./acknowledgement-actions-impl";
-export type { OutstandingAcknowledgement };
 
 export interface DocumentCoverageRow {
   memberId: string;
@@ -240,10 +242,9 @@ export async function getMyOutstandingAcknowledgements(): Promise<
  *  for the read-only admin panel. Full drill-down uses
  *  `getDocumentCoverage` above. */
 // CLE-227 — `DocumentAcknowledgementStatus` moved to
-// `./acknowledgement-actions-impl`. Re-exported here for downstream
-// consumers.
+// `./acknowledgement-actions-impl`. Consumers import it directly from
+// the impl sibling (see note on `OutstandingAcknowledgement` above).
 import type { DocumentAcknowledgementStatus } from "./acknowledgement-actions-impl";
-export type { DocumentAcknowledgementStatus };
 
 export async function getDocumentAcknowledgementStatus(
   documentId: string,

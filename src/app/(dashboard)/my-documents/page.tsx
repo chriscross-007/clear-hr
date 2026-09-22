@@ -25,7 +25,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { MyDocumentsClient } from "@/components/documents/my-documents-client";
-import { listOrgDocuments, type OrgDocumentRow } from "@/app/(dashboard)/documents/organisation/org-document-actions";
+import { listOrgDocuments } from "@/app/(dashboard)/documents/organisation/org-document-actions";
+import type { OrgDocumentRow } from "@/app/(dashboard)/documents/organisation/org-document-actions-impl";
 
 export default async function MyDocumentsPage({
   searchParams,

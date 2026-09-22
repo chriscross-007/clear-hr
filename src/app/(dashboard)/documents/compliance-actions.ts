@@ -23,11 +23,14 @@ import {
   computeTrafficLightsForMembers,
 } from "@/lib/documents-traffic-light";
 import { _getMyDocumentsTrafficLight } from "./compliance-actions-impl";
-// CLE-227 — Re-export the traffic-light types from the shared lib so
-// downstream imports of `TrafficLight` / `TrafficLightCounts` from
-// this action file keep working.
+// CLE-227 — `TrafficLight` / `TrafficLightCounts` live in
+// `@/lib/documents-traffic-light`. Locally imported here so this
+// action's own signatures resolve; NOT re-exported — Turbopack's
+// production build fails on `export type` from a `"use server"` file
+// because it tries to wire the export as a Server Action.
+// Consumers must import the types from `@/lib/documents-traffic-light`
+// directly.
 import type { TrafficLight, TrafficLightCounts } from "@/lib/documents-traffic-light";
-export type { TrafficLight, TrafficLightCounts };
 
 function getAdmin() {
   return createAdminClient(

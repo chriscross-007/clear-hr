@@ -7,10 +7,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  getMemberDocumentsTrafficLight,
-  type TrafficLight,
-} from "@/app/(dashboard)/documents/compliance-actions";
+import { getMemberDocumentsTrafficLight } from "@/app/(dashboard)/documents/compliance-actions";
+import type { TrafficLight } from "@/lib/documents-traffic-light";
 import { DocumentsTrafficLight } from "@/components/documents/documents-traffic-light";
 import { onMemberDocsChanged } from "@/lib/member-docs-events";
 

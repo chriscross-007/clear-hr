@@ -153,14 +153,24 @@ export async function GET(request: Request) {
 
 **`DocumentsCaller` (shared, in `src/lib/documents-caller.ts`)** carries the fully-resolved context both auth paths need: `admin` (service-role client), `userId`, `memberId`, `organisationId`, `teamId`, `rights` (full `EffectiveRights` — impls read `rights.tabs.documents?.view` / `rights.canViewOrganisationDocuments` / etc. inline), plus `ip` + `userAgent` for audit trails. Two builders return it: `buildDocumentsCallerFromCookies()` (web) and `buildDocumentsCallerFromBearer(request)` (mobile). Docs impls should always take `DocumentsCaller` — never a smaller ad-hoc shape — so a single signature works for both callers.
 
-**Re-exported types.** DTO types that were declared inside the action file must move to the impl and be **both** locally imported and re-exported from the action file so downstream consumers keep their existing import paths *and* the action file can still reference the type in its wrapper signatures:
+**Type imports across the impl boundary — NEVER re-export from the action file.** DTO types declared in the impl live there permanently. The action file `import type { X } from "./impl"` locally so its own wrapper signatures resolve — do NOT add `export type { X };` alongside it. Turbopack's production build (Next.js 16) treats every export in a `"use server"` file as a Server-Action forwarder candidate; type re-exports have no runtime binding, and the build errors with *"Export X doesn't exist in target module"* even though `tsc --noEmit` and `next dev` are both happy. Consumers must import the type directly from the impl sibling:
 
 ```ts
+// action.ts (use server)
 import type { OrgDocumentRow } from "./org-document-actions-impl";
-export type { OrgDocumentRow };
+// NO `export type { OrgDocumentRow };` — Turbopack breaks on it.
+export async function listOrgDocuments(): Promise<{ rows: OrgDocumentRow[]; ... }> {
+  const caller = await buildDocumentsCallerFromCookies();
+  ...
+  return _listOrgDocuments(caller);
+}
+
+// consumer.tsx
+import { listOrgDocuments } from "@/app/(dashboard)/documents/organisation/org-document-actions";
+import type { OrgDocumentRow } from "@/app/(dashboard)/documents/organisation/org-document-actions-impl";
 ```
 
-A bare `export type { X } from "./impl"` re-export alone doesn't bring `X` into local scope, so any `extends X` or `Promise<{ rows: X[] }>` in the same file fails to resolve.
+Locally-declared `export interface X {}` inside a `"use server"` file is fine (the TS compiler erases interfaces before Turbopack sees the emit) — the trap is specifically `export type { X };` or `export type { X } from "./impl"`.
 
 **Shared helpers extracted out of `"use server"`.** When multiple exported actions share a helper that mobile needs too (e.g. `computeTrafficLightsForMembers`), move it to a plain module under `src/lib/` (not `"use server"`) and have both the action file and the impl import from there. Keeping the helper in the action file would either turn it into a Server Action (leak) or require duplication.
 

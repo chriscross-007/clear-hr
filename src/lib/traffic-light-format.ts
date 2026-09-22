@@ -8,7 +8,7 @@
 // from here so existing import sites keep working — nothing else
 // had to move.
 
-import type { TrafficLight, TrafficLightCounts } from "@/app/(dashboard)/documents/compliance-actions";
+import type { TrafficLight, TrafficLightCounts } from "@/lib/documents-traffic-light";
 
 // Only attention-worthy buckets appear in the tooltip. "Verified"
 // and any other clean-state counts are intentionally omitted — the
