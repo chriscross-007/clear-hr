@@ -39,19 +39,14 @@ export interface TrashedMemberDocumentRow extends MemberDocumentRow {
   forceDeleteReason: string | null;
 }
 
-export const ALLOWED_CONTENT_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "text/plain",
-] as const;
+// Upload limits + MIME allow-lists live in `@/lib/document-limits`.
+// Re-exported here under the names existing member-doc callers use.
+import {
+  ALLOWED_DOCUMENT_CONTENT_TYPES,
+  MAX_DOCUMENT_SIZE as _MAX_DOCUMENT_SIZE,
+  MEMBER_DOCUMENTS_BUCKET,
+} from "@/lib/document-limits";
 
-export const MAX_DOCUMENT_SIZE = 10 * 1024 * 1024; // 10 MB
-
-export const STORAGE_BUCKET = "member-documents";
+export const ALLOWED_CONTENT_TYPES = ALLOWED_DOCUMENT_CONTENT_TYPES;
+export const MAX_DOCUMENT_SIZE = _MAX_DOCUMENT_SIZE;
+export const STORAGE_BUCKET = MEMBER_DOCUMENTS_BUCKET;

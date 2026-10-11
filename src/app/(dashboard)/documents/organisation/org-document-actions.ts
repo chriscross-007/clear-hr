@@ -13,21 +13,11 @@ import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { logAudit } from "@/lib/audit";
 import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
 import { _listOrgDocuments } from "./org-document-actions-impl";
-
-const ALLOWED_CONTENT_TYPES = [
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "text/plain",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-] as const;
-const MAX_SIZE = 10 * 1024 * 1024;
-const BUCKET = "org-documents";
+import {
+  ALLOWED_DOCUMENT_CONTENT_TYPES as ALLOWED_CONTENT_TYPES,
+  MAX_DOCUMENT_SIZE as MAX_SIZE,
+  ORG_DOCUMENTS_BUCKET as BUCKET,
+} from "@/lib/document-limits";
 
 // Only these types make sense at the org scope. Enforced at the
 // picker + upload validation (the DB doesn't constrain — a tenant

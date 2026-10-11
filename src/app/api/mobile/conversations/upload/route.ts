@@ -1,20 +1,9 @@
 import { NextResponse } from "next/server";
 import { verifyCaller } from "../../lib";
-
-const ALLOWED_CONTENT_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "text/plain",
-  "text/csv",
-];
-const MAX_DOCUMENT_SIZE = 10 * 1024 * 1024;
+import {
+  ALLOWED_DOCUMENT_CONTENT_TYPES as ALLOWED_CONTENT_TYPES,
+  MAX_DOCUMENT_SIZE,
+} from "@/lib/document-limits";
 
 /**
  * POST /api/mobile/conversations/upload
@@ -57,7 +46,7 @@ export async function POST(request: Request) {
     if (!conversationMessageId) return NextResponse.json({ error: "conversationMessageId required" }, { status: 400 });
     if (!memberId) return NextResponse.json({ error: "memberId required" }, { status: 400 });
     if (file.size > MAX_DOCUMENT_SIZE) return NextResponse.json({ error: "File must be 10MB or smaller" }, { status: 400 });
-    if (!ALLOWED_CONTENT_TYPES.includes(file.type)) {
+    if (!ALLOWED_CONTENT_TYPES.includes(file.type as (typeof ALLOWED_CONTENT_TYPES)[number])) {
       return NextResponse.json({ error: "Unsupported file type" }, { status: 400 });
     }
 

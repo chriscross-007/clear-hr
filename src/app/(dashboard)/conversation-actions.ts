@@ -2,6 +2,10 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import {
+  ALLOWED_DOCUMENT_CONTENT_TYPES,
+  MAX_DOCUMENT_SIZE,
+} from "@/lib/document-limits";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -69,20 +73,8 @@ async function getCallerMember() {
 // can enforce org-scoping in code rather than relying on storage RLS.
 // ---------------------------------------------------------------------------
 
-const ALLOWED_CONTENT_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "text/plain",
-  "text/csv",
-];
-const MAX_DOCUMENT_SIZE = 10 * 1024 * 1024; // 10MB
+// CLE — shared from `@/lib/document-limits`.
+const ALLOWED_CONTENT_TYPES = ALLOWED_DOCUMENT_CONTENT_TYPES;
 
 export async function uploadDocumentToMessage(
   formData: FormData,
@@ -101,7 +93,7 @@ export async function uploadDocumentToMessage(
     if (file.size > MAX_DOCUMENT_SIZE) {
       return { success: false, error: "File must be 10MB or smaller" };
     }
-    if (!ALLOWED_CONTENT_TYPES.includes(file.type)) {
+    if (!ALLOWED_CONTENT_TYPES.includes(file.type as (typeof ALLOWED_CONTENT_TYPES)[number])) {
       return { success: false, error: "Unsupported file type" };
     }
 

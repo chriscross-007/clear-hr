@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { verifyCaller } from "../../lib";
-
-const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/heic"];
-const MAX_DOCUMENT_SIZE = 10 * 1024 * 1024;
-const STORAGE_BUCKET = "member-documents";
+import {
+  ALLOWED_CAMERA_CAPTURE_TYPES as ALLOWED_IMAGE_TYPES,
+  MAX_DOCUMENT_SIZE,
+  MEMBER_DOCUMENTS_BUCKET as STORAGE_BUCKET,
+} from "@/lib/document-limits";
 
 /**
  * Same helper as the web-queued capture route — inlined per file
@@ -72,7 +73,7 @@ export async function POST(request: Request) {
         error: "Photo too large. Try retaking closer or at lower resolution.",
       }, { status: 400 });
     }
-    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type as (typeof ALLOWED_IMAGE_TYPES)[number])) {
       return NextResponse.json({ error: "That file type isn't supported." }, { status: 400 });
     }
 
