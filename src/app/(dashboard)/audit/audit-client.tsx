@@ -71,7 +71,12 @@ const ACTION_LABELS: Record<string, string> = {
   "document.expired": "Document expired",
   "document.review_overdue": "Document overdue for review",
   "document.verified": "Document verified",
-  "document.renewed": "Document renewed",
+  // CLE-232 — The UI now presents re-sightings as "Verify" too (no
+  // "Renew" button), but the server still splits the audit action
+  // names so the trail can tell first-sightings from re-sightings.
+  // The label makes the distinction explicit for anyone reading
+  // historical rows.
+  "document.renewed": "Document verified (re-sighting)",
   "document.acknowledged": "Document acknowledged",
   "document.remind_sent": "Reminder sent to outstanding acknowledgers",
   "member.expected_documents_added": "Required documents added",
@@ -226,6 +231,12 @@ const FIELD_LABELS: Record<string, string> = {
   // matching filename to pair with.
   file_size: "File size",
   file_name: "File",
+  // CLE-227 — Document acknowledgement audit metadata.
+  subtype_name: "Subtype",
+  owner_scope: "Scope",
+  document_version_hash: "Document version hash",
+  user_agent: "User agent",
+  ip: "IP address",
   // CLE-226 — `reason` is the current key for user-typed delete
   // reasons on document.deleted / document.force_deleted audit rows.
   // `force_delete_reason` is retained so pre-CLE-226 rows still label
