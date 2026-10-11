@@ -60,17 +60,30 @@ const TYPE_LABEL: Record<DocumentType, string> = {
   organisation_document: "Organisation documents",
 };
 
+// All per-member retention clocks start from the employee's leave
+// date. Every label here is explicit about that so admins aren't
+// left guessing "N years from when?". `policy` / `handbook` run on a
+// supersede clock instead; they're Tier 2 (org-doc replacement is
+// not shipped) so we hide them from the picker — see
+// PER_MEMBER_RETENTION_CLASSES below.
 const RETENTION_LABEL: Record<RetentionClass, string> = {
-  contract: "Contract (6 years post-employment)",
-  certificate: "Certificate (leave + 1 year)",
-  evidence: "Evidence (6 years)",
-  policy: "Policy (6 years superseded)",
-  handbook: "Handbook (6 years superseded)",
-  absence_attachment: "Absence attachment (3 years)",
-  right_to_work: "Right-to-work (2 years post-employment)",
-  payroll: "Payroll (6 years)",
-  other: "Other (6 years)",
+  contract: "Contract (6 years post-leave)",
+  certificate: "Certificate (1 year post-leave)",
+  evidence: "Evidence (6 years post-leave)",
+  policy: "Policy (6 years post-supersede)",
+  handbook: "Handbook (6 years post-supersede)",
+  absence_attachment: "Absence attachment (3 years post-leave)",
+  right_to_work: "Right-to-work (2 years post-leave)",
+  payroll: "Payroll (6 years post-leave)",
+  other: "Other (6 years post-leave)",
 };
+
+// Tier 1 scope — only per-member retention classes are offered in
+// the subtypes picker. `policy` and `handbook` depend on org-doc
+// supersede, which is Tier 2.
+const PER_MEMBER_RETENTION_CLASSES = RETENTION_CLASSES.filter(
+  (rc) => rc !== "policy" && rc !== "handbook",
+);
 
 function emptyPayload(type: DocumentType): DocumentSubtypeWritePayload {
   return {
@@ -416,7 +429,7 @@ function SubtypeEditorDialog({
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {RETENTION_CLASSES.map((rc) => (
+                  {PER_MEMBER_RETENTION_CLASSES.map((rc) => (
                     <SelectItem key={rc} value={rc}>{RETENTION_LABEL[rc]}</SelectItem>
                   ))}
                 </SelectContent>
