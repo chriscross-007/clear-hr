@@ -641,8 +641,19 @@ export async function _getMemberRequiredDocumentRows(
           }
           return 0;
         });
-        rtwRows[0].isRtwPrimary = true;
-        rows.unshift(...rtwRows);
+        // CLE-228 — RTW aggregate semantics: the member needs at
+        // least one non-expired piece of evidence. Once one exists
+        // the expired RTW rows for other subtypes are not required
+        // and are hidden from Required; they re-surface on Other
+        // documents via `selectPresentedRtwDocIds` in the other
+        // compute path. If every RTW doc is expired, keep them all
+        // so the admin can see what's lapsed.
+        const isExpired = (r: RequiredDocumentRow): boolean =>
+          r.expiresOn !== null && r.expiresOn <= today;
+        const anyNotExpired = rtwRows.some((r) => !isExpired(r));
+        const presentedRtw = anyNotExpired ? rtwRows.filter((r) => !isExpired(r)) : rtwRows;
+        presentedRtw[0].isRtwPrimary = true;
+        rows.unshift(...presentedRtw);
       }
     }
 

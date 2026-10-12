@@ -12,6 +12,7 @@
 
 import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
 import type { DocumentsCaller } from "@/lib/documents-caller";
+import { selectPresentedRtwDocIds, type RtwDocLike } from "@/lib/documents-rtw";
 
 // Re-export the DTO shape from the actions file so callers only need
 // one import point. `actions.ts` re-exports the type verbatim.
@@ -87,10 +88,42 @@ export async function _getMyOtherMemberDocuments(
       ((expectedRows ?? []) as { subtype_id: string }[]).map((r) => r.subtype_id),
     );
 
+    // CLE-228 — RTW docs appear on Other UNLESS they're the current
+    // "presented" RTW doc on the Required card. When RTW is opted
+    // out, Required shows no RTW aggregate, so every RTW doc the
+    // member has belongs on Other (empty presented set).
+    const { data: memberRow } = await admin
+      .from("members")
+      .select("rtw_not_required")
+      .eq("id", memberId)
+      .eq("organisation_id", organisationId)
+      .single();
+    const rtwOptedOut = ((memberRow as { rtw_not_required?: boolean } | null)?.rtw_not_required) === true;
+    const rtwDocsAll: RtwDocLike[] = rtwOptedOut
+      ? []
+      : activeDocs
+          .filter((d) => {
+            const st = Array.isArray(d.document_subtype) ? (d.document_subtype[0] ?? null) : d.document_subtype;
+            return st?.type === "evidence";
+          })
+          .map((d) => ({
+            id: d.id,
+            subtype_id: d.subtype_id,
+            expires_on: d.expires_on,
+            uploaded_at: d.uploaded_at,
+          }));
+    const presentedRtwIds = selectPresentedRtwDocIds(rtwDocsAll, today);
+
     const filtered = activeDocs.filter((d) => {
       const st = Array.isArray(d.document_subtype) ? (d.document_subtype[0] ?? null) : d.document_subtype;
       if (!st) return false;
-      if (st.type === "evidence") return false;
+      // CLE-228 — evidence-type (RTW) docs are only excluded if
+      // they're the one currently represented on Required. Any
+      // superseded, expired-but-superseded, or opted-out-of RTW
+      // doc falls through to Other.
+      if (st.type === "evidence") {
+        return !presentedRtwIds.has(d.id);
+      }
       if (st.trackable_per_member && expectedSubtypeIds.has(st.id)) return false;
       return true;
     });
