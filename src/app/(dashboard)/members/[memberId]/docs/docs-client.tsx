@@ -50,6 +50,7 @@ import {
   verifyMemberDocument,
   renewMemberDocument,
   backdateDisposalQueue,
+  getMemberRequiredDocumentRows,
 } from "./document-actions";
 import type { MemberDocumentRow, TrashedMemberDocumentRow } from "./document-types";
 import { STATUS_LABEL, STATUS_TONE } from "@/lib/document-status";
@@ -124,6 +125,10 @@ export function DocsClient({
   const router = useRouter();
   const { memberLabel } = useMemberLabel();
   const [rows, setRows] = useState<MemberDocumentRow[]>([]);
+  // CLE-228 — IDs of docs currently represented on the Required
+  // Documents card. "Other documents" filters these out so a doc
+  // never shows in both cards at once.
+  const [requiredDocIds, setRequiredDocIds] = useState<Set<string>>(new Set());
   const [trashRows, setTrashRows] = useState<TrashedMemberDocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -163,18 +168,40 @@ export function DocsClient({
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const [listRes, trashRes] = await Promise.all([
+    const [listRes, trashRes, requiredRes] = await Promise.all([
       listMemberDocuments(memberId),
       canManageDeleted ? listTrashedMemberDocuments(memberId) : Promise.resolve({ success: true, rows: [] as TrashedMemberDocumentRow[] }),
+      getMemberRequiredDocumentRows(memberId),
     ]);
     setLoading(false);
     if (!listRes.success) setError(listRes.error ?? "Could not load documents");
     setRows(listRes.rows);
     if ("rows" in trashRes) setTrashRows(trashRes.rows);
+    // CLE-228 — Collect doc IDs represented on Required so "Other
+    // documents" below can exclude them. Required rows carry
+    // `documentId` directly; RTW aggregate rows additionally carry
+    // `rtwDocs[].documentId`. Not-uploaded rows have no doc id.
+    if (requiredRes.success) {
+      const ids = new Set<string>();
+      for (const r of requiredRes.rows) {
+        if (r.documentId) ids.add(r.documentId);
+      }
+      setRequiredDocIds(ids);
+    }
   }, [memberId, canManageDeleted]);
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  // CLE-228 — RequiredDocumentsCard dispatches
+  // `clearhr:member-docs-changed` on verify / renew / add / remove.
+  // Re-fetch here so the "Other documents" filter against the
+  // Required doc-id set stays in step with Required's state.
+  useEffect(() => {
+    const onChanged = () => { void load(); };
+    window.addEventListener("clearhr:member-docs-changed", onChanged);
+    return () => window.removeEventListener("clearhr:member-docs-changed", onChanged);
   }, [load]);
 
   const handleView = useCallback(async (doc: MemberDocumentRow) => {
@@ -309,7 +336,7 @@ export function DocsClient({
               />
             ) : (
               <DocList
-                rows={rows}
+                rows={rows.filter((r) => !requiredDocIds.has(r.id))}
                 canUpdate={canUpdate}
                 onOpen={(r) => {
                   setDetailsReadOnly(false);
