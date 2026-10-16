@@ -69,7 +69,7 @@ const TAB_LABEL: Record<TabKey, string> = {
 };
 
 const ACCESS_LABEL: Record<CrossUserAccess, string> = {
-  self: "Self only",
+  self: "Own record only",
   team: "My team",
   all: "Everyone",
 };
@@ -555,7 +555,12 @@ function EditorDialog({
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
-      <DialogContent className="max-w-4xl">
+      {/* Width: the shared DialogContent applies `sm:max-w-lg` (32rem),
+          which overrode the old unprefixed `max-w-4xl` on every screen
+          ≥640px. Set the sm: variant explicitly so it actually wins.
+          40rem = the previous effective 32rem + 25%. The base
+          `max-w-[calc(100%-2rem)]` still caps it on narrow screens. */}
+      <DialogContent className="sm:max-w-[40rem]">
         <DialogHeader>
           <DialogTitle>{isEdit ? "Edit User Rights profile" : "New User Rights profile"}</DialogTitle>
           <DialogDescription>
@@ -582,7 +587,7 @@ function EditorDialog({
                 meaning. New profiles seed with rank='employee'; Copy
                 preserves the source rank. */}
 
-            <Label className="text-muted-foreground">Access</Label>
+            <Label className="text-muted-foreground">Access to:</Label>
             <RadioGroup
               value={payload.crossUserAccess}
               onValueChange={(v) => update("crossUserAccess", v as CrossUserAccess)}

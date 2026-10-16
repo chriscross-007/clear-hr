@@ -17,6 +17,7 @@ import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { logAudit } from "@/lib/audit";
 import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
 import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
+import { isRtwSubtype } from "@/lib/documents-rtw";
 import {
   EMPTY_COUNTS,
   colourFromCounts,
@@ -180,7 +181,7 @@ export async function getComplianceRows(filters?: {
       const member = memberById.get(d.owner_id);
       if (!member) continue;
       const subtype = d.subtype_id ? subtypeById.get(d.subtype_id) : null;
-      if (subtype?.retention_class === "right_to_work") continue;
+      if (subtype && isRtwSubtype(subtype)) continue;
       const statuses = deriveDocumentStatuses({
         requiresVerification: subtype?.requires_verification === true,
         verifiedOn: d.verified_on,
@@ -234,7 +235,7 @@ export async function getComplianceRows(filters?: {
         const s = subtypeById.get(subtypeId);
         if (!s) continue;
         // RTW-class subtypes are aggregated via the RTW row below.
-        if (s.retention_class === "right_to_work") continue;
+        if (isRtwSubtype(s)) continue;
         // Does this member have any active doc of this subtype?
         const has = activeDocs.some((d) => d.owner_id === m.id && d.subtype_id === s.id);
         if (has) continue;
@@ -265,7 +266,7 @@ export async function getComplianceRows(filters?: {
     // if any newest qualifying doc is unverified, `expiring_soon` if
     // any expires within 30 days, `verified` when all are clean.
     const rtwSubtypeIdSet = new Set(
-      subtypes.filter((s) => s.retention_class === "right_to_work").map((s) => s.id),
+      subtypes.filter((s) => isRtwSubtype(s)).map((s) => s.id),
     );
     const soonIso = (() => {
       const d = new Date(today + "T00:00:00Z");

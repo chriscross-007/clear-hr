@@ -1,8 +1,27 @@
-// CLE-228 — Shared helper for the Right-to-Work aggregate's
-// "presented on Required" set. Called from both the per-member
-// Required-documents compute (admin + employee view) and the
-// employee self "Other documents" compute, so the two surfaces
-// agree about which RTW docs belong on which card.
+// CLE-228 — Shared helpers for the Right-to-Work aggregate.
+//
+// The RTW signal is the subtype's **type** (`type = 'evidence'`),
+// not its retention class. The retention class is independent — it
+// decides how long the doc is kept (right_to_work = 2y post-leave,
+// payroll = 6y post-leave, other = 6y, …) and never changes whether
+// a doc counts as RTW. This split lets an admin flag a subtype as
+// RTW evidence while choosing any retention duration they want.
+//
+// Every RTW-signal check in the codebase must go through
+// `isRtwSubtype` (in-code) or `.eq("type", "evidence")` /
+// `.neq("type", "evidence")` (DB queries). Do not re-introduce
+// `retention_class = 'right_to_work'` as an RTW signal — the two
+// are decoupled by design (CLE-228).
+
+/**
+ * True when the subtype's `type` is `evidence`, meaning any doc
+ * uploaded against it is RTW evidence (the UI already labels the
+ * `evidence` type as "RTW Evidence"). Pass any row shape that
+ * carries at least `{ type: string }`.
+ */
+export function isRtwSubtype(s: { type: string }): boolean {
+  return s.type === "evidence";
+}
 //
 // RTW semantics: the member needs AT LEAST ONE non-expired piece
 // of RTW evidence. Once one exists, the other RTW docs (expired,

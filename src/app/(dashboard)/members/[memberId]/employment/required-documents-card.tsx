@@ -173,6 +173,22 @@ export function RequiredDocumentsCard({
     return () => window.removeEventListener("clearhr:rtw-changed", onRtwChanged);
   }, [memberId, load]);
 
+  // CLE-228 — react to any member-doc change (verify / renew / edit
+  // expiry / add / delete) from anywhere else on the page (e.g. the
+  // Document Details dialog opened from the Other list). Without
+  // this, editing an expired RTW doc's expiry to a future date on
+  // Other wouldn't re-promote it onto Required. The event is
+  // dispatched by DocumentDetailsDialog's `notifySaved`.
+  useEffect(() => {
+    function onMemberDocsChanged(e: Event) {
+      const detail = (e as CustomEvent<{ memberId?: string }>).detail;
+      if (!detail || detail.memberId !== memberId) return;
+      void load();
+    }
+    window.addEventListener("clearhr:member-docs-changed", onMemberDocsChanged);
+    return () => window.removeEventListener("clearhr:member-docs-changed", onMemberDocsChanged);
+  }, [memberId, load]);
+
   // Subtypes with the trackable flag on that aren't already assigned
   // per-member. Drives the "+" picker.
   const pickable = useMemo(() => {

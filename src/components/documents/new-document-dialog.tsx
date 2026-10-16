@@ -68,9 +68,10 @@ interface Props {
    *  row skips the subtype-picking step. */
   presetSubtypeId?: string | null;
   /** CLE-215 — when true, the subtype picker is restricted to
-   *  subtypes whose `retention_class = 'right_to_work'`. Used when
-   *  the dialog is opened from the RTW aggregate row's "+ Add"
-   *  button so admins can only upload valid RTW evidence. */
+   *  subtypes whose `type = 'evidence'` (CLE-228 — the RTW signal
+   *  is the parent type, not the retention class). Used when the
+   *  dialog is opened from the RTW aggregate row's "+ Add" button
+   *  so admins can only upload valid RTW evidence. */
   rtwOnly?: boolean;
   onClose: () => void;
   /** Fires with the new document's id once upload/photo lands. The

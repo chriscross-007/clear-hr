@@ -1487,10 +1487,13 @@ export interface TrackableSubtype {
  * Every subtype in the caller's org with `trackable_per_member = true`.
  * Powers the Employment tab's Required Documents picker.
  *
- * CLE-215 — RTW-class subtypes (`retention_class = 'right_to_work'`)
- * are excluded here even when their trackable flag is on. RTW is
- * covered by the aggregate "Right to Work" row on the card and
- * shouldn't appear as an individually-pickable per-member item.
+ * CLE-215 — RTW-class subtypes (`type = 'evidence'`) are excluded
+ * here even when their trackable flag is on. RTW is covered by the
+ * aggregate "Right to Work" row on the card and shouldn't appear
+ * as an individually-pickable per-member item. CLE-228 — the RTW
+ * signal is `type = 'evidence'`, not `retention_class`, so an admin
+ * can set any retention duration on an RTW subtype without breaking
+ * the RTW routing.
  */
 export async function listTrackablePerMemberSubtypes(): Promise<
   { success: true; subtypes: TrackableSubtype[] } | { success: false; error: string }
@@ -1504,7 +1507,7 @@ export async function listTrackablePerMemberSubtypes(): Promise<
       .select("id, type, name, sort_order")
       .eq("organisation_id", caller.organisationId)
       .eq("trackable_per_member", true)
-      .neq("retention_class", "right_to_work")
+      .neq("type", "evidence")
       .order("type", { ascending: true })
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true });
@@ -1521,8 +1524,10 @@ export async function listTrackablePerMemberSubtypes(): Promise<
 
 /**
  * CLE-215 — Subtypes valid for satisfying RTW. Any subtype in the
- * caller's org whose `retention_class = 'right_to_work'`. Feeds the
- * restricted picker on the RTW aggregate row's "+ Add" button.
+ * caller's org whose `type = 'evidence'` (CLE-228 — the RTW signal
+ * is the subtype's parent type, not its retention class, so an
+ * admin can set any retention duration on an RTW subtype). Feeds
+ * the restricted picker on the RTW aggregate row's "+ Add" button.
  */
 export async function listRtwSubtypes(): Promise<
   { success: true; subtypes: TrackableSubtype[] } | { success: false; error: string }
@@ -1535,7 +1540,7 @@ export async function listRtwSubtypes(): Promise<
       .from("document_subtype")
       .select("id, type, name, sort_order")
       .eq("organisation_id", caller.organisationId)
-      .eq("retention_class", "right_to_work")
+      .eq("type", "evidence")
       .order("type", { ascending: true })
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true });

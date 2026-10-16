@@ -36,9 +36,9 @@ interface Row {
 }
 
 const ROWS: Row[] = [
-  { key: "cua_self", label: "Access: Self only", category: "Access", readValue: (p) => p.crossUserAccess === "self" },
-  { key: "cua_team", label: "Access: My team", category: "Access", readValue: (p) => p.crossUserAccess === "team" },
-  { key: "cua_all", label: "Access: Everyone", category: "Access", readValue: (p) => p.crossUserAccess === "all" },
+  { key: "cua_self", label: "Access to: Own record only", category: "Access", readValue: (p) => p.crossUserAccess === "self" },
+  { key: "cua_team", label: "Access to: My team", category: "Access", readValue: (p) => p.crossUserAccess === "team" },
+  { key: "cua_all", label: "Access to: Everyone", category: "Access", readValue: (p) => p.crossUserAccess === "all" },
 
   { key: "canCreateUsers", label: "Create users", category: "User management", readValue: (p) => p.canCreateUsers },
   { key: "canInviteUsers", label: "Invite users", category: "User management", readValue: (p) => p.canInviteUsers },

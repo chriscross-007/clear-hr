@@ -20,6 +20,7 @@
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
 import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
+import { isRtwSubtype } from "@/lib/documents-rtw";
 import {
   ALLOWED_CONTENT_TYPES,
   MAX_DOCUMENT_SIZE,
@@ -465,7 +466,7 @@ export async function _getMemberRequiredDocumentRows(
     const effectiveIds = new Set<string>();
     for (const id of perMemberIds) {
       const s = subtypeById.get(id);
-      if (s && s.retention_class === "right_to_work") continue;
+      if (s && isRtwSubtype(s)) continue;
       effectiveIds.add(id);
     }
     const { data: memberRow } = await admin
@@ -569,7 +570,7 @@ export async function _getMemberRequiredDocumentRows(
     if (!rtwOptedOut) {
       const rtwRows: RequiredDocumentRow[] = [];
       for (const s of subtypes) {
-        if (s.retention_class !== "right_to_work") continue;
+        if (!isRtwSubtype(s)) continue;
         const list = bySubtype.get(s.id) ?? [];
         const newest = list[0];
         if (!newest) continue;

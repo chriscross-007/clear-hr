@@ -14,6 +14,7 @@
 
 import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
 import { deriveDocumentStatuses } from "@/lib/document-status";
+import { isRtwSubtype } from "@/lib/documents-rtw";
 
 export interface TrafficLightCounts {
   missing: number;
@@ -147,7 +148,7 @@ export async function computeTrafficLightsForMembers(
   }
 
   const rtwSubtypeIds = subtypes
-    .filter((s) => s.retention_class === "right_to_work")
+    .filter((s) => isRtwSubtype(s))
     .map((s) => s.id);
 
   for (const m of members) {
@@ -184,7 +185,7 @@ export async function computeTrafficLightsForMembers(
       for (const sid of expected) {
         const s = subtypeById.get(sid);
         if (!s) continue;
-        if (s.retention_class === "right_to_work") continue;
+        if (isRtwSubtype(s)) continue;
         const list = bucket.get(`${m.id}:${sid}`);
         const newest = list?.[0] ?? null;
         if (!newest) { counts.missing += 1; continue; }
