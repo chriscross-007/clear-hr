@@ -427,6 +427,10 @@ export async function getRightsEditorCount(organisationId: string): Promise<numb
     .from("members")
     .select("id, rights_profiles!inner(can_edit_rights_profiles)", { count: "exact", head: true })
     .eq("organisation_id", organisationId)
+    // CLE-229 — only members who can actually sign in count, matching
+    // the DB guard trigger. An invited-but-never-accepted member on an
+    // editor profile can't rescue a locked-out org.
+    .not("user_id", "is", null)
     .eq("rights_profiles.can_edit_rights_profiles", true);
   return count ?? 0;
 }

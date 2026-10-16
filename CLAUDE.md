@@ -393,9 +393,10 @@ These aren't hierarchical any more (post-CLE-197). All four are peer-level profi
 
 ### Guard triggers
 
-Two DB triggers enforce bus-factor invariants at the row level:
-- **`ensure_at_least_two_rights_editors_on_member`** (BEFORE UPDATE/DELETE on `members`) — blocks any operation that would drop the count of `can_edit_rights_profiles = true` members from ≥2 to <2. Deliberately doesn't block operations when the count is already below 2 (so Chris on his 1-editor tenant isn't frozen). The invariant activates once he promotes a second.
-- **`ensure_at_least_two_rights_editors_on_profile`** (BEFORE UPDATE on `rights_profiles`) — mirrors the above for the case where an admin turns off `can_edit_rights_profiles` on a profile that has assigned members.
+Two DB triggers enforce bus-factor invariants at the row level (v2 in `20261016000001_rights_editors_guard_v2.sql`, CLE-229). Both count only **active** editors — members with `user_id IS NOT NULL` on a profile with `can_edit_rights_profiles = true` (an invited-but-never-accepted member can't rescue a locked-out org). An operation is blocked when it **lowers** that count and the result is **below 2**: 2→1 and 1→0 are both refused; ≥3→2 is allowed; a 1-editor tenant can still add editors but can't remove its last one. Cascades from deleting the organisation itself are let through.
+- **`ensure_at_least_two_rights_editors_on_member`** (BEFORE UPDATE/DELETE on `members`) — covers profile reassignment (single + bulk), member delete, and `user_id` being cleared.
+- **`ensure_at_least_two_rights_editors_on_profile`** (BEFORE UPDATE on `rights_profiles`) — covers turning off `can_edit_rights_profiles` on a profile. Profile delete needs no trigger: `deleteRightsProfile` refuses when members are assigned and the FK (`NO ACTION`) blocks it at the DB too.
+- **Full backup restore** (`restoreBackup`, mode `full`) keeps the billing contact **and** every member on an editor profile; it no longer wipes them. `getRightsEditorCount` (banner) uses the same active-only count.
 
 Both raise `check_violation` with a friendly message the app surfaces via the `<UserRightsPicker>` inline error.
 

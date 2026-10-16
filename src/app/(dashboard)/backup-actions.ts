@@ -481,13 +481,33 @@ export async function restoreBackup(
     // Apply members
     if (mode === "member_data" || mode === "full") {
       if (mode === "full") {
-        // CLE-201c-9 — owner concept dropped. The one member that
-        // must survive a full restore is the billing contact.
-        await admin
+        // CLE-201c-9 — owner concept dropped. The billing contact
+        // always survives a full restore.
+        // CLE-229 — members on a profile with "Edit User Rights" also
+        // survive. Wiping them would leave the org with nobody able to
+        // change User Rights (restored members land on the default
+        // Employee profile), and the rights-editor guard trigger now
+        // refuses that delete anyway. Surviving editors are updated in
+        // place by the email-matched loop below like any other member.
+        const { data: editorProfiles } = await admin
+          .from("rights_profiles")
+          .select("id")
+          .eq("organisation_id", orgId)
+          .eq("can_edit_rights_profiles", true);
+        const editorProfileIds = (editorProfiles ?? []).map((p) => p.id as string);
+
+        let del = admin
           .from("members")
           .delete()
           .eq("organisation_id", orgId)
           .eq("is_billing_contact", false);
+        if (editorProfileIds.length > 0) {
+          // `not in` leaves NULL-profile rows out of the delete too —
+          // harmless; they're matched by email below.
+          del = del.not("rights_profile_id", "in", `(${editorProfileIds.join(",")})`);
+        }
+        const { error: delError } = await del;
+        if (delError) return { success: false, error: delError.message };
       }
 
       const { data: currentMembers } = await admin
