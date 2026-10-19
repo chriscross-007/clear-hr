@@ -8,6 +8,16 @@
 // by mobile Tier 1.
 
 import type { DocumentsCaller } from "@/lib/documents-caller";
+import {
+  AUDIENCE_COLUMNS,
+  audienceFromRow,
+  canSeeOrgDoc,
+  isExpectedToAcknowledge,
+  loadOrgDocMembers,
+  type AudienceDbRow,
+  type AudienceMode,
+  type OrgDocMember,
+} from "@/lib/org-doc-audience";
 
 export interface OrgDocumentRow {
   id: string;
@@ -22,6 +32,12 @@ export interface OrgDocumentRow {
   uploadedAt: string;
   requiresAcknowledgement: boolean;
   isAcknowledged: boolean;
+  /** CLE-230 — "all" (Everyone) or "selected". */
+  audienceMode: AudienceMode;
+  /** CLE-230 — number of members in the audience (who can view org
+   *  docs and match it). Only computed for callers who can manage org
+   *  docs (drives the admin list's "Visible to" column); null otherwise. */
+  audienceCount: number | null;
 }
 
 export async function _listOrgDocuments(
@@ -41,29 +57,31 @@ export async function _listOrgDocuments(
       ((queued ?? []) as { document_id: string }[]).map((r) => r.document_id),
     );
 
-    // CLE-225 — Docs explicitly hidden from this caller drop out of
-    // the visible set. Admins who've been hidden a doc don't see it
-    // here either; per-member surfaces still expose the Viewable
-    // state explicitly.
-    const { data: hiddenRows } = await admin
-      .from("member_org_document_hidden")
-      .select("document_id")
-      .eq("member_id", memberId);
-    const hiddenIds = new Set<string>(
-      ((hiddenRows ?? []) as { document_id: string }[]).map((r) => r.document_id),
-    );
+    // CLE-230 — per-document audience. Managers see every doc; everyone
+    // else sees docs whose audience includes them. Evaluated against the
+    // caller's *effective* rights so View-as-Employee previews correctly.
+    const me = {
+      id: memberId,
+      teamId: caller.teamId,
+      rightsProfileId: caller.rights.profileId,
+      signedIn: true,
+      canView: caller.rights.canViewOrganisationDocuments,
+      canManage: caller.rights.canManageOrganisationDocuments,
+    };
 
     const { data, error } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, uploaded_by, uploaded_at, document_subtype!subtype_id(name, requires_acknowledgement), members!uploaded_by(first_name, last_name)",
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, uploaded_by, uploaded_at, " +
+        AUDIENCE_COLUMNS +
+        ", document_subtype!subtype_id(name, requires_acknowledgement), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", organisationId)
       .eq("owner_scope", "organisation")
       .order("uploaded_at", { ascending: false });
     if (error) return { success: false, error: error.message, rows: [] };
 
-    type Row = {
+    type Row = AudienceDbRow & {
       id: string;
       file_name: string;
       file_size: number;
@@ -82,7 +100,13 @@ export async function _listOrgDocuments(
     const visibleRows = (data ?? [])
       .map((r) => r as unknown as Row)
       .filter((r) => !queuedIds.has(r.id))
-      .filter((r) => !hiddenIds.has(r.id));
+      .filter((r) => canSeeOrgDoc(audienceFromRow(r), me));
+
+    // CLE-230 — audience size per doc, for the admin list only.
+    let orgMembers: OrgDocMember[] = [];
+    if (me.canManage && visibleRows.length > 0) {
+      orgMembers = await loadOrgDocMembers(admin, organisationId);
+    }
 
     const ackedSet = new Set<string>();
     if (visibleRows.length > 0) {
@@ -115,6 +139,10 @@ export async function _listOrgDocuments(
         uploadedAt: r.uploaded_at,
         requiresAcknowledgement: stObj?.requires_acknowledgement === true,
         isAcknowledged: ackedSet.has(r.id),
+        audienceMode: audienceFromRow(r).mode,
+        audienceCount: me.canManage
+          ? orgMembers.filter((m) => isExpectedToAcknowledge(audienceFromRow(r), m)).length
+          : null,
       };
     });
     return { success: true, rows };

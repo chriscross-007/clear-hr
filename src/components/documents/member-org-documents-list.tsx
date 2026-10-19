@@ -65,9 +65,8 @@ export function MemberOrgDocumentsList({
     setError(null);
     const res = await getOrgDocumentsForMember(memberId);
     if (!res.success) { setError(res.error ?? "Failed to load"); setInitialLoaded(true); return; }
-    // Per-doc audience replaces the per-member Viewable checkbox
-    // (removed). This tab now shows exactly what the member can see:
-    // any pair still hidden via member_org_document_hidden is left out.
+    // CLE-230 — per-document audience replaces the per-member Viewable
+    // checkbox. This tab shows exactly the org docs the member can see.
     setRows(res.rows.filter((r) => r.viewable));
     setInitialLoaded(true);
   }, [memberId]);
@@ -131,7 +130,7 @@ export function MemberOrgDocumentsList({
                               doc is hidden from this employee: an
                               ack that isn't expected shouldn't
                               read as "awaited". */}
-                          {r.requiresAcknowledgement && !r.isAcknowledgedByTarget && (
+                          {r.requiresAcknowledgement && r.expectedByTarget && !r.isAcknowledgedByTarget && (
                             <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
                               Awaiting Ack
                             </span>

@@ -21,6 +21,19 @@ import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
 import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
 import { isRtwSubtype } from "@/lib/documents-rtw";
+import { audienceFromRow, canSeeOrgDoc, type AudienceDbRow } from "@/lib/org-doc-audience";
+
+/** CLE-230 — can the caller see this org doc under its audience? */
+function callerCanSeeOrgDoc(caller: DocumentsCaller, doc: unknown): boolean {
+  return canSeeOrgDoc(audienceFromRow(doc as AudienceDbRow), {
+    id: caller.memberId,
+    teamId: caller.teamId,
+    rightsProfileId: caller.rights.profileId,
+    signedIn: true,
+    canView: caller.rights.canViewOrganisationDocuments,
+    canManage: caller.rights.canManageOrganisationDocuments,
+  });
+}
 import {
   ALLOWED_CONTENT_TYPES,
   MAX_DOCUMENT_SIZE,
@@ -124,7 +137,7 @@ export async function _getDocumentDetail(
     const { data: doc } = await admin
       .from("document")
       .select(
-        "id, organisation_id, owner_scope, owner_id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, verification_notes, document_subtype!subtype_id(name, requires_verification)",
+        "id, organisation_id, owner_scope, owner_id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, verification_notes, audience_mode, audience_team_ids, audience_rights_profile_ids, audience_include_member_ids, document_subtype!subtype_id(name, requires_verification)",
       )
       .eq("id", documentId)
       .single();
@@ -141,7 +154,7 @@ export async function _getDocumentDetail(
         return { success: false, error: "Document not found" };
       }
     } else if (doc.owner_scope === "organisation") {
-      if (!canViewOrgDocs) {
+      if (!canViewOrgDocs || !callerCanSeeOrgDoc(caller, doc)) {
         return { success: false, error: "Document not found" };
       }
       target = {
@@ -240,7 +253,7 @@ export async function _getMemberDocumentSignedUrl(
 
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, owner_id, storage_path, file_name, file_size, content_type, disposal_date, type, document_subtype!subtype_id(name)")
+      .select("id, organisation_id, owner_scope, owner_id, storage_path, file_name, file_size, content_type, disposal_date, type, audience_mode, audience_team_ids, audience_rights_profile_ids, audience_include_member_ids, document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== organisationId) {
@@ -260,7 +273,7 @@ export async function _getMemberDocumentSignedUrl(
         return { success: false, error: "Document not found" };
       }
     } else if (doc.owner_scope === "organisation") {
-      if (!canViewOrgDocs) {
+      if (!canViewOrgDocs || !callerCanSeeOrgDoc(caller, doc)) {
         return { success: false, error: "Document not found" };
       }
       target = { id: caller.memberId, team_id: null, first_name: "Organisation", last_name: "" };

@@ -126,6 +126,8 @@ export function OrganisationDocsClient({
                     trivial to reinstate if we ever add a second org-
                     scope doc type. */}
                 <th className="px-4 py-2 font-medium">Document</th>
+                {/* CLE-230 — audience summary, managers only. */}
+                {canEdit && <th className="px-4 py-2 font-medium hidden md:table-cell">Visible to</th>}
                 <th className="px-4 py-2 font-medium hidden lg:table-cell">Expires</th>
                 <th className="px-4 py-2 font-medium hidden lg:table-cell">Uploaded</th>
                 <th className="px-4 py-2 text-right" />
@@ -156,6 +158,13 @@ export function OrganisationDocsClient({
                       </div>
                     </div>
                   </td>
+                  {canEdit && (
+                    <td className="px-4 py-2 text-muted-foreground hidden md:table-cell">
+                      {r.audienceMode === "all"
+                        ? "Everyone"
+                        : `Selected (${r.audienceCount ?? 0})`}
+                    </td>
+                  )}
                   <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">{fmtDate(r.expiresOn)}</td>
                   <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">{fmtDateTime(r.uploadedAt)}</td>
                   <td className="px-4 py-2 text-right">

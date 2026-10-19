@@ -19,6 +19,29 @@ import { revalidatePath } from "next/cache";
 import { createHash } from "node:crypto";
 import { logAudit } from "@/lib/audit";
 import type { DocumentsCaller } from "@/lib/documents-caller";
+import {
+  AUDIENCE_COLUMNS,
+  audienceFromRow,
+  canSeeOrgDoc,
+  expectedAcknowledgerIds,
+  isExpectedToAcknowledge,
+  loadOrgDocMembers,
+  type AudienceDbRow,
+  type OrgDocMember,
+} from "@/lib/org-doc-audience";
+
+/** CLE-230 — the caller as an audience member, using their *effective*
+ *  rights (so View-as-Employee behaves like a real employee). */
+function callerAsOrgDocMember(caller: DocumentsCaller): OrgDocMember {
+  return {
+    id: caller.memberId,
+    teamId: caller.teamId,
+    rightsProfileId: caller.rights.profileId,
+    signedIn: true,
+    canView: caller.rights.canViewOrganisationDocuments,
+    canManage: caller.rights.canManageOrganisationDocuments,
+  };
+}
 
 const STORAGE_BUCKET = "member-documents";
 
@@ -89,7 +112,7 @@ export async function _acknowledgeDocument(
     const { admin, memberId, organisationId, ip, userAgent } = caller;
     const canViewOrgDocs = caller.rights.canViewOrganisationDocuments;
 
-    type DocRow = {
+    type DocRow = AudienceDbRow & {
       id: string;
       organisation_id: string;
       owner_scope: "member" | "organisation";
@@ -107,6 +130,7 @@ export async function _acknowledgeDocument(
       .from("document")
       .select(
         "id, organisation_id, owner_scope, owner_id, file_name, file_size, storage_path, subtype_id, " +
+        AUDIENCE_COLUMNS + ", " +
         "document_subtype!subtype_id(name, requires_acknowledgement)",
       )
       .eq("id", documentId)
@@ -135,6 +159,10 @@ export async function _acknowledgeDocument(
           success: false,
           error: "You don't have access to acknowledge organisation documents.",
         };
+      }
+      // CLE-230 — outside the doc's audience → treat as not found.
+      if (!canSeeOrgDoc(audienceFromRow(doc), callerAsOrgDocMember(caller))) {
+        return { success: false, error: "Document not found" };
       }
     }
 
@@ -209,7 +237,7 @@ export async function _getMyOutstandingAcknowledgements(
     const { admin, memberId, organisationId } = caller;
     const canViewOrgDocs = caller.rights.canViewOrganisationDocuments;
 
-    type DocJoin = {
+    type DocJoin = AudienceDbRow & {
       id: string;
       owner_scope: "member" | "organisation";
       owner_id: string | null;
@@ -222,19 +250,15 @@ export async function _getMyOutstandingAcknowledgements(
       .from("document")
       .select(
         "id, owner_scope, owner_id, file_name, subtype_id, uploaded_at, " +
+        AUDIENCE_COLUMNS + ", " +
         "document_subtype!subtype_id(name, type, requires_acknowledgement)",
       )
       .eq("organisation_id", organisationId)
       .order("uploaded_at", { ascending: false });
     const rows = (docsQuery.data ?? []) as unknown as DocJoin[];
 
-    const { data: hiddenRows } = await admin
-      .from("member_org_document_hidden")
-      .select("document_id")
-      .eq("member_id", memberId);
-    const hiddenFromCaller = new Set<string>(
-      ((hiddenRows ?? []) as { document_id: string }[]).map((r) => r.document_id),
-    );
+    // CLE-230 — only org docs whose audience includes the caller.
+    const me = callerAsOrgDocMember(caller);
 
     const relevant = rows.filter((d) => {
       const st = Array.isArray(d.document_subtype) ? d.document_subtype[0] : d.document_subtype;
@@ -242,8 +266,7 @@ export async function _getMyOutstandingAcknowledgements(
       if (d.owner_scope === "member") return d.owner_id === memberId;
       if (d.owner_scope === "organisation") {
         if (!canViewOrgDocs) return false;
-        if (hiddenFromCaller.has(d.id)) return false;
-        return true;
+        return isExpectedToAcknowledge(audienceFromRow(d), me);
       }
       return false;
     });
@@ -294,7 +317,7 @@ export async function _getDocumentAcknowledgementStatus(
     const { admin, memberId, organisationId } = caller;
     const canViewOrgDocs = caller.rights.canViewOrganisationDocuments;
 
-    type DocRow = {
+    type DocRow = AudienceDbRow & {
       id: string;
       organisation_id: string;
       owner_scope: "member" | "organisation";
@@ -309,6 +332,7 @@ export async function _getDocumentAcknowledgementStatus(
       .from("document")
       .select(
         "id, organisation_id, owner_scope, owner_id, subtype_id, " +
+        AUDIENCE_COLUMNS + ", " +
         "document_subtype!subtype_id(requires_acknowledgement)",
       )
       .eq("id", documentId)
@@ -334,10 +358,11 @@ export async function _getDocumentAcknowledgementStatus(
     }
 
     const ownerScope = doc.owner_scope as "member" | "organisation";
+    const audience = audienceFromRow(doc);
     const isCallerExpectedToAcknowledge =
       ownerScope === "member"
         ? doc.owner_id === memberId
-        : canViewOrgDocs;
+        : isExpectedToAcknowledge(audience, callerAsOrgDocMember(caller));
 
     const { data: ownAck } = await admin
       .from("document_acknowledgement")
@@ -355,30 +380,8 @@ export async function _getDocumentAcknowledgementStatus(
 
     let coverageSummary: DocumentAcknowledgementStatus["coverageSummary"] = null;
     if (ownerScope === "organisation" && canViewOrgDocs) {
-      const { data: members } = await admin
-        .from("members")
-        .select("id, rights_profiles(can_view_organisation_documents)")
-        .eq("organisation_id", organisationId)
-        .not("user_id", "is", null);
-      let expectedIds = ((members ?? []) as Array<{
-        id: string;
-        rights_profiles: { can_view_organisation_documents?: boolean } | { can_view_organisation_documents?: boolean }[] | null;
-      }>)
-        .filter((m) => {
-          const rp = Array.isArray(m.rights_profiles) ? m.rights_profiles[0] : m.rights_profiles;
-          return rp?.can_view_organisation_documents === true;
-        })
-        .map((m) => m.id);
-      const { data: hiddenForDoc } = await admin
-        .from("member_org_document_hidden")
-        .select("member_id")
-        .eq("document_id", documentId);
-      const hiddenSet = new Set<string>(
-        ((hiddenForDoc ?? []) as { member_id: string }[]).map((r) => r.member_id),
-      );
-      if (hiddenSet.size > 0) {
-        expectedIds = expectedIds.filter((id) => !hiddenSet.has(id));
-      }
+      // CLE-230 — denominator = signed-in members in the doc's audience.
+      const expectedIds = expectedAcknowledgerIds(audience, await loadOrgDocMembers(admin, organisationId));
       const { data: acks } = await admin
         .from("document_acknowledgement")
         .select("member_id")

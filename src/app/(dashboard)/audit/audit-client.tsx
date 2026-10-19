@@ -64,6 +64,7 @@ const ACTION_LABELS: Record<string, string> = {
   "document.downloaded": "Document downloaded",
   "document.metadata_updated": "Document details updated",
   "document.visibility_changed": "Org document visibility changed",
+  "document.audience_changed": "Org document audience changed",
   "document.deleted": "Document moved to Trash",
   "document.force_deleted": "Document moved to Trash (retention override)",
   "document.restored": "Document restored from Trash",
@@ -122,6 +123,7 @@ const FILTER_ACTIONS = [
   "document.downloaded",
   "document.metadata_updated",
   "document.visibility_changed",
+  "document.audience_changed",
   "document.deleted",
   "document.force_deleted",
   "document.restored",
@@ -236,6 +238,12 @@ const FIELD_LABELS: Record<string, string> = {
   owner_scope: "Scope",
   document_version_hash: "Document version hash",
   user_agent: "User agent",
+  // CLE-230 — org document audience.
+  audience_mode: "Visible to",
+  audience_teams: "Teams",
+  audience_profiles: "User Rights",
+  audience_always_include: "Always include",
+  audience_size: "Members in audience",
   ip: "IP address",
   // CLE-226 — `reason` is the current key for user-typed delete
   // reasons on document.deleted / document.force_deleted audit rows.

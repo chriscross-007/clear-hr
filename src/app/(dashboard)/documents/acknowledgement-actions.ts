@@ -37,6 +37,14 @@ import {
   _getMyOutstandingAcknowledgements,
   _getDocumentAcknowledgementStatus,
 } from "./acknowledgement-actions-impl";
+import {
+  AUDIENCE_COLUMNS,
+  audienceFromRow,
+  expectedAcknowledgerIds,
+  loadOrgDocMembers,
+  type AudienceDbRow,
+  type OrgDocMember,
+} from "@/lib/org-doc-audience";
 
 // ---------------------------------------------------------------------------
 // Constants / helpers
@@ -293,7 +301,7 @@ export async function getDocumentCoverage(
     const admin = getAdmin();
 
     // Doc + subtype.
-    type DocRow = {
+    type DocRow = AudienceDbRow & {
       id: string;
       organisation_id: string;
       owner_scope: "member" | "organisation";
@@ -309,6 +317,7 @@ export async function getDocumentCoverage(
       .from("document")
       .select(
         "id, organisation_id, owner_scope, owner_id, file_name, subtype_id, " +
+        AUDIENCE_COLUMNS + ", " +
         "document_subtype!subtype_id(name, requires_acknowledgement)",
       )
       .eq("id", documentId)
@@ -329,36 +338,11 @@ export async function getDocumentCoverage(
     if (ownerScope === "member") {
       expectedIds = doc.owner_id ? [doc.owner_id as string] : [];
     } else {
-      // Org-scope: every member in the org whose rights_profile grants
-      // can_view_organisation_documents. See §Lifecycle note above.
-      const { data: members } = await admin
-        .from("members")
-        .select("id, rights_profile_id, rights_profiles(can_view_organisation_documents)")
-        .eq("organisation_id", caller.organisationId)
-        .not("user_id", "is", null);
-      expectedIds = ((members ?? []) as Array<{
-        id: string;
-        rights_profiles: { can_view_organisation_documents?: boolean } | { can_view_organisation_documents?: boolean }[] | null;
-      }>)
-        .filter((m) => {
-          const rp = Array.isArray(m.rights_profiles) ? m.rights_profiles[0] : m.rights_profiles;
-          return rp?.can_view_organisation_documents === true;
-        })
-        .map((m) => m.id);
-
-      // CLE-225 — Subtract members explicitly hidden from THIS doc.
-      // Hidden pairs drop out of both the denominator and the
-      // outstanding list — they're not expected to ack.
-      const { data: hiddenForDoc } = await admin
-        .from("member_org_document_hidden")
-        .select("member_id")
-        .eq("document_id", documentId);
-      const hiddenSet = new Set<string>(
-        ((hiddenForDoc ?? []) as { member_id: string }[]).map((r) => r.member_id),
+      // CLE-230 — signed-in members in the doc's audience.
+      expectedIds = expectedAcknowledgerIds(
+        audienceFromRow(doc),
+        await loadOrgDocMembers(admin, caller.organisationId),
       );
-      if (hiddenSet.size > 0) {
-        expectedIds = expectedIds.filter((id) => !hiddenSet.has(id));
-      }
     }
 
     // Numerator: the ack rows.
@@ -481,7 +465,7 @@ export async function getOrgAcknowledgementCoverage(): Promise<
     const admin = getAdmin();
 
     // Every doc in the tenant whose subtype requires acknowledgement.
-    type DocRow = {
+    type DocRow = AudienceDbRow & {
       id: string;
       file_name: string;
       subtype_id: string;
@@ -499,6 +483,7 @@ export async function getOrgAcknowledgementCoverage(): Promise<
       .from("document")
       .select(
         "id, file_name, subtype_id, owner_scope, owner_id, uploaded_at, reminders_last_sent_at, disposal_date, " +
+        AUDIENCE_COLUMNS + ", " +
         "document_subtype!subtype_id(name, type, requires_acknowledgement)",
       )
       .eq("organisation_id", caller.organisationId)
@@ -522,54 +507,14 @@ export async function getOrgAcknowledgementCoverage(): Promise<
     });
     if (relevant.length === 0) return { success: true, rows: [] };
 
-    // Denominator for org-scope docs: base = Live members whose
-    // rights profile grants `can_view_organisation_documents`.
-    //
-    // CLE-225 — the denominator is no longer sharable across docs.
-    // Each doc has its own per-member "hidden" set, so the base
-    // eligible set must be trimmed per-doc. We batch the hidden-rows
-    // read once and group by document_id in memory to keep this O(1)
-    // in query count regardless of doc-count.
+    // CLE-230 — org-scope denominator is per-doc: signed-in members in
+    // that doc's audience. Load the org's members once, evaluate per doc.
     //
     // NOTE — see the twin comment on `getDocumentCoverage`: when the
-    // Member Lifecycle capability ships, add `AND lifecycle_status =
-    // 'live'` to the denominator query below.
-    let baseOrgEligibleIds: string[] = [];
-    const hiddenByDoc = new Map<string, Set<string>>();
-    const anyOrgScope = relevant.some((d) => d.owner_scope === "organisation");
-    if (anyOrgScope) {
-      const { data: members } = await admin
-        .from("members")
-        .select("id, rights_profiles(can_view_organisation_documents)")
-        .eq("organisation_id", caller.organisationId)
-        .not("user_id", "is", null);
-      baseOrgEligibleIds = ((members ?? []) as Array<{
-        id: string;
-        rights_profiles: { can_view_organisation_documents?: boolean } | { can_view_organisation_documents?: boolean }[] | null;
-      }>)
-        .filter((m) => {
-          const rp = Array.isArray(m.rights_profiles) ? m.rights_profiles[0] : m.rights_profiles;
-          return rp?.can_view_organisation_documents === true;
-        })
-        .map((m) => m.id);
-
-      // CLE-225 — Load every per-member hide row for the org-scope
-      // docs in this batch, group by document_id. One round-trip.
-      const orgDocIds = relevant.filter((d) => d.owner_scope === "organisation").map((d) => d.id);
-      if (orgDocIds.length > 0) {
-        const { data: hides } = await admin
-          .from("member_org_document_hidden")
-          .select("document_id, member_id")
-          .in("document_id", orgDocIds);
-        for (const h of ((hides ?? []) as { document_id: string; member_id: string }[])) {
-          let set = hiddenByDoc.get(h.document_id);
-          if (!set) {
-            set = new Set<string>();
-            hiddenByDoc.set(h.document_id, set);
-          }
-          set.add(h.member_id);
-        }
-      }
+    // Member Lifecycle capability ships, exclude non-live members.
+    let orgMembers: OrgDocMember[] = [];
+    if (relevant.some((d) => d.owner_scope === "organisation")) {
+      orgMembers = await loadOrgDocMembers(admin, caller.organisationId);
     }
 
     // Batch-load ack rows for every relevant doc. One query, group in
@@ -607,19 +552,12 @@ export async function getOrgAcknowledgementCoverage(): Promise<
 
     const rows: AcknowledgementCoverageRow[] = relevant.map((d) => {
       const st = Array.isArray(d.document_subtype) ? d.document_subtype[0] : d.document_subtype;
-      // CLE-225 — per-doc denominator: base eligible set minus this
-      // doc's hidden set. Member-scope docs are unaffected (always 1).
-      let totalExpected: number;
-      if (d.owner_scope === "member") {
-        totalExpected = d.owner_id ? 1 : 0;
-      } else {
-        const hides = hiddenByDoc.get(d.id);
-        if (!hides || hides.size === 0) {
-          totalExpected = baseOrgEligibleIds.length;
-        } else {
-          totalExpected = baseOrgEligibleIds.filter((id) => !hides.has(id)).length;
-        }
-      }
+      // CLE-230 — per-doc denominator from the doc's audience.
+      // Member-scope docs are unaffected (always 1).
+      const totalExpected =
+        d.owner_scope === "member"
+          ? (d.owner_id ? 1 : 0)
+          : expectedAcknowledgerIds(audienceFromRow(d), orgMembers).length;
       const totalAcknowledged = ackedByDoc.get(d.id) ?? 0;
       return {
         documentId: d.id,
@@ -686,7 +624,7 @@ export async function remindOutstanding(
     }
 
     // Fetch doc + subtype + last-reminded timestamp.
-    type DocRow = {
+    type DocRow = AudienceDbRow & {
       id: string;
       organisation_id: string;
       file_name: string;
@@ -703,6 +641,7 @@ export async function remindOutstanding(
       .from("document")
       .select(
         "id, organisation_id, file_name, file_size, owner_scope, owner_id, reminders_last_sent_at, " +
+        AUDIENCE_COLUMNS + ", " +
         "document_subtype!subtype_id(name, requires_acknowledgement)",
       )
       .eq("id", documentId)
@@ -738,32 +677,11 @@ export async function remindOutstanding(
     if (doc.owner_scope === "member") {
       expectedIds = doc.owner_id ? [doc.owner_id] : [];
     } else {
-      const { data: members } = await admin
-        .from("members")
-        .select("id, rights_profiles(can_view_organisation_documents)")
-        .eq("organisation_id", caller.organisationId)
-        .not("user_id", "is", null);
-      expectedIds = ((members ?? []) as Array<{
-        id: string;
-        rights_profiles: { can_view_organisation_documents?: boolean } | { can_view_organisation_documents?: boolean }[] | null;
-      }>)
-        .filter((m) => {
-          const rp = Array.isArray(m.rights_profiles) ? m.rights_profiles[0] : m.rights_profiles;
-          return rp?.can_view_organisation_documents === true;
-        })
-        .map((m) => m.id);
-      // CLE-225 — Never remind a member about a doc they've been
-      // hidden from — the pair isn't expected to ack.
-      const { data: hiddenForDoc } = await admin
-        .from("member_org_document_hidden")
-        .select("member_id")
-        .eq("document_id", documentId);
-      const hiddenSet = new Set<string>(
-        ((hiddenForDoc ?? []) as { member_id: string }[]).map((r) => r.member_id),
+      // CLE-230 — only remind members in the doc's audience.
+      expectedIds = expectedAcknowledgerIds(
+        audienceFromRow(doc),
+        await loadOrgDocMembers(admin, caller.organisationId),
       );
-      if (hiddenSet.size > 0) {
-        expectedIds = expectedIds.filter((id) => !hiddenSet.has(id));
-      }
     }
     if (expectedIds.length === 0) {
       // No one expected — nothing to do, but still stamp so we don't

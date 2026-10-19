@@ -14,6 +14,16 @@ import { logAudit } from "@/lib/audit";
 import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
 import { _listOrgDocuments } from "./org-document-actions-impl";
 import {
+  AUDIENCE_COLUMNS,
+  audienceFromRow,
+  canSeeOrgDoc,
+  isExpectedToAcknowledge,
+  loadOrgDocMember,
+  loadOrgDocMembers,
+  type AudienceDbRow,
+  type OrgDocAudience,
+} from "@/lib/org-doc-audience";
+import {
   ALLOWED_DOCUMENT_CONTENT_TYPES as ALLOWED_CONTENT_TYPES,
   MAX_DOCUMENT_SIZE as MAX_SIZE,
   ORG_DOCUMENTS_BUCKET as BUCKET,
@@ -44,6 +54,8 @@ function getAdmin() {
 type Ctx = {
   memberId: string;
   organisationId: string;
+  teamId: string | null;
+  rightsProfileId: string | null;
   canEdit: boolean;
   canView: boolean;
 };
@@ -58,6 +70,8 @@ async function ctx(): Promise<Ctx | null> {
   return {
     memberId: resolved.ctx.memberId,
     organisationId: resolved.ctx.organisationId,
+    teamId: resolved.ctx.teamId,
+    rightsProfileId: resolved.rights.profileId,
     canEdit: resolved.rights.canManageOrganisationDocuments,
     canView: resolved.rights.canViewOrganisationDocuments,
   };
@@ -103,12 +117,13 @@ export interface OrgDocumentRowForMember extends OrgDocumentRow {
   /** True when the target member has an outstanding
    *  `document_acknowledgement` row (superseded rows ignored). */
   isAcknowledgedByTarget: boolean;
-  /** CLE-225 — false when a row exists in member_org_document_hidden
-   *  for this pair. Drives the "Viewable" checkbox on the admin's
-   *  per-member Org Docs tab. When false, the target does not see
-   *  the doc on `/my-documents` and it is not counted for the target
-   *  in ack coverage denominators. */
+  /** CLE-230 — true when the target member can see this doc (the
+   *  doc's audience includes them, or they manage org docs). The
+   *  per-member Org Docs tab lists only viewable rows. */
   viewable: boolean;
+  /** CLE-230 — true when the target is in the doc's audience and so is
+   *  expected to acknowledge it. Drives the "Awaiting Ack" pill. */
+  expectedByTarget: boolean;
 }
 
 /**
@@ -169,14 +184,16 @@ export async function getOrgDocumentsForMember(
     const { data, error } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, uploaded_by, uploaded_at, document_subtype!subtype_id(name, requires_acknowledgement), members!uploaded_by(first_name, last_name)",
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, uploaded_by, uploaded_at, " +
+        AUDIENCE_COLUMNS +
+        ", document_subtype!subtype_id(name, requires_acknowledgement), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", c.organisationId)
       .eq("owner_scope", "organisation")
       .order("uploaded_at", { ascending: false });
     if (error) return { success: false, error: error.message };
 
-    type Row = {
+    type Row = AudienceDbRow & {
       id: string;
       file_name: string;
       file_size: number;
@@ -213,22 +230,8 @@ export async function getOrgDocumentsForMember(
       }
     }
 
-    // CLE-225 — Target's hidden set. Presence of a row in
-    // `member_org_document_hidden` means the doc is hidden from the
-    // target. Powers the Viewable checkbox on the admin's per-member
-    // Org Docs tab. Deliberately fetched even when the target has no
-    // acks so the initial paint is truthful.
-    const targetHiddenSet = new Set<string>();
-    if (visibleRows.length > 0) {
-      const { data: hidden } = await admin
-        .from("member_org_document_hidden")
-        .select("document_id")
-        .eq("member_id", memberId)
-        .in("document_id", visibleRows.map((r) => r.id));
-      for (const h of ((hidden ?? []) as { document_id: string }[])) {
-        targetHiddenSet.add(h.document_id);
-      }
-    }
+    // CLE-230 — evaluate each doc's audience against the target.
+    const targetMember = await loadOrgDocMember(admin, c.organisationId, memberId);
 
     const rows: OrgDocumentRowForMember[] = visibleRows.map((r) => {
       const st = r.document_subtype;
@@ -254,9 +257,10 @@ export async function getOrgDocumentsForMember(
         // admin surfaces should read `isAcknowledgedByTarget`.
         isAcknowledged: false,
         isAcknowledgedByTarget,
-        // CLE-225 — Row present in `member_org_document_hidden` means
-        // hidden from the target; absence means visible (the default).
-        viewable: !targetHiddenSet.has(r.id),
+        audienceMode: audienceFromRow(r).mode,
+        audienceCount: null,
+        viewable: targetMember ? canSeeOrgDoc(audienceFromRow(r), targetMember) : false,
+        expectedByTarget: targetMember ? isExpectedToAcknowledge(audienceFromRow(r), targetMember) : false,
       };
     });
     return { success: true, rows };
@@ -279,12 +283,24 @@ export async function getOrgDocumentSignedUrl(
     if (!c.canView) return { success: false, error: "Document not found" };
     const admin = getAdmin();
 
-    const { data: doc } = await admin
+    const { data: docRaw } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, storage_path, file_name, file_size, content_type, type, document_subtype!subtype_id(name)")
+      .select("id, organisation_id, owner_scope, storage_path, file_name, file_size, content_type, type, " + AUDIENCE_COLUMNS + ", document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
+    const doc = docRaw as unknown as (AudienceDbRow & {
+      id: string; organisation_id: string; owner_scope: string; storage_path: string;
+      file_name: string; file_size: number; content_type: string; type: string;
+      document_subtype: unknown;
+    }) | null;
     if (!doc || doc.organisation_id !== c.organisationId || doc.owner_scope !== "organisation") {
+      return { success: false, error: "Document not found" };
+    }
+    // CLE-230 — outside the doc's audience → not found (never leak existence).
+    if (!canSeeOrgDoc(audienceFromRow(doc), {
+      id: c.memberId, teamId: c.teamId, rightsProfileId: c.rightsProfileId,
+      signedIn: true, canView: c.canView, canManage: c.canEdit,
+    })) {
       return { success: false, error: "Document not found" };
     }
 
@@ -574,118 +590,180 @@ export async function softDeleteOrgDocument(
 }
 
 // ---------------------------------------------------------------------------
-// Per-member visibility toggle (CLE-225)
+// Per-document audience (CLE-230)
 // ---------------------------------------------------------------------------
+//
+// Replaces the per-member Viewable toggle (CLE-225, removed). Each org
+// doc carries its own audience — see src/lib/org-doc-audience.ts for
+// the rules.
 
-/**
- * CLE-225 — Toggle whether a specific org-scope document is visible
- * to a specific target member.
- *
- * `viewable=true`  → DELETE any row in `member_org_document_hidden`
- *                    for the pair. Idempotent: a no-op when no row
- *                    exists.
- * `viewable=false` → INSERT with `ON CONFLICT DO NOTHING`. Idempotent:
- *                    a no-op when a row already exists.
- *
- * Effects when a doc is hidden from a member:
- *   • The doc does not appear in the caller's `/my-documents` Org
- *     Documents tab (filter in `listOrgDocuments`).
- *   • The doc does not appear in the caller's outstanding-ack chip
- *     (filter in `getMyOutstandingAcknowledgements`).
- *   • The doc does not count for that member in coverage denominators
- *     (filters in `getDocumentCoverage`, `getOrgAcknowledgementCoverage`).
- *   • Any existing `document_acknowledgement` row for the pair is
- *     preserved (audit trail) but becomes moot.
- *
- * Access — caller must have `can_manage_organisation_documents` AND
- * the target must be in the caller's org AND the doc must exist with
- * `owner_scope='organisation'`.
- */
-export async function setMemberOrgDocumentVisibility(
-  memberId: string,
+export interface AudienceOptionTeam { id: string; name: string }
+export interface AudienceOptionProfile { id: string; name: string }
+export interface AudienceOptionMember {
+  id: string;
+  name: string;
+  teamId: string | null;
+  rightsProfileId: string | null;
+  /** Profile grants can_view_organisation_documents. Members without it
+   *  can never see org docs, whatever the audience. */
+  canView: boolean;
+}
+
+export async function getOrgDocumentAudience(documentId: string): Promise<
+  | {
+      success: true;
+      audience: OrgDocAudience;
+      teams: AudienceOptionTeam[];
+      profiles: AudienceOptionProfile[];
+      members: AudienceOptionMember[];
+    }
+  | { success: false; error: string }
+> {
+  try {
+    const c = await ctx();
+    if (!c) return { success: false, error: "Not authenticated" };
+    if (!c.canEdit) return { success: false, error: "You don't have permission to change organisation documents." };
+    const admin = getAdmin();
+
+    const { data: doc } = await admin
+      .from("document")
+      .select("id, organisation_id, owner_scope, " + AUDIENCE_COLUMNS)
+      .eq("id", documentId)
+      .maybeSingle();
+    const d = doc as unknown as (AudienceDbRow & { organisation_id: string; owner_scope: string }) | null;
+    if (!d || d.organisation_id !== c.organisationId || d.owner_scope !== "organisation") {
+      return { success: false, error: "Document not found" };
+    }
+
+    const [{ data: teams }, { data: profiles }, { data: members }] = await Promise.all([
+      admin.from("teams").select("id, name").eq("organisation_id", c.organisationId).order("name"),
+      admin.from("rights_profiles").select("id, name, sort_order").eq("organisation_id", c.organisationId)
+        .order("sort_order", { ascending: true }).order("name", { ascending: true }),
+      admin.from("members")
+        .select("id, first_name, last_name, team_id, rights_profile_id, rights_profiles(can_view_organisation_documents)")
+        .eq("organisation_id", c.organisationId)
+        .order("first_name", { ascending: true }),
+    ]);
+
+    type M = {
+      id: string; first_name: string | null; last_name: string | null;
+      team_id: string | null; rights_profile_id: string | null;
+      rights_profiles: { can_view_organisation_documents?: boolean } | { can_view_organisation_documents?: boolean }[] | null;
+    };
+    return {
+      success: true,
+      audience: audienceFromRow(d),
+      teams: ((teams ?? []) as { id: string; name: string }[]).map((t) => ({ id: t.id, name: t.name })),
+      profiles: ((profiles ?? []) as { id: string; name: string }[]).map((p) => ({ id: p.id, name: p.name })),
+      members: ((members ?? []) as unknown as M[]).map((m) => {
+        const rp = Array.isArray(m.rights_profiles) ? m.rights_profiles[0] : m.rights_profiles;
+        return {
+          id: m.id,
+          name: `${m.first_name ?? ""} ${m.last_name ?? ""}`.trim() || "—",
+          teamId: m.team_id,
+          rightsProfileId: m.rights_profile_id,
+          canView: rp?.can_view_organisation_documents === true,
+        };
+      }),
+    };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+export async function setOrgDocumentAudience(
   documentId: string,
-  viewable: boolean,
+  audience: OrgDocAudience,
 ): Promise<{ success: true } | { success: false; error: string }> {
   try {
     const c = await ctx();
     if (!c) return { success: false, error: "Not authenticated" };
-    if (!c.canEdit) {
-      return { success: false, error: "You don't have permission to change organisation documents." };
-    }
+    if (!c.canEdit) return { success: false, error: "You don't have permission to change organisation documents." };
     const admin = getAdmin();
 
-    // Target sanity: must belong to caller's org.
-    const { data: target } = await admin
-      .from("members")
-      .select("id, organisation_id, first_name, last_name")
-      .eq("id", memberId)
-      .maybeSingle();
-    if (!target || target.organisation_id !== c.organisationId) {
-      return { success: false, error: "Not authorised" };
-    }
-
-    // Doc sanity: must exist, be in caller's org, and be org-scope.
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, file_name, file_size")
+      .select("id, organisation_id, owner_scope, file_name, file_size, " + AUDIENCE_COLUMNS)
       .eq("id", documentId)
       .maybeSingle();
-    if (
-      !doc ||
-      doc.organisation_id !== c.organisationId ||
-      doc.owner_scope !== "organisation"
-    ) {
+    const d = doc as unknown as (AudienceDbRow & {
+      id: string; organisation_id: string; owner_scope: string; file_name: string; file_size: number;
+    }) | null;
+    if (!d || d.organisation_id !== c.organisationId || d.owner_scope !== "organisation") {
       return { success: false, error: "Document not found" };
     }
 
-    if (viewable) {
-      const { error } = await admin
-        .from("member_org_document_hidden")
-        .delete()
-        .eq("member_id", memberId)
-        .eq("document_id", documentId);
-      if (error) return { success: false, error: error.message };
-    } else {
-      // ON CONFLICT DO NOTHING via upsert on the composite PK.
-      const { error } = await admin
-        .from("member_org_document_hidden")
-        .upsert(
-          {
-            organisation_id: c.organisationId,
-            member_id: memberId,
-            document_id: documentId,
-            hidden_by_member_id: c.memberId,
-          },
-          { onConflict: "member_id,document_id", ignoreDuplicates: true },
-        );
-      if (error) return { success: false, error: error.message };
+    const mode = audience.mode === "selected" ? "selected" : "all";
+    const uniq = (xs: string[]) => Array.from(new Set(xs.filter((x) => typeof x === "string" && x)));
+    let teamIds = mode === "selected" ? uniq(audience.teamIds) : [];
+    let profileIds = mode === "selected" ? uniq(audience.rightsProfileIds) : [];
+    let includeIds = mode === "selected" ? uniq(audience.includeMemberIds) : [];
+
+    // Never trust client ids — keep only ones that belong to this org.
+    const [{ data: tRows }, { data: pRows }, { data: mRows }] = await Promise.all([
+      teamIds.length ? admin.from("teams").select("id, name").eq("organisation_id", c.organisationId).in("id", teamIds) : Promise.resolve({ data: [] }),
+      profileIds.length ? admin.from("rights_profiles").select("id, name").eq("organisation_id", c.organisationId).in("id", profileIds) : Promise.resolve({ data: [] }),
+      includeIds.length ? admin.from("members").select("id, first_name, last_name").eq("organisation_id", c.organisationId).in("id", includeIds) : Promise.resolve({ data: [] }),
+    ]);
+    const teamsOk = (tRows ?? []) as { id: string; name: string }[];
+    const profilesOk = (pRows ?? []) as { id: string; name: string }[];
+    const membersOk = (mRows ?? []) as { id: string; first_name: string | null; last_name: string | null }[];
+    teamIds = teamsOk.map((t) => t.id);
+    profileIds = profilesOk.map((p) => p.id);
+    includeIds = membersOk.map((m) => m.id);
+
+    if (mode === "selected" && teamIds.length === 0 && profileIds.length === 0 && includeIds.length === 0) {
+      return { success: false, error: "Choose at least one team, User Rights profile or person — or switch back to Everyone." };
     }
 
-    const memberName =
-      `${target.first_name ?? ""} ${target.last_name ?? ""}`.trim() || "—";
-    await logAudit({
-      organisationId: c.organisationId,
-      actorId: c.memberId,
-      actorName: await callerName(admin, c.memberId),
-      // CLE-225 — a distinct audit action from doc.metadata_updated so
-      // the visibility log is filterable on its own in the audit page.
-      action: "document.visibility_changed",
-      targetType: "document",
-      targetId: documentId,
-      targetLabel: doc.file_name as string,
-      metadata: {
-        member_id: memberId,
-        member_name: memberName,
-        viewable,
-        // CLE-219 — file_name + file_size on every doc audit.
-        file_name: doc.file_name as string,
-        file_size: doc.file_size as number,
-      },
-    });
+    const before = audienceFromRow(d);
+    const { error } = await admin
+      .from("document")
+      .update({
+        audience_mode: mode,
+        audience_team_ids: teamIds,
+        audience_rights_profile_ids: profileIds,
+        audience_include_member_ids: includeIds,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", documentId)
+      .eq("organisation_id", c.organisationId);
+    if (error) return { success: false, error: error.message };
 
-    // Compliance coverage denominators depend on the hidden set, so
-    // the compliance dashboard needs a refresh after any toggle.
+    const after: OrgDocAudience = { mode, teamIds, rightsProfileIds: profileIds, includeMemberIds: includeIds };
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      const members = await loadOrgDocMembers(admin, c.organisationId);
+      const audienceSize = members.filter((m) => isExpectedToAcknowledge(after, m)).length;
+      await logAudit({
+        organisationId: c.organisationId,
+        actorId: c.memberId,
+        actorName: await callerName(admin, c.memberId),
+        action: "document.audience_changed",
+        targetType: "org_document",
+        targetId: documentId,
+        targetLabel: d.file_name,
+        changes: {
+          audience_mode: {
+            old: before.mode === "all" ? "Everyone" : "Selected members",
+            new: mode === "all" ? "Everyone" : "Selected members",
+          },
+        },
+        metadata: {
+          audience_teams: teamsOk.map((t) => t.name).join(", ") || null,
+          audience_profiles: profilesOk.map((p) => p.name).join(", ") || null,
+          audience_always_include: membersOk
+            .map((m) => `${m.first_name ?? ""} ${m.last_name ?? ""}`.trim())
+            .join(", ") || null,
+          audience_size: audienceSize,
+          file_name: d.file_name,
+          file_size: d.file_size,
+        },
+      });
+    }
+
+    revalidatePath("/documents/organisation");
     revalidatePath("/documents/compliance");
+    revalidatePath("/my-documents");
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };

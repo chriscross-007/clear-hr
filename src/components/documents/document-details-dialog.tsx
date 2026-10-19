@@ -64,6 +64,7 @@ import {
 } from "@/app/(dashboard)/members/[memberId]/docs/capture-actions";
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
+import { OrgDocAudienceSection } from "@/components/documents/org-doc-audience-section";
 import {
   acknowledgeDocument,
   getDocumentAcknowledgementStatus,
@@ -566,7 +567,13 @@ export function DocumentDetailsDialog({
               </div>
 
               {/* Right pane — Expiry / Verify / Review / History */}
-              <div className="flex flex-col overflow-hidden">
+              {/* CLE-230 — the right pane scrolls as a whole. Sections
+                  above Activity (Visible to, Expiry, Verify, Replace,
+                  Acknowledgement) can now be taller than the pane, so
+                  clipping them is no longer an option. Activity keeps a
+                  minimum height and its own inner scroll so it stays
+                  usable either way. */}
+              <div className="flex min-h-0 flex-col overflow-y-auto">
                 {/* CLE-220 — `hideHrMetadata` collapses the three HR-only
                     sections (Expiry, Verify, Replace) so the employee-
                     facing surfaces (My Documents + Org Documents tabs
@@ -580,6 +587,15 @@ export function DocumentDetailsDialog({
                     subtype's `review_period_months`. */}
                 {!hideHrMetadata && (
                   <>
+                    {/* CLE-230 — Visible to (org docs, managers only).
+                        `effectiveCanUpdate` on an org doc means the caller
+                        has can_manage_organisation_documents. */}
+                    {detail.row.type === "organisation_document" && effectiveCanUpdate && !employeeStripped && (
+                      <div className="border-b p-4">
+                        <OrgDocAudienceSection documentId={currentDocumentId} onSaved={notifySaved} />
+                      </div>
+                    )}
+
                     {/* Expiry */}
                     <div className="border-b p-4">
                       <ExpirySection
@@ -676,7 +692,7 @@ export function DocumentDetailsDialog({
                     Documents" surface — employees don't see the
                     internal audit chatter or the comment feed. */}
                 {!hideActivity && (
-                <div className="flex-1 overflow-hidden p-4 flex flex-col min-h-0">
+                <div className="flex-1 shrink-0 overflow-hidden p-4 flex flex-col min-h-64">
                   <div className="mb-2 flex items-center justify-between">
                     <p className="text-base font-semibold">Activity</p>
                     {!employeeStripped && (
