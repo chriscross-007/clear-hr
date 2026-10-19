@@ -434,3 +434,21 @@ export async function getRightsEditorCount(organisationId: string): Promise<numb
     .eq("rights_profiles.can_edit_rights_profiles", true);
   return count ?? 0;
 }
+
+/** CLE-229 — members on an editor profile who haven't accepted their
+ *  invite yet (user_id NULL). They don't count towards the floor, but
+ *  the warning banner names them so an admin who has "2 editors" on
+ *  paper understands why the banner still shows. */
+export async function getPendingRightsEditorCount(organisationId: string): Promise<number> {
+  const admin = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+  const { count } = await admin
+    .from("members")
+    .select("id, rights_profiles!inner(can_edit_rights_profiles)", { count: "exact", head: true })
+    .eq("organisation_id", organisationId)
+    .is("user_id", null)
+    .eq("rights_profiles.can_edit_rights_profiles", true);
+  return count ?? 0;
+}

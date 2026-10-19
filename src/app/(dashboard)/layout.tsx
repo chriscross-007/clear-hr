@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { MemberLabelProvider } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
 import { hasPlanFeature } from "@/lib/plan-config";
-import { getEffectiveRightsForUser, getRightsEditorCount } from "@/lib/rights-resolver";
+import { getEffectiveRightsForUser, getRightsEditorCount, getPendingRightsEditorCount } from "@/lib/rights-resolver";
 import { HeaderUserMenu } from "./header-user-menu";
 import { Sidebar } from "./sidebar";
 import { FlashNotice } from "@/components/ui/flash-notice";
@@ -126,9 +126,13 @@ export default async function DashboardLayout({
   // ≤1, amber above 5.
   let rightsEditorBanner: "danger" | "warning" | null = null;
   let rightsEditorCount = 0;
+  let pendingRightsEditorCount = 0;
   if (rights.canEditRightsProfiles) {
     rightsEditorCount = await getRightsEditorCount(membership.organisation_id);
-    if (rightsEditorCount <= 1) rightsEditorBanner = "danger";
+    if (rightsEditorCount <= 1) {
+      rightsEditorBanner = "danger";
+      pendingRightsEditorCount = await getPendingRightsEditorCount(membership.organisation_id);
+    }
     else if (rightsEditorCount > 5) rightsEditorBanner = "warning";
   }
   const showRightsEditorBanner = rightsEditorBanner !== null;
@@ -175,12 +179,26 @@ export default async function DashboardLayout({
           {showRightsEditorBanner && rightsEditorBanner === "danger" && (
             <div className="bg-destructive px-4 py-2 text-center text-sm font-medium text-white">
               {rightsEditorCount === 0
-                ? "No members can edit User Rights — this shouldn't happen. "
-                : "Only 1 member can edit User Rights. "}
-              <Link href="/settings/rights-profiles" className="underline">
-                Promote another Admin
-              </Link>{" "}
-              so nobody gets locked out.
+                ? "No signed-in members can edit User Rights — this shouldn't happen. "
+                : "Only 1 signed-in member can edit User Rights. "}
+              {pendingRightsEditorCount > 0 ? (
+                // CLE-229 — editors who haven't accepted their invite
+                // don't count (they can't log in to rescue the org).
+                // Say so, otherwise "I have 2 editors" looks like a bug.
+                <>
+                  {pendingRightsEditorCount === 1
+                    ? "Another has been given the right but hasn't accepted their invite yet"
+                    : `${pendingRightsEditorCount} others have been given the right but haven't accepted their invites yet`}
+                  {" "}— this clears once they sign in.
+                </>
+              ) : (
+                <>
+                  <Link href="/settings/rights-profiles" className="underline">
+                    Promote another Admin
+                  </Link>{" "}
+                  so nobody gets locked out.
+                </>
+              )}
             </div>
           )}
           {showRightsEditorBanner && rightsEditorBanner === "warning" && (

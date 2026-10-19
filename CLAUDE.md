@@ -402,7 +402,7 @@ Both raise `check_violation` with a friendly message the app surfaces via the `<
 
 ### Warning banner (CLE-199)
 
-`(dashboard)/layout.tsx` computes `getRightsEditorCount(orgId)` on every render for viewers whose profile grants `can_edit_rights_profiles`. Red banner when count ≤ 1, amber when > 5. Uses the same `--top-chrome-extra` CSS variable pattern as the trial banner so downstream sticky elements shift correctly.
+`(dashboard)/layout.tsx` computes `getRightsEditorCount(orgId)` (signed-in editors only) on every render for viewers whose profile grants `can_edit_rights_profiles`. Red banner when count ≤ 1, amber when > 5. When red, it also calls `getPendingRightsEditorCount(orgId)` — editors with `user_id IS NULL` — and if any exist the banner explains they haven't accepted their invite instead of prompting "Promote another Admin". Uses the same `--top-chrome-extra` CSS variable pattern as the trial banner so downstream sticky elements shift correctly.
 
 ### Sensitive fields
 
