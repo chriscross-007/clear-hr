@@ -19,11 +19,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
 import {
   getOrgDocumentsForMember,
-  setMemberOrgDocumentVisibility,
   type OrgDocumentRowForMember,
 } from "@/app/(dashboard)/documents/organisation/org-document-actions";
 import { onMemberDocsChanged } from "@/lib/member-docs-events";
@@ -67,7 +65,10 @@ export function MemberOrgDocumentsList({
     setError(null);
     const res = await getOrgDocumentsForMember(memberId);
     if (!res.success) { setError(res.error ?? "Failed to load"); setInitialLoaded(true); return; }
-    setRows(res.rows);
+    // Per-doc audience replaces the per-member Viewable checkbox
+    // (removed). This tab now shows exactly what the member can see:
+    // any pair still hidden via member_org_document_hidden is left out.
+    setRows(res.rows.filter((r) => r.viewable));
     setInitialLoaded(true);
   }, [memberId]);
 
@@ -78,27 +79,6 @@ export function MemberOrgDocumentsList({
   // silent refetch. Runs without setting loading=true, so the grid
   // stays visible throughout.
   useEffect(() => onMemberDocsChanged(memberId, () => { void load(); }), [memberId, load]);
-
-  // CLE-225 — optimistic toggle for the Viewable column. Flips local
-  // state first, fires the server action, reverts on failure. We
-  // deliberately do NOT dispatch `member-docs-changed` from this
-  // handler — the local state already reflects the change, and firing
-  // the bus would trigger our own listener above (silent now, but
-  // still an unnecessary round-trip). Sibling surfaces that need to
-  // react to visibility changes should subscribe to a distinct event
-  // if that becomes a real need.
-  const toggleViewable = useCallback(
-    async (documentId: string, next: boolean) => {
-      setRows((prev) => prev.map((r) => (r.id === documentId ? { ...r, viewable: next } : r)));
-      setError(null);
-      const res = await setMemberOrgDocumentVisibility(memberId, documentId, next);
-      if (!res.success) {
-        setError(res.error ?? "Failed to update visibility");
-        setRows((prev) => prev.map((r) => (r.id === documentId ? { ...r, viewable: !next } : r)));
-      }
-    },
-    [memberId],
-  );
 
   return (
     <Card>
@@ -122,13 +102,6 @@ export function MemberOrgDocumentsList({
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-                  {/* CLE-225 — Viewable toggle. Real interactive
-                      Checkbox (not a display icon), so the
-                      Boolean-values-in-tables convention doesn't
-                      apply here. Unchecked hides the doc from the
-                      target's `/my-documents` view and drops the
-                      pair out of ack coverage denominators. */}
-                  <th className="px-3 py-2 font-medium w-24">Viewable</th>
                   <th className="px-3 py-2 font-medium">Document</th>
                   <th className="px-3 py-2 font-medium hidden lg:table-cell">Expires</th>
                   <th className="px-3 py-2 font-medium hidden lg:table-cell">Uploaded</th>
@@ -138,31 +111,10 @@ export function MemberOrgDocumentsList({
                 {rows.map((r) => (
                   <tr
                     key={r.id}
-                    className={`cursor-pointer border-b last:border-b-0 hover:bg-muted/30 ${
-                      r.viewable ? "" : "opacity-60"
-                    }`}
+                    className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
                     onClick={() => setDetailsDocId(r.id)}
                     title="Open document details"
                   >
-                    <td
-                      className="px-3 py-2"
-                      // CLE-225 — swallow the row-level click so
-                      // toggling the checkbox doesn't also open the
-                      // details dialog.
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Checkbox
-                        checked={r.viewable}
-                        aria-label={
-                          r.viewable
-                            ? "Hide this document from the employee"
-                            : "Make this document visible to the employee"
-                        }
-                        onCheckedChange={(next) => {
-                          void toggleViewable(r.id, next === true);
-                        }}
-                      />
-                    </td>
                     <td className="px-3 py-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -179,7 +131,7 @@ export function MemberOrgDocumentsList({
                               doc is hidden from this employee: an
                               ack that isn't expected shouldn't
                               read as "awaited". */}
-                          {r.viewable && r.requiresAcknowledgement && !r.isAcknowledgedByTarget && (
+                          {r.requiresAcknowledgement && !r.isAcknowledgedByTarget && (
                             <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
                               Awaiting Ack
                             </span>
