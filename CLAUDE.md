@@ -377,7 +377,8 @@ Every access decision reads through `src/lib/rights-resolver.ts`, which resolves
 
 - `getEffectiveRightsForUser(userId): Promise<{ rights, ctx } | null>` — the primary read. Used by every server component and server action for gating.
 - `getEffectiveRights(memberId): Promise<EffectiveRights | null>` — for cross-user checks (e.g. resolving another member's profile to render their rights summary).
-- `getRightsEditorCount(orgId): Promise<number>` — drives the warning banner (CLE-199). Counts members whose profile has `can_edit_rights_profiles = true`.
+- `getRightsEditorCount(orgId): Promise<number>` — drives the warning banner (CLE-199). Counts **signed-in** members (`user_id IS NOT NULL`) whose profile has `can_edit_rights_profiles = true` (CLE-229).
+- `getPendingRightsEditorCount(orgId): Promise<number>` — members on an editor profile who haven't accepted their invite (`user_id IS NULL`). Used only to word the red banner.
 - `canActOn(actor, actorCtx, target)` — rank + scope check for cross-user actions; returns `{ view, update, delete, assignProfile }`.
 - `resolveTab(rights, tabKey)` — safe accessor for the tab matrix with `{ view: false, update: false }` fallback for missing keys.
 
