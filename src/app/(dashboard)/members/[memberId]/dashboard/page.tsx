@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar, Clock, Sun, BarChart2, FileText } from "lucide-react";
 import { getMemberDocumentsTrafficLight } from "@/app/(dashboard)/documents/compliance-actions";
 import { trafficLightTooltipText } from "@/lib/traffic-light-format";
+import { getOutstandingAcknowledgementsForMember } from "@/app/(dashboard)/documents/acknowledgement-actions";
 
 export default async function EmployeeDashboardPage({
   params,
@@ -67,7 +68,7 @@ export default async function EmployeeDashboardPage({
   let docsIconClass: string;
   if (docsColour === "green") {
     docsBigText = "All up to date";
-    docsSubtext = "Required documents are in order";
+    docsSubtext = "Certifications are in order";
     docsTextClass = "text-green-600";
     docsIconClass = "text-green-500";
   } else if (docsColour === "red") {
@@ -81,14 +82,43 @@ export default async function EmployeeDashboardPage({
     docsTextClass = "text-amber-600";
     docsIconClass = "text-amber-500";
   } else {
-    docsBigText = "No required documents";
+    docsBigText = "No certifications required";
     docsSubtext = "Nothing to provide right now";
     docsTextClass = "text-muted-foreground";
     docsIconClass = "text-muted-foreground";
   }
   const docsHref = docsColour ? `/members/${memberId}/docs` : null;
-  const docsCard = (
-    <Card className={docsHref ? "transition-colors hover:bg-muted/50" : undefined}>
+
+  // Outstanding acknowledgements for THIS member — same chip the member
+  // sees on their own dashboard. Prefer the member-docs tab when any of
+  // their own docs need acking, else the Org Documents tab. Soft-fail.
+  const acksRes = await getOutstandingAcknowledgementsForMember(memberId);
+  const outstandingAcks = acksRes.success ? acksRes.rows : [];
+  const outstandingAckCount = outstandingAcks.length;
+  // CLE-231 — route to the Documents tab holding the first outstanding
+  // member-scope ack (Employment / Certifications / Other), else Org.
+  const firstMemberAck = outstandingAcks.find((a) => a.ownerScope === "member");
+  const ackTab = !firstMemberAck
+    ? "org"
+    : firstMemberAck.subtypeType === "contract"
+      ? "employment"
+      : firstMemberAck.subtypeType === "attachment"
+        ? "other"
+        : "certifications";
+  const ACK_TAB_LABEL: Record<typeof ackTab, string> = {
+    certifications: "Certifications",
+    employment: "Employment",
+    other: "Other",
+    org: "Org",
+  };
+  const ackHref = outstandingAckCount > 0
+    ? `/members/${memberId}/docs?tab=${ackTab}`
+    : null;
+
+  // Two sibling Links (traffic-light header + ack chip) — never nest
+  // <Link> inside <Link>.
+  const docsHeader = (
+    <>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle className="text-sm font-medium">Documents</CardTitle>
         <FileText className={`h-4 w-4 ${docsIconClass}`} />
@@ -97,6 +127,31 @@ export default async function EmployeeDashboardPage({
         <p className={`text-2xl font-bold ${docsTextClass}`}>{docsBigText}</p>
         <p className="mt-1 text-xs text-muted-foreground">{docsSubtext}</p>
       </CardContent>
+    </>
+  );
+  const docsCard = (
+    <Card>
+      {docsHref ? (
+        <Link href={docsHref} className="block transition-colors hover:bg-muted/50">
+          {docsHeader}
+        </Link>
+      ) : (
+        docsHeader
+      )}
+      {ackHref && (
+        <Link
+          href={ackHref}
+          className="mx-6 mb-4 flex items-center justify-between rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/70"
+        >
+          <span>
+            <span className="font-medium">{outstandingAckCount}</span>
+            {" "}to acknowledge
+          </span>
+          <span className="text-xs text-amber-800/80 dark:text-amber-200/70">
+            {ACK_TAB_LABEL[ackTab]} →
+          </span>
+        </Link>
+      )}
     </Card>
   );
 
@@ -166,13 +221,7 @@ export default async function EmployeeDashboardPage({
         {/* CLE-216 follow-up — Documents traffic light for this
             member. Route to their /docs tab when a light exists;
             null (no required docs) renders as a non-linked card. */}
-        {docsHref ? (
-          <Link href={docsHref} className="block">
-            {docsCard}
-          </Link>
-        ) : (
-          docsCard
-        )}
+        {docsCard}
       </div>
 
     </div>

@@ -6,6 +6,7 @@ import { getEffectiveRightsForUser, resolveTab } from "@/lib/rights-resolver";
 import { EmploymentForm } from "./employment-form";
 import { BookingsCard } from "./bookings-card";
 import { RtwNotRequiredSection } from "./rtw-not-required-section";
+import { RequiredCertificationsSection } from "./required-certifications-section";
 import { getAssignableProfiles } from "@/app/(dashboard)/settings/rights-profiles/actions";
 import type { WorkProfileAssignmentRow } from "./work-profile-section";
 import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
@@ -148,9 +149,14 @@ export default async function EmploymentPage({
         canEdit={canEdit}
       />
 
-      {/* CLE-222 — Required documents card now lives on the Documents
-          tab (`docs/docs-client.tsx`), mirroring the two-card shape
-          of the employee's own /my-documents view. */}
+      {/* CLE-231 — Required certifications picker. Ticked certificate
+          subtypes become placeholders on Documents → Certifications.
+          Editing needs Employment update (this page) AND Documents
+          update (the server action's gate). */}
+      <RequiredCertificationsSection
+        memberId={member.id}
+        canEdit={canEdit && resolveTab(rights, "documents").update}
+      />
 
       {/* CLE-188 — Member Bookings utility. Admin/owner with manage-members
           rights only. Lets admins find and delete orphaned bookings (e.g.

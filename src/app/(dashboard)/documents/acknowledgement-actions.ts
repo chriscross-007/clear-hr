@@ -36,11 +36,13 @@ import {
   _acknowledgeDocument,
   _getMyOutstandingAcknowledgements,
   _getDocumentAcknowledgementStatus,
+  _getOutstandingAcknowledgementsFor,
 } from "./acknowledgement-actions-impl";
 import {
   AUDIENCE_COLUMNS,
   audienceFromRow,
   expectedAcknowledgerIds,
+  loadOrgDocMember,
   loadOrgDocMembers,
   type AudienceDbRow,
   type OrgDocMember,
@@ -237,6 +239,37 @@ export async function getMyOutstandingAcknowledgements(): Promise<
   const caller = await buildDocumentsCallerFromCookies();
   if (!caller) return { success: false, error: "Not authenticated" };
   return _getMyOutstandingAcknowledgements(caller);
+}
+
+/**
+ * Outstanding acknowledgements for a TARGET member — powers the admin
+ * view of a member's dashboard, so it shows the same "N to acknowledge"
+ * chip the member sees on their own dashboard. Same access rule as the
+ * member's Documents tab: own record, or Documents-tab view rights with
+ * cross-user reach to the target (team scope = same team).
+ */
+export async function getOutstandingAcknowledgementsForMember(
+  memberId: string,
+): Promise<
+  | { success: true; rows: OutstandingAcknowledgement[] }
+  | { success: false; error: string }
+> {
+  try {
+    const caller = await buildDocumentsCallerFromCookies();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const target = await loadOrgDocMember(caller.admin, caller.organisationId, memberId);
+    if (!target) return { success: false, error: "Member not found" };
+    if (target.id !== caller.memberId) {
+      const view = caller.rights.tabs.documents?.view === true;
+      const reach =
+        caller.rights.crossUserAccess === "all" ||
+        (caller.rights.crossUserAccess === "team" && target.teamId !== null && target.teamId === caller.teamId);
+      if (!view || !reach) return { success: false, error: "Member not found" };
+    }
+    return _getOutstandingAcknowledgementsFor(caller.admin, caller.organisationId, target);
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
 }
 
 // ---------------------------------------------------------------------------

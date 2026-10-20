@@ -41,7 +41,11 @@ export default async function MyDocumentsPage({
   if (!resolved) redirect("/organisation-setup");
 
   const sp = await searchParams;
-  const initialTab: "my" | "org" = sp.tab === "org" ? "org" : "my";
+  // CLE-231 — four tabs. Legacy `?tab=my` (and anything unknown) lands
+  // on Certifications.
+  const TABS = ["certifications", "employment", "other", "org"] as const;
+  const initialTab: (typeof TABS)[number] =
+    (TABS as readonly string[]).includes(sp.tab ?? "") ? (sp.tab as (typeof TABS)[number]) : "certifications";
 
   // Look up the caller's display name for the New Document dialog's
   // header. Cheapest to do here with the admin client — the resolver

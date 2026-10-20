@@ -46,6 +46,8 @@ import {
   DOCUMENT_TYPES,
   RETENTION_CLASSES,
   scopeForType,
+  canBeRequired,
+  hasMemberVisibilitySwitch,
   type DocumentSubtypeDto,
   type DocumentSubtypeWritePayload,
   type DocumentType,
@@ -53,7 +55,9 @@ import {
 } from "./subtype-types";
 
 const TYPE_LABEL: Record<DocumentType, string> = {
-  contract: "Contracts",
+  // CLE-231 — `contract` is shown as Employment: documents the
+  // organisation issues to a member.
+  contract: "Employment",
   certificate: "Certificates",
   evidence: "Right-to-Work Evidence",
   attachment: "Absence attachments",
@@ -96,6 +100,7 @@ function emptyPayload(type: DocumentType): DocumentSubtypeWritePayload {
     reviewPeriodMonths: null,
     trackablePerMember: false,
     requiresAcknowledgement: false,
+    visibleToMember: true,
   };
 }
 
@@ -110,6 +115,7 @@ function dtoToPayload(dto: DocumentSubtypeDto): DocumentSubtypeWritePayload {
     reviewPeriodMonths: dto.reviewPeriodMonths,
     trackablePerMember: dto.trackablePerMember,
     requiresAcknowledgement: dto.requiresAcknowledgement,
+    visibleToMember: dto.visibleToMember,
   };
 }
 
@@ -457,14 +463,28 @@ function SubtypeEditorDialog({
                   value={payload.requiresVerification}
                   onChange={(v) => update("requiresVerification", v)}
                 />
-                <FlagRow
-                  label="Can be required"
-                  description={`Can be set as Required for ${
-                    /^[aeiouAEIOU]/.test(memberLabel) ? "an" : "a"
-                  } ${memberLabel}.`}
-                  value={payload.trackablePerMember}
-                  onChange={(v) => update("trackablePerMember", v)}
-                />
+                {/* CLE-231 — only certificates can be required of a
+                    member (they appear as placeholders on the member's
+                    Certifications tab once required). */}
+                {canBeRequired(payload.type) && (
+                  <FlagRow
+                    label="Can be required"
+                    description={`Can be set as a required certification for ${
+                      /^[aeiouAEIOU]/.test(memberLabel) ? "an" : "a"
+                    } ${memberLabel} (on their Employment tab).`}
+                    value={payload.trackablePerMember}
+                    onChange={(v) => update("trackablePerMember", v)}
+                  />
+                )}
+                {/* CLE-231 — Employment subtypes can be kept HR-only. */}
+                {hasMemberVisibilitySwitch(payload.type) && (
+                  <FlagRow
+                    label={`Visible to the ${memberLabel}`}
+                    description={`Off keeps documents of this kind off the ${memberLabel}'s own view (e.g. investigation notes).`}
+                    value={payload.visibleToMember}
+                    onChange={(v) => update("visibleToMember", v)}
+                  />
+                )}
               </>
             )}
             {/* Applies to both scopes. */}

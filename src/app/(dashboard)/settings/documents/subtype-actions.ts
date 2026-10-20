@@ -18,6 +18,7 @@ import type {
   DocumentSubtypeDto,
   DocumentSubtypeWritePayload,
 } from "./subtype-types";
+import { canBeRequired, hasMemberVisibilitySwitch } from "./subtype-types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -65,7 +66,7 @@ const SELECT_COLUMNS =
   "id, type, name, sort_order, employee_can_upload, retention_class, " +
   "expiry_required, requires_verification, " +
   "review_period_months, trackable_per_member, " +
-  "requires_acknowledgement";
+  "requires_acknowledgement, visible_to_member";
 
 interface DbRow {
   id: string;
@@ -79,6 +80,7 @@ interface DbRow {
   review_period_months: number | null;
   trackable_per_member: boolean;
   requires_acknowledgement: boolean;
+  visible_to_member: boolean;
 }
 
 function rowToDto(row: DbRow): DocumentSubtypeDto {
@@ -94,6 +96,7 @@ function rowToDto(row: DbRow): DocumentSubtypeDto {
     reviewPeriodMonths: row.review_period_months,
     trackablePerMember: row.trackable_per_member,
     requiresAcknowledgement: row.requires_acknowledgement,
+    visibleToMember: row.visible_to_member !== false,
   };
 }
 
@@ -106,8 +109,12 @@ function payloadToRow(p: DocumentSubtypeWritePayload): Record<string, unknown> {
     expiry_required: p.expiryRequired,
     requires_verification: p.requiresVerification,
     review_period_months: p.reviewPeriodMonths,
-    trackable_per_member: p.trackablePerMember,
+    // CLE-231 — only certificates can be required; only Employment
+    // subtypes can be hidden from the member. Enforced here so a stale
+    // client can't write an invalid combination.
+    trackable_per_member: canBeRequired(p.type) ? p.trackablePerMember : false,
     requires_acknowledgement: p.requiresAcknowledgement,
+    visible_to_member: hasMemberVisibilitySwitch(p.type) ? p.visibleToMember : true,
   };
 }
 
@@ -220,6 +227,7 @@ export async function updateDocumentSubtype(
       review_period_months: b.review_period_months,
       trackable_per_member: b.trackable_per_member,
       requires_acknowledgement: b.requires_acknowledgement,
+      visible_to_member: b.visible_to_member,
     };
     const afterValues = payloadToRow(payload);
     const changes = diffChanges(beforeValues, afterValues);

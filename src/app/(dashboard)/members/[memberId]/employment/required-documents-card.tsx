@@ -21,7 +21,7 @@
 // set, so the server-side diff audit still fires with add/remove
 // entries as before.
 
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { Loader2, Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,11 +31,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import {
   Dialog,
   DialogContent,
@@ -52,17 +47,14 @@ import { NewMemberDocumentDialog } from "@/components/documents/new-document-dia
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize } from "@/lib/label-utils";
 import {
-  listTrackablePerMemberSubtypes,
   getMemberRequiredDocumentRows,
-  setMemberExpectedDocuments,
   softDeleteMemberDocument,
-  type TrackableSubtype,
   type RequiredDocumentRow,
 } from "@/app/(dashboard)/members/[memberId]/docs/document-actions";
 import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 
 const TYPE_LABEL: Record<string, string> = {
-  contract: "Contract",
+  contract: "Employment",
   certificate: "Certificate",
   evidence: "RTW Evidence",
   attachment: "Attachment",
@@ -96,10 +88,8 @@ export function RequiredDocumentsCard({
 }) {
   const { memberLabel } = useMemberLabel();
   const [rows, setRows] = useState<RequiredDocumentRow[] | null>(null);
-  const [available, setAvailable] = useState<TrackableSubtype[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pending] = useTransition();
   const [detailsDocId, setDetailsDocId] = useState<string | null>(null);
   // Preset subtype for a new-doc dialog. Set when the user clicks a
   // not_uploaded row — the dialog opens with the subtype pre-locked.
@@ -115,14 +105,9 @@ export function RequiredDocumentsCard({
 
   const load = useCallback(async () => {
     setError(null);
-    const [rowsRes, avRes] = await Promise.all([
-      getMemberRequiredDocumentRows(memberId),
-      listTrackablePerMemberSubtypes(),
-    ]);
+    const rowsRes = await getMemberRequiredDocumentRows(memberId);
     if (!rowsRes.success) { setError(rowsRes.error); return; }
-    if (!avRes.success) { setError(avRes.error); return; }
     setRows(rowsRes.rows);
-    setAvailable(avRes.subtypes);
   }, [memberId]);
 
   useEffect(() => { void load(); }, [load]);
@@ -189,55 +174,17 @@ export function RequiredDocumentsCard({
     return () => window.removeEventListener("clearhr:member-docs-changed", onMemberDocsChanged);
   }, [memberId, load]);
 
-  // Subtypes with the trackable flag on that aren't already assigned
-  // per-member. Drives the "+" picker.
-  const pickable = useMemo(() => {
-    if (!rows) return [] as TrackableSubtype[];
-    const assigned = new Set(rows.filter((r) => r.assignedPerMember).map((r) => r.subtypeId));
-    return available.filter((s) => !assigned.has(s.id));
-  }, [rows, available]);
-
-  /** Persist a new full set of per-member expected subtype IDs.
-   *  Server handles diffing + auditing. Refetches on success. */
-  function persist(nextIds: string[]) {
-    setError(null);
-    startTransition(async () => {
-      const res = await setMemberExpectedDocuments(memberId, nextIds);
-      if (!res.success) { setError(res.error ?? "Save failed"); return; }
-      // CLE-216 — Sidebar avatar traffic light listens for this.
-      dispatchMemberDocsChanged(memberId);
-      await load();
-    });
-  }
-
-  function addSubtype(id: string) {
-    if (!rows) return;
-    const current = rows.filter((r) => r.assignedPerMember).map((r) => r.subtypeId);
-    persist([...current, id]);
-    setPickerOpen(false);
-    // Skip the "click the not-uploaded row" step — open the new-doc
-    // dialog for this subtype directly. `persist()` runs the server
-    // round-trip in the background so the row appears when the dialog
-    // closes; the subtype id itself is the only thing the dialog
-    // needs, and we already have it here.
-    setNewDocSubtypeId(id);
-  }
-
-  function removeSubtype(id: string) {
-    if (!rows) return;
-    const current = rows.filter((r) => r.assignedPerMember).map((r) => r.subtypeId);
-    persist(current.filter((existing) => existing !== id));
-  }
-
   return (
     // CLE-216 — Scroll anchor for the traffic-light click target on
     // the sidebar avatar (and Directory Docs column). `scroll-mt-24`
     // keeps the card clear of the sticky page header when scrolled to.
     <Card id="required-documents" className="scroll-mt-24">
       <CardHeader>
-        <CardTitle className="text-base">Required documents</CardTitle>
+        <CardTitle className="text-base">Certifications</CardTitle>
         <CardDescription>
-          Documents this {capitalize(memberLabel)} is expected to have.
+          Right to Work evidence and the certificates this {memberLabel} is
+          required to supply. Choose required certificates on the
+          {" "}{capitalize(memberLabel)}&apos;s Employment page.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -251,7 +198,7 @@ export function RequiredDocumentsCard({
         ) : (
           <>
             {rows.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No required documents.</p>
+              <p className="text-sm text-muted-foreground">No certifications required.</p>
             ) : (
               <div className="overflow-hidden rounded-md border">
                 <table className="w-full text-sm">
@@ -421,21 +368,9 @@ export function RequiredDocumentsCard({
                           </td>
                           {canEdit && (
                             <td className="px-2 py-2 text-right">
-                              {r.assignedPerMember && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    removeSubtype(r.subtypeId);
-                                  }}
-                                  disabled={pending}
-                                  className="inline-flex h-6 w-6 items-center justify-center rounded text-destructive hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
-                                  aria-label={`Remove ${subtypeLabel(r.subtypeType, r.subtypeName)}`}
-                                  title="Remove from this member's required docs"
-                                >
-                                  <Minus className="h-3.5 w-3.5" />
-                                </button>
-                              )}
+                              {/* CLE-231 — required certificates are
+                                  added/removed on the Employment page,
+                                  not here. */}
                               {r.isRtwEvidence && r.documentId && (
                                 <button
                                   type="button"
@@ -461,38 +396,8 @@ export function RequiredDocumentsCard({
               </div>
             )}
 
-            {canEdit && (pickable.length > 0 || rows.some((r) => r.isRtwEvidence)) && (
+            {canEdit && rows.some((r) => r.isRtwEvidence) && (
               <div className="flex flex-wrap items-center gap-2">
-                {pickable.length > 0 && (
-                  <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        disabled={pending}
-                        className="inline-flex items-center gap-1 rounded-full border border-dashed px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-                        aria-label="Add required document"
-                        title="Add required document"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        Add subtype
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-80 p-0" align="start">
-                      <div className="max-h-72 overflow-y-auto py-1">
-                        {pickable.map((s) => (
-                          <button
-                            key={s.id}
-                            type="button"
-                            onClick={() => addSubtype(s.id)}
-                            className="block w-full px-3 py-1.5 text-left text-sm hover:bg-muted/50"
-                          >
-                            {subtypeLabel(s.type, s.name)}
-                          </button>
-                        ))}
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                )}
                 {/* CLE-215 follow-up — when at least one RTW-evidence
                     row is already present, offer a second button for
                     adding another RTW doc (a different subtype or a
@@ -595,6 +500,7 @@ function RtwDeleteDialog({
   onClose: () => void;
   onDeleted: () => Promise<void>;
 }) {
+  const { memberLabel } = useMemberLabel();
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -625,8 +531,8 @@ function RtwDeleteDialog({
           <DialogDescription>
             <span className="font-medium">{subtypeLabel(row.subtypeType, row.subtypeName)}</span> will move to Trash
             for 30 days, then be permanently deleted. Right-to-Work evidence
-            is retention-protected while the employee is active, so please
-            record why you're removing it.
+            is retention-protected while the {memberLabel} is active, so please
+            record why you&apos;re removing it.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">

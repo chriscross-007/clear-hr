@@ -12,6 +12,7 @@
 import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
 import {
   _getMyOtherMemberDocuments,
+  _getMyEmploymentDocuments,
   type OtherMemberDocumentRow,
 } from "./actions-impl";
 
@@ -26,4 +27,14 @@ export async function getMyOtherMemberDocuments(): Promise<
   const caller = await buildDocumentsCallerFromCookies();
   if (!caller) return { success: false, error: "Not authenticated" };
   return _getMyOtherMemberDocuments(caller);
+}
+
+/** CLE-231 — the caller's own Employment tab (org-issued documents,
+ *  HR-only subtypes excluded). Mobile twin: /api/mobile/documents/employment. */
+export async function getMyEmploymentDocuments(): Promise<
+  { success: true; rows: OtherMemberDocumentRow[] } | { success: false; error: string }
+> {
+  const caller = await buildDocumentsCallerFromCookies();
+  if (!caller) return { success: false, error: "Not authenticated" };
+  return _getMyEmploymentDocuments(caller);
 }

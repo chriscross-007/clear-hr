@@ -22,6 +22,7 @@ import { logAudit } from "@/lib/audit";
 import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
 import { isRtwSubtype } from "@/lib/documents-rtw";
 import { audienceFromRow, canSeeOrgDoc, type AudienceDbRow } from "@/lib/org-doc-audience";
+import { isHiddenFromCaller, subtypeHiddenFromMember } from "@/lib/documents-member-visibility";
 
 /** CLE-230 — can the caller see this org doc under its audience? */
 function callerCanSeeOrgDoc(caller: DocumentsCaller, doc: unknown): boolean {
@@ -108,7 +109,7 @@ function canUpdateTarget(
 }
 
 const TYPE_DISPLAY: Record<string, string> = {
-  contract: "Contract",
+  contract: "Employment",
   certificate: "Certificate",
   evidence: "RTW Evidence",
   attachment: "Attachment",
@@ -137,7 +138,7 @@ export async function _getDocumentDetail(
     const { data: doc } = await admin
       .from("document")
       .select(
-        "id, organisation_id, owner_scope, owner_id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, verification_notes, audience_mode, audience_team_ids, audience_rights_profile_ids, audience_include_member_ids, document_subtype!subtype_id(name, requires_verification)",
+        "id, organisation_id, owner_scope, owner_id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, verification_notes, audience_mode, audience_team_ids, audience_rights_profile_ids, audience_include_member_ids, document_subtype!subtype_id(name, requires_verification, visible_to_member)",
       )
       .eq("id", documentId)
       .single();
@@ -151,6 +152,10 @@ export async function _getDocumentDetail(
       target = await getTarget(admin, doc.owner_id as string, organisationId);
       if (!target) return { success: false, error: "Document not found" };
       if (!canViewTarget(caller, { memberId: target.id, teamId: target.team_id })) {
+        return { success: false, error: "Document not found" };
+      }
+      // CLE-231 — HR-only Employment docs are invisible to their owner.
+      if (isHiddenFromCaller(doc as unknown as Parameters<typeof isHiddenFromCaller>[0], caller.memberId)) {
         return { success: false, error: "Document not found" };
       }
     } else if (doc.owner_scope === "organisation") {
@@ -189,8 +194,8 @@ export async function _getDocumentDetail(
     }
 
     const st = doc.document_subtype as unknown as
-      | { name?: string; requires_verification?: boolean }
-      | { name?: string; requires_verification?: boolean }[]
+      | { name?: string; requires_verification?: boolean; visible_to_member?: boolean }
+      | { name?: string; requires_verification?: boolean; visible_to_member?: boolean }[]
       | null;
     const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
     const requiresVerification = stObj?.requires_verification === true;
@@ -219,6 +224,7 @@ export async function _getDocumentDetail(
         nextReviewOn: (doc.next_review_on as string | null) ?? null,
       }),
       captureSource: ((doc.capture_source as "upload" | "photo" | null) ?? "upload"),
+      visibleToMember: !subtypeHiddenFromMember(st),
     };
 
     return {
@@ -253,7 +259,7 @@ export async function _getMemberDocumentSignedUrl(
 
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, owner_id, storage_path, file_name, file_size, content_type, disposal_date, type, audience_mode, audience_team_ids, audience_rights_profile_ids, audience_include_member_ids, document_subtype!subtype_id(name)")
+      .select("id, organisation_id, owner_scope, owner_id, storage_path, file_name, file_size, content_type, disposal_date, type, audience_mode, audience_team_ids, audience_rights_profile_ids, audience_include_member_ids, document_subtype!subtype_id(name, visible_to_member)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== organisationId) {
@@ -270,6 +276,10 @@ export async function _getMemberDocumentSignedUrl(
       target = await getTarget(admin, doc.owner_id as string, organisationId);
       if (!target) return { success: false, error: "Document not found" };
       if (!canViewTarget(caller, { memberId: target.id, teamId: target.team_id })) {
+        return { success: false, error: "Document not found" };
+      }
+      // CLE-231 — HR-only Employment docs are invisible to their owner.
+      if (isHiddenFromCaller(doc as unknown as Parameters<typeof isHiddenFromCaller>[0], caller.memberId)) {
         return { success: false, error: "Document not found" };
       }
     } else if (doc.owner_scope === "organisation") {
@@ -355,7 +365,7 @@ export async function _uploadMemberDocument(
     const { data: subtype } = await admin
       .from("document_subtype")
       .select(
-        "id, type, name, retention_class, expiry_required, employee_can_upload",
+        "id, type, name, retention_class, expiry_required, employee_can_upload, visible_to_member",
       )
       .eq("id", subtypeId)
       .eq("organisation_id", organisationId)
@@ -363,6 +373,11 @@ export async function _uploadMemberDocument(
     if (!subtype) return { success: false, error: "That document type is not available." };
 
     const selfPath = isSelf(caller, memberId);
+    // CLE-231 — an owner can't file into an HR-only subtype (they'd
+    // lose sight of their own upload).
+    if (selfPath && subtype.visible_to_member === false) {
+      return { success: false, error: "That document type is not available." };
+    }
     if (selfPath && caller.rights.crossUserAccess === "self" && !subtype.employee_can_upload) {
       return {
         success: false,

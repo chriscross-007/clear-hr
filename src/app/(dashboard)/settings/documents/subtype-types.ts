@@ -37,6 +37,33 @@ export function scopeForType(type: DocumentType): DocumentScope {
   return SCOPE_BY_TYPE[type];
 }
 
+/**
+ * CLE-231 — User-facing names for the system types. The `contract` key
+ * is kept internally (no data migration) but is shown as "Employment":
+ * documents the organisation issues to a member (contract, reviews,
+ * disciplinary). Use these everywhere instead of local label maps.
+ */
+export const DOCUMENT_TYPE_LABEL: Record<DocumentType, string> = {
+  contract: "Employment",
+  certificate: "Certificate",
+  evidence: "RTW Evidence",
+  attachment: "Attachment",
+  organisation_document: "Organisation document",
+};
+
+/** CLE-231 — only certificate subtypes can be required of a member
+ *  (RTW evidence is required via the member's RTW setting instead). */
+export function canBeRequired(type: DocumentType | string): boolean {
+  return type === "certificate";
+}
+
+/** CLE-231 — only Employment (`contract`) subtypes carry the
+ *  "Visible to the member" switch; everything else is always visible
+ *  to the member it belongs to. */
+export function hasMemberVisibilitySwitch(type: DocumentType | string): boolean {
+  return type === "contract";
+}
+
 export const RETENTION_CLASSES = [
   "contract",
   "certificate",
@@ -62,6 +89,9 @@ export interface DocumentSubtypeDto {
   reviewPeriodMonths: number | null;
   trackablePerMember: boolean;
   requiresAcknowledgement: boolean;
+  /** CLE-231 — Employment subtypes only; false hides docs of this
+   *  subtype from the member they're about (HR-only). */
+  visibleToMember: boolean;
 }
 
 export interface DocumentSubtypeWritePayload {
@@ -74,4 +104,7 @@ export interface DocumentSubtypeWritePayload {
   reviewPeriodMonths: number | null;
   trackablePerMember: boolean;
   requiresAcknowledgement: boolean;
+  /** CLE-231 — Employment subtypes only; false hides docs of this
+   *  subtype from the member they're about (HR-only). */
+  visibleToMember: boolean;
 }

@@ -6,13 +6,13 @@
 // the new `document` table.
 
 import { useCallback, useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Calendar,
+  EyeOff,
   FileText,
   Loader2,
   Plus,
-  RotateCcw,
   Trash2,
   Undo2,
 } from "lucide-react";
@@ -23,6 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -39,7 +40,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 // CLE-224 — Admin variant of the org-docs list, per-target ack state.
 import { MemberOrgDocumentsList } from "@/components/documents/member-org-documents-list";
 import { useMemberLabel } from "@/contexts/member-label-context";
-import { capitalize } from "@/lib/label-utils";
 import {
   listMemberDocuments,
   listTrashedMemberDocuments,
@@ -61,8 +61,14 @@ import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 // /my-documents view. Lives here (not on the Employment tab)
 // so the admin surface stacks the two docs cards on one page.
 import { RequiredDocumentsCard } from "@/app/(dashboard)/members/[memberId]/employment/required-documents-card";
+
+const DOCS_TABS = ["certifications", "employment", "other", "org", "trash"] as const;
+type DocsTab = (typeof DOCS_TABS)[number];
+function isDocsTab(v: string | null): v is DocsTab {
+  return v !== null && (DOCS_TABS as readonly string[]).includes(v);
+}
 const TYPE_LABEL: Record<string, string> = {
-  contract: "Contract",
+  contract: "Employment",
   certificate: "Certificate",
   evidence: "RTW Evidence",
   policy: "Policy",
@@ -132,21 +138,17 @@ export function DocsClient({
   const [trashRows, setTrashRows] = useState<TrashedMemberDocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showTrash, setShowTrash] = useState(false);
-  // CLE-224 — Two-tab shell. Default lands on the member tab so the
-  // existing #required-documents deep link (traffic-light click-
-  // through from the Employees Directory / sidebar avatar badge)
-  // still resolves inside the Required Documents card.
-  const [activeTab, setActiveTab] = useState<"member" | "org">("member");
-
-  // CLE-224 — First-name label for tab 1. Fall back to
-  // `capitalize(memberLabel) + "'s Documents"` for edge cases where
-  // the member row has no name yet (e.g. pre-invite created via
-  // email only). Never hardcode "Employee's".
-  const firstName = memberName.trim().split(/\s+/)[0] ?? "";
-  const memberTabLabel = firstName
-    ? `${firstName}'s Documents`
-    : `${capitalize(memberLabel)}'s Documents`;
+  // CLE-231 — Five tabs: Certifications (what the member supplies:
+  // RTW + required certificates), Employment (what the org issues to
+  // the member), Other (everything else), Org, Trash. `?tab=<key>`
+  // opens a specific tab (the admin dashboard ack chip uses ?tab=org);
+  // the default lands on Certifications so the #required-documents
+  // traffic-light deep link still resolves inside that card.
+  const searchParams = useSearchParams();
+  const initialTab = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState<DocsTab>(
+    isDocsTab(initialTab) && (initialTab !== "trash" || canManageDeleted) ? initialTab : "certifications",
+  );
 
   const [viewerDoc, setViewerDoc] = useState<{
     url: string;
@@ -154,7 +156,9 @@ export function DocsClient({
     contentType: string;
   } | null>(null);
 
-  const [uploadOpen, setUploadOpen] = useState(false);
+  // CLE-231 — which tab's "Add Document" opened the dialog; narrows
+  // the subtype picker to that tab's kinds.
+  const [uploadBucket, setUploadBucket] = useState<"employment" | "other" | null>(null);
   const [detailsDocId, setDetailsDocId] = useState<string | null>(null);
   // When the details dialog was opened from the Trash list it renders
   // in read-only mode (all pencils + composer hidden, "In Trash" pill
@@ -228,88 +232,96 @@ export function DocsClient({
           {toastMessage}
         </div>
       )}
-      {/* CLE-224 — Two-tab shell. Tab 1 = the existing per-member
-          Required + Other cards. Tab 2 = the org-docs list scoped to
-          this member's ack state. Follows CLAUDE.md's "Tabs in the
+      {/* CLE-231 — Five-tab shell. Follows CLAUDE.md's "Tabs in the
           sticky header" convention: <Tabs> spans both the sticky
-          header and the tab content, TabsList lives inside the
-          sticky band so triggers stay pinned. */}
+          header and the tab content, TabsList lives inside the sticky
+          band so triggers stay pinned. */}
       <Tabs
         value={activeTab}
-        onValueChange={(v) => setActiveTab(v === "org" ? "org" : "member")}
+        onValueChange={(v) => { if (isDocsTab(v)) setActiveTab(v); }}
         className="w-full"
       >
-        {/* CLE-222 follow-up — "Add Document" moved out of the sticky
-            header into the "Other Documents" card's Live tab (see
-            below). Required Documents has its own add controls
-            (+ subtype picker and per-row +/− on the required table).
-            Trash view has no Add — you don't upload into the trash.
-            CLE-224 — no "+ Add" button leaks into the sticky header
-            on the Org tab either; admins add org docs from
-            /documents/organisation. */}
         <StickyPageHeader>
           <div className="flex items-center justify-between gap-3 mb-3">
             <h1 className="text-2xl font-bold">Documents</h1>
           </div>
           <TabsList>
-            <TabsTrigger value="member">{memberTabLabel}</TabsTrigger>
-            <TabsTrigger value="org">Org Documents</TabsTrigger>
+            <TabsTrigger value="certifications">Certifications</TabsTrigger>
+            <TabsTrigger value="employment">Employment</TabsTrigger>
+            <TabsTrigger value="other">Other</TabsTrigger>
+            <TabsTrigger value="org">Org</TabsTrigger>
+            {canManageDeleted && (
+              <TabsTrigger value="trash">Trash ({trashRows.length})</TabsTrigger>
+            )}
           </TabsList>
         </StickyPageHeader>
 
         {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive mt-4">{error}</div>}
 
-        <TabsContent value="member" className="mt-4">
-          {/* CLE-222 — Two-card stack mirroring the employee's own
-              /my-documents view: Required Documents on top, Other
-              Documents (the free-form live/trash lists) below. */}
-          <div className="space-y-4">
-            <RequiredDocumentsCard
-              memberId={memberId}
-              memberName={memberName}
-              canEdit={canUpdate}
-            />
+        {/* Certifications — documents the member supplies: Right to
+            Work evidence + the certificates required of them (picked
+            on the Employment page). */}
+        <TabsContent value="certifications" className="mt-4">
+          <RequiredDocumentsCard
+            memberId={memberId}
+            memberName={memberName}
+            canEdit={canUpdate}
+          />
+        </TabsContent>
 
-            <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between gap-3">
-              <CardTitle className="text-base">
-                Other documents
-                <span className="ml-2 font-normal text-muted-foreground">
-                  — {showTrash ? "Trash" : "Live"}
-                </span>
-              </CardTitle>
-              <div className="flex items-center gap-2">
-                {/* Add Document — visible only on the Live sub-view.
-                    Required Documents has its own +/− controls, so this
-                    button is scoped to the free-form Other Documents
-                    list, not the whole page. */}
-                {canUpdate && !showTrash && (
-                  <Button type="button" size="sm" onClick={() => setUploadOpen(true)}>
-                    <Plus className="mr-1.5 h-4 w-4" />
-                    Add Document
-                  </Button>
-                )}
-                {canManageDeleted && (
-                  <Button
-                    type="button"
-                    variant={showTrash ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setShowTrash((v) => !v)}
-                  >
-                    <RotateCcw className="mr-1.5 h-4 w-4" />
-                    Trash ({trashRows.length})
-                  </Button>
-                )}
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : showTrash ? (
+        {/* Employment — documents the organisation issues to the
+            member (contract, reviews, disciplinary). */}
+        <TabsContent value="employment" className="mt-4">
+          <DocListCard
+            title="Employment documents"
+            description={`Documents the organisation has issued to this ${memberLabel}. Kinds marked HR only are hidden from the ${memberLabel}.`}
+            loading={loading}
+            canUpdate={canUpdate}
+            onAdd={() => setUploadBucket("employment")}
+          >
+            <DocList
+              rows={rows.filter((r) => r.type === "contract")}
+              canUpdate={canUpdate}
+              showHrOnly
+              onOpen={(r) => { setDetailsReadOnly(false); setDetailsDocId(r.id); }}
+              onDelete={(r) => setDeleting(r)}
+            />
+          </DocListCard>
+        </TabsContent>
+
+        {/* Other — absence evidence, unrequired certificates,
+            superseded RTW evidence, etc. */}
+        <TabsContent value="other" className="mt-4">
+          <DocListCard
+            title="Other documents"
+            description="Everything not held under Certifications or Employment."
+            loading={loading}
+            canUpdate={canUpdate}
+            onAdd={() => setUploadBucket("other")}
+          >
+            <DocList
+              rows={rows.filter((r) => r.type !== "contract" && !requiredDocIds.has(r.id))}
+              canUpdate={canUpdate}
+              onOpen={(r) => { setDetailsReadOnly(false); setDetailsDocId(r.id); }}
+              onDelete={(r) => setDeleting(r)}
+            />
+          </DocListCard>
+        </TabsContent>
+
+        {/* CLE-224 — Org Documents tab. Component owns its own Card
+            wrapper (same convention as <MyOrgDocumentsList>). */}
+        <TabsContent value="org" className="mt-4">
+          <MemberOrgDocumentsList memberId={memberId} memberName={memberName} />
+        </TabsContent>
+
+        {canManageDeleted && (
+          <TabsContent value="trash" className="mt-4">
+            <DocListCard
+              title="Trash"
+              description="Deleted documents are kept for 30 days, then permanently removed."
+              loading={loading}
+              canUpdate={false}
+            >
               <TrashList
                 rows={trashRows}
                 onRestore={async (id) => {
@@ -328,33 +340,14 @@ export function DocsClient({
                 }}
                 onView={(d) => {
                   // Read-only Document Details dialog — everything the live
-                  // dialog offers (Preview / Expiry / Verify / Review /
-                  // Activity / Download) except the pencils and composer.
+                  // dialog offers except the pencils and composer.
                   setDetailsReadOnly(true);
                   setDetailsDocId(d.id);
                 }}
               />
-            ) : (
-              <DocList
-                rows={rows.filter((r) => !requiredDocIds.has(r.id))}
-                canUpdate={canUpdate}
-                onOpen={(r) => {
-                  setDetailsReadOnly(false);
-                  setDetailsDocId(r.id);
-                }}
-                onDelete={(r) => setDeleting(r)}
-              />
-            )}
-          </CardContent>
-        </Card>
-          </div>
-        </TabsContent>
-
-        {/* CLE-224 — Org Documents tab. Component owns its own Card
-            wrapper (same convention as <MyOrgDocumentsList>). */}
-        <TabsContent value="org" className="mt-4">
-          <MemberOrgDocumentsList memberId={memberId} memberName={memberName} />
-        </TabsContent>
+            </DocListCard>
+          </TabsContent>
+        )}
       </Tabs>
 
       {detailsDocId && (
@@ -377,16 +370,17 @@ export function DocsClient({
         <ViewerDialog viewer={viewerDoc} onClose={() => setViewerDoc(null)} />
       )}
 
-      {uploadOpen && (
+      {uploadBucket && (
         <NewMemberDocumentDialog
           memberId={memberId}
           memberName={memberName}
-          onClose={() => setUploadOpen(false)}
+          bucket={uploadBucket}
+          onClose={() => setUploadBucket(null)}
           onCreated={async (newDocId) => {
             // Swap the "new doc" dialog for the full details dialog
             // in the same tick — from the user's perspective the
             // same surface just gained a file.
-            setUploadOpen(false);
+            setUploadBucket(null);
             setDetailsReadOnly(false);
             setDetailsDocId(newDocId);
             await load();
@@ -417,14 +411,62 @@ export function DocsClient({
 // Sub-components
 // ---------------------------------------------------------------------------
 
+function DocListCard({
+  title,
+  description,
+  loading,
+  canUpdate,
+  onAdd,
+  children,
+}: {
+  title: string;
+  description: string;
+  loading: boolean;
+  canUpdate: boolean;
+  onAdd?: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <CardTitle className="text-base">{title}</CardTitle>
+            <CardDescription>{description}</CardDescription>
+          </div>
+          {canUpdate && onAdd && (
+            <Button type="button" size="sm" onClick={onAdd}>
+              <Plus className="mr-1.5 h-4 w-4" />
+              Add Document
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          children
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function DocList({
   rows,
   canUpdate,
+  showHrOnly = false,
   onOpen,
   onDelete,
 }: {
   rows: MemberDocumentRow[];
   canUpdate: boolean;
+  /** CLE-231 — mark rows whose subtype is hidden from the member. */
+  showHrOnly?: boolean;
+
   /** Row click → open the Document Details dialog (§7b.13). */
   onOpen: (r: MemberDocumentRow) => void;
   onDelete: (r: MemberDocumentRow) => void;
@@ -458,6 +500,14 @@ function DocList({
                   <p className="font-medium">
                     {TYPE_LABEL[r.type] ?? r.type}
                     {r.subtypeName ? <span className="text-muted-foreground"> / {r.subtypeName}</span> : null}
+                    {showHrOnly && !r.visibleToMember && (
+                      <span
+                        className="ml-2 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                        title="Hidden from the member this document belongs to"
+                      >
+                        <EyeOff className="h-3 w-3" /> HR only
+                      </span>
+                    )}
                   </p>
                   <p className="text-xs text-muted-foreground truncate" title={r.fileName}>
                     {r.fileName} · {fmtFileSize(r.fileSize)}

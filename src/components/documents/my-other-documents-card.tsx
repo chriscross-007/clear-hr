@@ -28,7 +28,10 @@ import {
 import { STATUS_LABEL, STATUS_TONE, type DocumentStatus } from "@/lib/document-status";
 import { fmtBytes } from "@/lib/format-bytes";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
-import { getMyOtherMemberDocuments } from "@/app/(dashboard)/my-documents/actions";
+import {
+  getMyOtherMemberDocuments,
+  getMyEmploymentDocuments,
+} from "@/app/(dashboard)/my-documents/actions";
 import type { OtherMemberDocumentRow } from "@/app/(dashboard)/my-documents/actions-impl";
 import { onMemberDocsChanged } from "@/lib/member-docs-events";
 
@@ -36,7 +39,7 @@ import { onMemberDocsChanged } from "@/lib/member-docs-events";
 // with the same vocabulary. RTW evidence is excluded upstream so
 // there's no "evidence" branch here.
 const TYPE_LABEL: Record<string, string> = {
-  contract: "Contract",
+  contract: "Employment",
   certificate: "Certificate",
   attachment: "Attachment",
 };
@@ -58,7 +61,11 @@ function fmtDate(iso: string | null): string {
 
 export function MyOtherDocumentsCard({
   memberId,
+  bucket = "other",
 }: {
+  /** CLE-231 — `employment` lists documents the org has issued to the
+   *  caller; `other` lists everything not on Certifications/Employment. */
+  bucket?: "other" | "employment";
   /** The caller's own member id — resolved by the parent server
    *  component. Used only as the key for the docs-changed event bus;
    *  the server action itself resolves the caller. */
@@ -70,10 +77,12 @@ export function MyOtherDocumentsCard({
 
   const load = useCallback(async () => {
     setError(null);
-    const res = await getMyOtherMemberDocuments();
+    const res = bucket === "employment"
+      ? await getMyEmploymentDocuments()
+      : await getMyOtherMemberDocuments();
     if (!res.success) { setError(res.error); return; }
     setRows(res.rows);
-  }, []);
+  }, [bucket]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -84,7 +93,9 @@ export function MyOtherDocumentsCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">My other documents</CardTitle>
+        <CardTitle className="text-base">
+          {bucket === "employment" ? "My employment documents" : "My other documents"}
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {error && (
@@ -95,7 +106,11 @@ export function MyOtherDocumentsCard({
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
         ) : rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No other documents uploaded for you.</p>
+          <p className="text-sm text-muted-foreground">
+            {bucket === "employment"
+              ? "No employment documents have been issued to you yet."
+              : "No other documents uploaded for you."}
+          </p>
         ) : (
           <div className="overflow-hidden rounded-md border">
             <table className="w-full text-sm">

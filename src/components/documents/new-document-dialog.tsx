@@ -45,7 +45,7 @@ import {
 import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 
 const TYPE_LABEL: Record<string, string> = {
-  contract: "Contract",
+  contract: "Employment",
   certificate: "Certificate",
   evidence: "RTW Evidence",
   attachment: "Attachment",
@@ -73,6 +73,9 @@ interface Props {
    *  dialog is opened from the RTW aggregate row's "+ Add" button
    *  so admins can only upload valid RTW evidence. */
   rtwOnly?: boolean;
+  /** CLE-231 — which member Documents tab opened the dialog. Narrows
+   *  the subtype picker to that tab's kinds (see getSubtypesForUpload). */
+  bucket?: "employment" | "other";
   onClose: () => void;
   /** Fires with the new document's id once upload/photo lands. The
    *  caller closes this dialog and typically opens
@@ -86,6 +89,7 @@ export function NewMemberDocumentDialog({
   memberName,
   presetSubtypeId = null,
   rtwOnly = false,
+  bucket,
   onClose,
   onCreated,
 }: Props) {
@@ -119,11 +123,11 @@ export function NewMemberDocumentDialog({
         })));
         return;
       }
-      const res = await getSubtypesForUpload(memberId);
+      const res = await getSubtypesForUpload(memberId, bucket);
       if (res.success) setSubtypes(res.subtypes);
       else setSubtypeError(res.error ?? "Failed to load subtypes");
     })();
-  }, [memberId, rtwOnly]);
+  }, [memberId, rtwOnly, bucket]);
 
   const currentSubtype = useMemo(
     () => subtypes.find((s) => s.id === subtypeId) ?? null,

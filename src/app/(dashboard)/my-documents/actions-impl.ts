@@ -13,6 +13,7 @@
 import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
 import type { DocumentsCaller } from "@/lib/documents-caller";
 import { selectPresentedRtwDocIds, type RtwDocLike } from "@/lib/documents-rtw";
+import { subtypeHiddenFromMember } from "@/lib/documents-member-visibility";
 
 // Re-export the DTO shape from the actions file so callers only need
 // one import point. `actions.ts` re-exports the type verbatim.
@@ -31,8 +32,30 @@ export interface OtherMemberDocumentRow {
   isAcknowledged: boolean;
 }
 
+/** CLE-231 — the member's own Other tab: everything that isn't on
+ *  Certifications (RTW + required certificates) or Employment. */
 export async function _getMyOtherMemberDocuments(
   caller: DocumentsCaller,
+): Promise<
+  { success: true; rows: OtherMemberDocumentRow[] } | { success: false; error: string }
+> {
+  return _getMyMemberDocumentsBucket(caller, "other");
+}
+
+/** CLE-231 — the member's own Employment tab: documents the org has
+ *  issued to them (system type `contract`), minus HR-only subtypes
+ *  (`visible_to_member = false`). */
+export async function _getMyEmploymentDocuments(
+  caller: DocumentsCaller,
+): Promise<
+  { success: true; rows: OtherMemberDocumentRow[] } | { success: false; error: string }
+> {
+  return _getMyMemberDocumentsBucket(caller, "employment");
+}
+
+async function _getMyMemberDocumentsBucket(
+  caller: DocumentsCaller,
+  bucket: "other" | "employment",
 ): Promise<
   { success: true; rows: OtherMemberDocumentRow[] } | { success: false; error: string }
 > {
@@ -49,15 +72,15 @@ export async function _getMyOtherMemberDocuments(
       verified_on: string | null;
       disposal_date: string | null;
       document_subtype:
-        | { id: string; name: string; type: string; trackable_per_member: boolean; requires_verification: boolean; requires_acknowledgement: boolean }
-        | { id: string; name: string; type: string; trackable_per_member: boolean; requires_verification: boolean; requires_acknowledgement: boolean }[]
+        | { id: string; name: string; type: string; trackable_per_member: boolean; requires_verification: boolean; requires_acknowledgement: boolean; visible_to_member: boolean }
+        | { id: string; name: string; type: string; trackable_per_member: boolean; requires_verification: boolean; requires_acknowledgement: boolean; visible_to_member: boolean }[]
         | null;
     };
     const { data: docRows, error: dErr } = await admin
       .from("document")
       .select(
         "id, subtype_id, file_name, file_size, uploaded_at, expires_on, verified_on, disposal_date, " +
-        "document_subtype!subtype_id(id, name, type, trackable_per_member, requires_verification, requires_acknowledgement)",
+        "document_subtype!subtype_id(id, name, type, trackable_per_member, requires_verification, requires_acknowledgement, visible_to_member)",
       )
       .eq("organisation_id", organisationId)
       .eq("owner_scope", "member")
@@ -75,7 +98,9 @@ export async function _getMyOtherMemberDocuments(
     const activeDocs = ((docRows ?? []) as unknown as DocRow[])
       .filter((d) => !queued.has(d.id))
       .filter((d) => d.disposal_date === null || d.disposal_date > today)
-      .filter((d) => d.subtype_id !== null);
+      .filter((d) => d.subtype_id !== null)
+      // CLE-231 — HR-only Employment docs never reach their owner.
+      .filter((d) => !subtypeHiddenFromMember(d.document_subtype));
 
     if (activeDocs.length === 0) return { success: true, rows: [] };
 
@@ -117,6 +142,9 @@ export async function _getMyOtherMemberDocuments(
     const filtered = activeDocs.filter((d) => {
       const st = Array.isArray(d.document_subtype) ? (d.document_subtype[0] ?? null) : d.document_subtype;
       if (!st) return false;
+      // CLE-231 — Employment (system type `contract`) has its own tab.
+      if (bucket === "employment") return st.type === "contract";
+      if (st.type === "contract") return false;
       // CLE-228 — evidence-type (RTW) docs are only excluded if
       // they're the one currently represented on Required. Any
       // superseded, expired-but-superseded, or opted-out-of RTW

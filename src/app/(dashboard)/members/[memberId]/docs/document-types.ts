@@ -31,6 +31,10 @@ export interface MemberDocumentRow {
    *  'photo' via the mobile camera flow (either web-queued or
    *  mobile-initiated ad-hoc). Drives the Source column icon. */
   captureSource: "upload" | "photo";
+  /** CLE-231 — false when the subtype is an HR-only Employment kind
+   *  (`document_subtype.visible_to_member = false`). Owners never
+   *  receive such rows; admin lists use it to mark them "HR only". */
+  visibleToMember: boolean;
 }
 
 export interface TrashedMemberDocumentRow extends MemberDocumentRow {

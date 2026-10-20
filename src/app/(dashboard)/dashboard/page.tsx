@@ -71,7 +71,7 @@ export default async function DashboardPage() {
   let docsIconClass: string;
   if (docsColour === "green") {
     docsBigText = "All up to date";
-    docsSubtext = "Your required documents are in order";
+    docsSubtext = "Your certifications are in order";
     docsTextClass = "text-green-600";
     docsIconClass = "text-green-500";
   } else if (docsColour === "red") {
@@ -85,7 +85,7 @@ export default async function DashboardPage() {
     docsTextClass = "text-amber-600";
     docsIconClass = "text-amber-500";
   } else {
-    docsBigText = "No required documents";
+    docsBigText = "No certifications required";
     docsSubtext = "Nothing to provide right now";
     docsTextClass = "text-muted-foreground";
     docsIconClass = "text-muted-foreground";
@@ -104,8 +104,23 @@ export default async function DashboardPage() {
   const acksRes = await getMyOutstandingAcknowledgements();
   const outstandingAcks = acksRes.success ? acksRes.rows : [];
   const outstandingAckCount = outstandingAcks.length;
-  const hasMemberAck = outstandingAcks.some((a) => a.ownerScope === "member");
-  const ackTab = hasMemberAck ? "my" : "org";
+  // CLE-231 — member docs now sit on three tabs; route to the one
+  // holding the first outstanding member-scope ack (Employment for
+  // org-issued docs, Certifications for RTW/certificates, else Other).
+  const firstMemberAck = outstandingAcks.find((a) => a.ownerScope === "member");
+  const ackTab = !firstMemberAck
+    ? "org"
+    : firstMemberAck.subtypeType === "contract"
+      ? "employment"
+      : firstMemberAck.subtypeType === "attachment"
+        ? "other"
+        : "certifications";
+  const ACK_TAB_LABEL: Record<typeof ackTab, string> = {
+    certifications: "Certifications",
+    employment: "Employment",
+    other: "Other",
+    org: "Org",
+  };
   const ackHref = outstandingAckCount > 0 ? `/my-documents?tab=${ackTab}` : null;
 
   // The Docs card wraps its main content in the traffic-light Link
@@ -149,7 +164,7 @@ export default async function DashboardPage() {
             {" "}to acknowledge
           </span>
           <span className="text-xs text-amber-800/80 dark:text-amber-200/70">
-            {hasMemberAck ? "My Documents" : "Org Documents"} →
+            {ACK_TAB_LABEL[ackTab]} →
           </span>
         </Link>
       )}

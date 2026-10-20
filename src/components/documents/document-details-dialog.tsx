@@ -72,7 +72,7 @@ import {
 import type { DocumentAcknowledgementStatus } from "@/app/(dashboard)/documents/acknowledgement-actions-impl";
 
 const TYPE_LABEL: Record<string, string> = {
-  contract: "Contract",
+  contract: "Employment",
   certificate: "Certificate",
   evidence: "RTW Evidence",
   attachment: "Attachment",

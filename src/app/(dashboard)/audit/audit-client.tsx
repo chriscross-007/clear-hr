@@ -80,8 +80,8 @@ const ACTION_LABELS: Record<string, string> = {
   "document.renewed": "Document verified (re-sighting)",
   "document.acknowledged": "Document acknowledged",
   "document.remind_sent": "Reminder sent to outstanding acknowledgers",
-  "member.expected_documents_added": "Required documents added",
-  "member.expected_documents_removed": "Required documents removed",
+  "member.expected_documents_added": "Required certifications added",
+  "member.expected_documents_removed": "Required certifications removed",
   "member.rtw_not_required_changed": "Right to Work updated",
   "org.updated": "Edited Organisation",
   "team.created": "Created Team",
@@ -175,6 +175,15 @@ const RIGHT_LABELS: Record<string, string> = {
 };
 
 const FIELD_LABELS: Record<string, string> = {
+  // Document subtype (Settings → Document Definitions) columns.
+  employee_can_upload: "Member can upload",
+  retention_class: "Retention class",
+  expiry_required: "Expiry required",
+  requires_verification: "Requires verification",
+  review_period_months: "Review period (months)",
+  trackable_per_member: "Can be required",
+  requires_acknowledgement: "Requires acknowledgement",
+  visible_to_member: "Visible to the member",
   first_name: "First Name",
   last_name: "Last Name",
   email: "Email",
@@ -449,7 +458,7 @@ function ChangeDetail({ changes }: { changes: Record<string, { old: unknown; new
 // `type_subtype` metadata so raw values like `organisation_document`
 // come through as "Organisation Document".
 const DOCUMENT_TYPE_LABELS: Record<string, string> = {
-  contract: "Contract",
+  contract: "Employment",
   certificate: "Certificate",
   evidence: "RTW Evidence",
   attachment: "Attachment",

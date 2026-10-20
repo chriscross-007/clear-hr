@@ -22,6 +22,10 @@ import {
 import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
 import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
 import {
+  isDocumentHiddenFromCaller,
+  subtypeHiddenFromMember,
+} from "@/lib/documents-member-visibility";
+import {
   _getDocumentDetail,
   _getMemberDocumentSignedUrl,
   _uploadMemberDocument,
@@ -119,7 +123,7 @@ async function callerName(admin: ReturnType<typeof getAdmin>, callerMemberId: st
 const PROTECTED_RETENTION_CLASSES = new Set(["right_to_work", "contract", "payroll"]);
 
 const TYPE_DISPLAY: Record<string, string> = {
-  contract: "Contract",
+  contract: "Employment",
   certificate: "Certificate",
   evidence: "RTW Evidence",
   attachment: "Attachment",
@@ -164,7 +168,7 @@ export async function listMemberDocuments(
     const { data, error } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, document_subtype!subtype_id(name, requires_verification, visible_to_member), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", caller.organisationId)
       .eq("owner_scope", "member")
@@ -188,13 +192,16 @@ export async function listMemberDocuments(
       verified_by: string | null;
       next_review_on: string | null;
       capture_source: "upload" | "photo";
-      document_subtype: { name: string; requires_verification: boolean } | { name: string; requires_verification: boolean }[] | null;
+      document_subtype: { name: string; requires_verification: boolean; visible_to_member?: boolean } | { name: string; requires_verification: boolean; visible_to_member?: boolean }[] | null;
       members: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
     };
+    const viewingOwnRecord = caller.isSelf(memberId);
     const rows: MemberDocumentRow[] = (data ?? [])
       .map((r) => r as unknown as Row)
       .filter((r) => !queuedIds.has(r.id))
       .filter((r) => r.disposal_date === null || r.disposal_date > today)
+      // CLE-231 — HR-only Employment docs never reach their owner.
+      .filter((r) => !(viewingOwnRecord && subtypeHiddenFromMember(r.document_subtype)))
       .map((row) => {
         const st = row.document_subtype;
         const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
@@ -226,6 +233,7 @@ export async function listMemberDocuments(
             nextReviewOn: row.next_review_on,
           }),
           captureSource: row.capture_source ?? "upload",
+          visibleToMember: !subtypeHiddenFromMember(row.document_subtype),
         };
       });
     return { success: true, rows };
@@ -539,7 +547,7 @@ export async function listTrashedMemberDocuments(
     const { data: docs, error: docsErr } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, owner_id, document_subtype!subtype_id(name, requires_verification), members!uploaded_by(first_name, last_name)",
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, owner_id, document_subtype!subtype_id(name, requires_verification, visible_to_member), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", caller.organisationId)
       .eq("owner_scope", "member")
@@ -564,11 +572,17 @@ export async function listTrashedMemberDocuments(
       next_review_on: string | null;
       capture_source: "upload" | "photo";
       owner_id: string | null;
-      document_subtype: { name: string; requires_verification: boolean } | { name: string; requires_verification: boolean }[] | null;
+      document_subtype: { name: string; requires_verification: boolean; visible_to_member?: boolean } | { name: string; requires_verification: boolean; visible_to_member?: boolean }[] | null;
       members: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
     };
     const docsById = new Map<string, DRow>();
-    for (const d of docs ?? []) docsById.set((d as unknown as DRow).id, d as unknown as DRow);
+    const viewingOwnTrash = caller.isSelf(memberId);
+    for (const d of docs ?? []) {
+      const row = d as unknown as DRow;
+      // CLE-231 — HR-only Employment docs never reach their owner.
+      if (viewingOwnTrash && subtypeHiddenFromMember(row.document_subtype)) continue;
+      docsById.set(row.id, row);
+    }
 
     const rows: TrashedMemberDocumentRow[] = (queueRows ?? [])
       .map((q) => {
@@ -605,6 +619,7 @@ export async function listTrashedMemberDocuments(
             nextReviewOn: d.next_review_on,
           }),
           captureSource: (d.capture_source as "upload" | "photo") ?? "upload",
+          visibleToMember: !subtypeHiddenFromMember(d.document_subtype),
           queuedAt: q.queued_at as string,
           queuedBy: (q.queued_by as string | null) ?? null,
           forceDeleteReason: (q.force_delete_reason as string | null) ?? null,
@@ -686,6 +701,10 @@ export async function replaceMemberDocument(
     const caller = await resolveCaller();
     if (!caller) return { success: false, error: "Not authenticated" };
     const admin = getAdmin();
+    // CLE-231 — HR-only Employment docs are invisible to their owner.
+    if (await isDocumentHiddenFromCaller(admin, oldDocumentId, caller.memberId)) {
+      return { success: false, error: "Document not found" };
+    }
 
     // Fetch the old doc — every field we need to inherit onto the
     // replacement plus the guard fields (verified_on, owner scope).
@@ -847,6 +866,10 @@ export async function finalizeDocumentReplace(
     const caller = await resolveCaller();
     if (!caller) return { success: false, error: "Not authenticated" };
     const admin = getAdmin();
+    // CLE-231 — HR-only Employment docs are invisible to their owner.
+    if (await isDocumentHiddenFromCaller(admin, oldDocumentId, caller.memberId)) {
+      return { success: false, error: "Document not found" };
+    }
 
     const { data: rows } = await admin
       .from("document")
@@ -962,6 +985,10 @@ export async function updateMemberDocumentMetadata(
     const caller = await resolveCaller();
     if (!caller) return { success: false, error: "Not authenticated" };
     const admin = getAdmin();
+    // CLE-231 — HR-only Employment docs are invisible to their owner.
+    if (await isDocumentHiddenFromCaller(admin, documentId, caller.memberId)) {
+      return { success: false, error: "Document not found" };
+    }
 
     const { data: doc } = await admin
       .from("document")
@@ -1078,6 +1105,10 @@ export async function softDeleteMemberDocument(
     const caller = await resolveCaller();
     if (!caller) return { success: false, error: "Not authenticated" };
     const admin = getAdmin();
+    // CLE-231 — HR-only Employment docs are invisible to their owner.
+    if (await isDocumentHiddenFromCaller(admin, documentId, caller.memberId)) {
+      return { success: false, error: "Document not found" };
+    }
     const { data: doc } = await admin
       .from("document")
       .select("id, organisation_id, owner_scope, owner_id, file_name, file_size, retention_class, disposal_date, type, document_subtype!subtype_id(name)")
@@ -1214,6 +1245,10 @@ export async function restoreMemberDocument(
       return { success: false, error: "You don't have permission to restore deleted documents." };
     }
     const admin = getAdmin();
+    // CLE-231 — HR-only Employment docs are invisible to their owner.
+    if (await isDocumentHiddenFromCaller(admin, documentId, caller.memberId)) {
+      return { success: false, error: "Document not found" };
+    }
 
     const { data: queued } = await admin
       .from("disposal_queue")
@@ -1289,6 +1324,10 @@ async function verifyOrRenew(
     const caller = await resolveCaller();
     if (!caller) return { success: false, error: "Not authenticated" };
     const admin = getAdmin();
+    // CLE-231 — HR-only Employment docs are invisible to their owner.
+    if (await isDocumentHiddenFromCaller(admin, documentId, caller.memberId)) {
+      return { success: false, error: "Document not found" };
+    }
     const { data: doc } = await admin
       .from("document")
       .select("id, organisation_id, owner_scope, owner_id, type, expires_on, file_name, file_size, document_subtype!subtype_id(name, requires_verification, review_period_months)")
@@ -1405,6 +1444,11 @@ export async function renewMemberDocument(
 
 export async function getSubtypesForUpload(
   memberId: string,
+  /** CLE-231 — narrows the picker to one tab's kinds: `employment` =
+   *  system type `contract`; `other` = attachments + certificates (RTW
+   *  evidence has its own "Add RTW evidence" path on Certifications).
+   *  Omitted = every member-scope subtype. */
+  bucket?: "employment" | "other",
 ): Promise<{
   success: boolean;
   error?: string;
@@ -1430,7 +1474,7 @@ export async function getSubtypesForUpload(
     const { data, error } = await admin
       .from("document_subtype")
       .select(
-        "id, type, name, retention_class, expiry_required, employee_can_upload, sort_order",
+        "id, type, name, retention_class, expiry_required, employee_can_upload, sort_order, visible_to_member",
       )
       .eq("organisation_id", caller.organisationId)
       .order("type", { ascending: true })
@@ -1445,11 +1489,20 @@ export async function getSubtypesForUpload(
       retention_class: string;
       expiry_required: boolean;
       employee_can_upload: boolean;
+      visible_to_member: boolean;
     }>;
     // Org-scope subtypes have their own upload surface at
     // /documents/organisation — never show them in the per-member
     // "Add Document" picker.
-    const memberScoped = rows.filter((r) => r.type !== "organisation_document");
+    const memberScoped = rows
+      .filter((r) => r.type !== "organisation_document")
+      .filter((r) =>
+        bucket === "employment" ? r.type === "contract"
+        : bucket === "other" ? r.type !== "contract" && r.type !== "evidence"
+        : true,
+      )
+      // CLE-231 — never offer an HR-only subtype on the owner's own record.
+      .filter((r) => !(isSelf && r.visible_to_member === false));
     // Self-upload restriction only applies to callers who can't
     // update anyone else's docs — i.e. `crossUserAccess = 'self'`.
     // An admin viewing their own record should see every subtype;
@@ -1507,7 +1560,8 @@ export async function listTrackablePerMemberSubtypes(): Promise<
       .select("id, type, name, sort_order")
       .eq("organisation_id", caller.organisationId)
       .eq("trackable_per_member", true)
-      .neq("type", "evidence")
+      // CLE-231 — only certificates can be required of a member.
+      .eq("type", "certificate")
       .order("type", { ascending: true })
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true });
@@ -1750,6 +1804,10 @@ export async function setMemberExpectedDocuments(
 
     if (toAdd.length === 0 && toRemove.length === 0) {
       return { success: true }; // no-op
+    }
+    // CLE-231 — only certificate subtypes can be required of a member.
+    if (toAdd.some((id) => incomingMeta.find((m) => m.id === id)?.type !== "certificate")) {
+      return { success: false, error: "Only certificates can be required of a member." };
     }
 
     // Deletes first, then inserts, so a subtype swapped in and out

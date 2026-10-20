@@ -751,7 +751,7 @@ export function buildEmployeeColumns(opts: {
             <option value="red">Red (attention required)</option>
             <option value="amber">Amber (attention soon)</option>
             <option value="green">Green (all good)</option>
-            <option value="none">No required docs</option>
+            <option value="none">No certifications required</option>
           </select>
         ),
       },

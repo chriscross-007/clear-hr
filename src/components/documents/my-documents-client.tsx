@@ -2,16 +2,22 @@
 
 // CLE-220 — Tabs shell for the /my-documents page.
 //
-// Two tabs: "My Documents" (per-member required-docs list) and "Org
-// Documents" (organisation-wide docs, if the caller has view rights).
-// Tab state is URL-driven via `?tab=my|org` so a bookmark of the org
-// tab lands on it, and a page-reload from within the tab keeps the
-// user in place.
+// CLE-231 — Four tabs, mirroring the admin view of a member's
+// Documents (minus Trash):
+//   * Certifications — what the member supplies: Right to Work + the
+//     certificates required of them.
+//   * Employment — what the organisation has issued to them (contract,
+//     reviews…). HR-only kinds never reach this list.
+//   * Other — everything else held on their record.
+//   * Org — organisation-wide documents (only when the caller's
+//     profile grants `can_view_organisation_documents`).
+// Tab state is URL-driven via `?tab=certifications|employment|other|org`
+// (default certifications) so a bookmark or a dashboard ack chip
+// lands on the right tab.
 //
 // Follows the CLAUDE.md "Tabs in the sticky header" convention: the
-// <Tabs> wrapper spans both <StickyPageHeader> and the two
-// <TabsContent> blocks, and the <TabsList> sits inside the sticky
-// band so it stays pinned while row lists scroll beneath.
+// <Tabs> wrapper spans both <StickyPageHeader> and the <TabsContent>
+// blocks, and the <TabsList> sits inside the sticky band.
 
 import { useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -22,7 +28,8 @@ import { MyOtherDocumentsCard } from "@/components/documents/my-other-documents-
 import { MyOrgDocumentsList } from "@/components/documents/my-org-documents-list";
 import type { OrgDocumentRow } from "@/app/(dashboard)/documents/organisation/org-document-actions-impl";
 
-type TabKey = "my" | "org";
+type TabKey = "certifications" | "employment" | "other" | "org";
+const TAB_KEYS: readonly TabKey[] = ["certifications", "employment", "other", "org"];
 
 export function MyDocumentsClient({
   memberId,
@@ -34,21 +41,20 @@ export function MyDocumentsClient({
   memberId: string;
   memberName: string;
   initialTab: TabKey;
-  /** When false the "Org Documents" tab is hidden entirely (the
-   *  caller's rights profile doesn't grant `can_view_organisation_
-   *  documents`). We render just the My Documents tab; the tab strip
-   *  degrades to a single trigger. */
+  /** When false the "Org" tab is hidden entirely (the caller's rights
+   *  profile doesn't grant `can_view_organisation_documents`). */
   canViewOrgDocs: boolean;
   initialOrgRows: OrgDocumentRow[];
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const activeTab: TabKey = initialTab === "org" && !canViewOrgDocs ? "certifications" : initialTab;
 
   const onTabChange = useCallback(
     (v: string) => {
-      const next = v === "org" ? "org" : "my";
+      const next: TabKey = (TAB_KEYS as readonly string[]).includes(v) ? (v as TabKey) : "certifications";
       const params = new URLSearchParams(searchParams.toString());
-      if (next === "my") params.delete("tab");
+      if (next === "certifications") params.delete("tab");
       else params.set("tab", next);
       const qs = params.toString();
       router.replace(qs ? `/my-documents?${qs}` : "/my-documents", { scroll: false });
@@ -57,30 +63,34 @@ export function MyDocumentsClient({
   );
 
   return (
-    <Tabs
-      value={initialTab}
-      onValueChange={onTabChange}
-      className="w-full"
-    >
+    <Tabs value={activeTab} onValueChange={onTabChange} className="w-full">
       <StickyPageHeader>
         <div className="flex items-center justify-between gap-4 mb-3">
           <h1 className="text-2xl font-bold">Documents</h1>
         </div>
         <TabsList>
-          <TabsTrigger value="my">My Documents</TabsTrigger>
-          {canViewOrgDocs && (
-            <TabsTrigger value="org">Org Documents</TabsTrigger>
-          )}
+          <TabsTrigger value="certifications">Certifications</TabsTrigger>
+          <TabsTrigger value="employment">Employment</TabsTrigger>
+          <TabsTrigger value="other">Other</TabsTrigger>
+          {canViewOrgDocs && <TabsTrigger value="org">Org</TabsTrigger>}
         </TabsList>
       </StickyPageHeader>
 
-      <TabsContent value="my" className="mt-4">
+      <TabsContent value="certifications" className="mt-4">
         <div className="mx-auto max-w-4xl space-y-6">
           <MyDocumentsCard memberId={memberId} memberName={memberName} />
-          {/* CLE-221 — informational tail. Every member-scope doc the
-              caller owns that the required card does NOT already
-              surface. Read-only; refreshes off the same event bus. */}
-          <MyOtherDocumentsCard memberId={memberId} />
+        </div>
+      </TabsContent>
+
+      <TabsContent value="employment" className="mt-4">
+        <div className="mx-auto max-w-4xl space-y-6">
+          <MyOtherDocumentsCard memberId={memberId} bucket="employment" />
+        </div>
+      </TabsContent>
+
+      <TabsContent value="other" className="mt-4">
+        <div className="mx-auto max-w-4xl space-y-6">
+          <MyOtherDocumentsCard memberId={memberId} bucket="other" />
         </div>
       </TabsContent>
 

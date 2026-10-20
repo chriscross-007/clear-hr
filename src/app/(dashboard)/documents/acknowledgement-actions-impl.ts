@@ -15,6 +15,7 @@
 // getDocumentCoverage + the reminder actions stay in the action file
 // — they aren't wrapped by mobile Tier 1.
 
+import { isHiddenFromCaller, subtypeHiddenFromMember } from "@/lib/documents-member-visibility";
 import { revalidatePath } from "next/cache";
 import { createHash } from "node:crypto";
 import { logAudit } from "@/lib/audit";
@@ -122,8 +123,8 @@ export async function _acknowledgeDocument(
       storage_path: string;
       subtype_id: string;
       document_subtype:
-        | { name?: string; requires_acknowledgement?: boolean }
-        | { name?: string; requires_acknowledgement?: boolean }[]
+        | { name?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }
+        | { name?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }[]
         | null;
     };
     const docQuery = await admin
@@ -131,12 +132,16 @@ export async function _acknowledgeDocument(
       .select(
         "id, organisation_id, owner_scope, owner_id, file_name, file_size, storage_path, subtype_id, " +
         AUDIENCE_COLUMNS + ", " +
-        "document_subtype!subtype_id(name, requires_acknowledgement)",
+        "document_subtype!subtype_id(name, requires_acknowledgement, visible_to_member)",
       )
       .eq("id", documentId)
       .single();
     const doc = docQuery.data as unknown as DocRow | null;
     if (!doc || doc.organisation_id !== organisationId) {
+      return { success: false, error: "Document not found" };
+    }
+    // CLE-231 — HR-only Employment docs are invisible to their owner.
+    if (isHiddenFromCaller(doc, memberId)) {
       return { success: false, error: "Document not found" };
     }
     const subtype = doc.document_subtype;
@@ -233,9 +238,28 @@ export async function _getMyOutstandingAcknowledgements(
   | { success: true; rows: OutstandingAcknowledgement[] }
   | { success: false; error: string }
 > {
+  return _getOutstandingAcknowledgementsFor(caller.admin, caller.organisationId, callerAsOrgDocMember(caller));
+}
+
+/**
+ * Outstanding acknowledgements for ANY member — the core shared by the
+ * member's own dashboard (`_getMyOutstandingAcknowledgements`) and the
+ * admin view of a member's dashboard (`getOutstandingAcknowledgementsForMember`).
+ * Callers are responsible for the access check; pass the service-role
+ * client. Member-scope docs owned by the member + org docs whose
+ * audience expects them to acknowledge; soft-deleted / disposed docs
+ * excluded.
+ */
+export async function _getOutstandingAcknowledgementsFor(
+  admin: DocumentsCaller["admin"],
+  organisationId: string,
+  member: OrgDocMember,
+): Promise<
+  | { success: true; rows: OutstandingAcknowledgement[] }
+  | { success: false; error: string }
+> {
   try {
-    const { admin, memberId, organisationId } = caller;
-    const canViewOrgDocs = caller.rights.canViewOrganisationDocuments;
+    const memberId = member.id;
 
     type DocJoin = AudienceDbRow & {
       id: string;
@@ -244,30 +268,36 @@ export async function _getMyOutstandingAcknowledgements(
       file_name: string;
       subtype_id: string;
       uploaded_at: string;
-      document_subtype: { name?: string; type?: string; requires_acknowledgement?: boolean } | Array<{ name?: string; type?: string; requires_acknowledgement?: boolean }> | null;
+      disposal_date: string | null;
+      document_subtype: { name?: string; type?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean } | Array<{ name?: string; type?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }> | null;
     };
     const docsQuery = await admin
       .from("document")
       .select(
-        "id, owner_scope, owner_id, file_name, subtype_id, uploaded_at, " +
+        "id, owner_scope, owner_id, file_name, subtype_id, uploaded_at, disposal_date, " +
         AUDIENCE_COLUMNS + ", " +
-        "document_subtype!subtype_id(name, type, requires_acknowledgement)",
+        "document_subtype!subtype_id(name, type, requires_acknowledgement, visible_to_member)",
       )
       .eq("organisation_id", organisationId)
       .order("uploaded_at", { ascending: false });
     const rows = (docsQuery.data ?? []) as unknown as DocJoin[];
 
-    // CLE-230 — only org docs whose audience includes the caller.
-    const me = callerAsOrgDocMember(caller);
+    const { data: queuedRows } = await admin
+      .from("disposal_queue")
+      .select("document_id")
+      .eq("organisation_id", organisationId);
+    const queued = new Set<string>(((queuedRows ?? []) as { document_id: string }[]).map((r) => r.document_id));
+    const today = new Date().toISOString().slice(0, 10);
 
     const relevant = rows.filter((d) => {
+      if (queued.has(d.id)) return false;
+      if (d.disposal_date !== null && d.disposal_date <= today) return false;
       const st = Array.isArray(d.document_subtype) ? d.document_subtype[0] : d.document_subtype;
       if (!st?.requires_acknowledgement) return false;
-      if (d.owner_scope === "member") return d.owner_id === memberId;
-      if (d.owner_scope === "organisation") {
-        if (!canViewOrgDocs) return false;
-        return isExpectedToAcknowledge(audienceFromRow(d), me);
-      }
+      // CLE-231 — HR-only Employment docs never ask their owner to ack.
+      if (d.owner_scope === "member") return d.owner_id === memberId && !subtypeHiddenFromMember(d.document_subtype);
+      // CLE-230 — org docs: only when the doc's audience expects this member.
+      if (d.owner_scope === "organisation") return isExpectedToAcknowledge(audienceFromRow(d), member);
       return false;
     });
     if (relevant.length === 0) return { success: true, rows: [] };
@@ -324,8 +354,8 @@ export async function _getDocumentAcknowledgementStatus(
       owner_id: string | null;
       subtype_id: string;
       document_subtype:
-        | { requires_acknowledgement?: boolean }
-        | { requires_acknowledgement?: boolean }[]
+        | { requires_acknowledgement?: boolean; visible_to_member?: boolean }
+        | { requires_acknowledgement?: boolean; visible_to_member?: boolean }[]
         | null;
     };
     const docQuery = await admin
@@ -333,12 +363,16 @@ export async function _getDocumentAcknowledgementStatus(
       .select(
         "id, organisation_id, owner_scope, owner_id, subtype_id, " +
         AUDIENCE_COLUMNS + ", " +
-        "document_subtype!subtype_id(requires_acknowledgement)",
+        "document_subtype!subtype_id(requires_acknowledgement, visible_to_member)",
       )
       .eq("id", documentId)
       .single();
     const doc = docQuery.data as unknown as DocRow | null;
     if (!doc || doc.organisation_id !== organisationId) {
+      return { success: false, error: "Document not found" };
+    }
+    // CLE-231 — HR-only Employment docs are invisible to their owner.
+    if (isHiddenFromCaller(doc, memberId)) {
       return { success: false, error: "Document not found" };
     }
     const subtype = doc.document_subtype;

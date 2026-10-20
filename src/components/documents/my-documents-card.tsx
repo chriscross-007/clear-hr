@@ -47,7 +47,7 @@ import {
 import { onMemberDocsChanged } from "@/lib/member-docs-events";
 
 const TYPE_LABEL: Record<string, string> = {
-  contract: "Contract",
+  contract: "Employment",
   certificate: "Certificate",
   evidence: "RTW Evidence",
   attachment: "Attachment",
@@ -105,7 +105,7 @@ export function MyDocumentsCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">My required documents</CardTitle>
+        <CardTitle className="text-base">My certifications</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {error && (
@@ -116,7 +116,7 @@ export function MyDocumentsCard({
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
         ) : rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No required documents.</p>
+          <p className="text-sm text-muted-foreground">No certifications required.</p>
         ) : (
           <div className="overflow-hidden rounded-md border">
             <table className="w-full text-sm">
