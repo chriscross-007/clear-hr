@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useMemberLabel } from "@/contexts/member-label-context";
+import { pluralize } from "@/lib/label-utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   AlertTriangle,
@@ -28,6 +30,10 @@ import {
   getOrgDocumentsAttention,
   type DocumentsAttentionRow,
 } from "@/app/(dashboard)/documents/compliance-actions";
+import {
+  getOrgOutstandingAcknowledgementSummary,
+  type OrgAckSummaryMember,
+} from "@/app/(dashboard)/documents/acknowledgement-actions";
 import {
   DocumentsTrafficLight,
   trafficLightTooltipText,
@@ -56,6 +62,8 @@ function SummaryCard({
   onToggle,
   href,
   borderColour,
+  footer,
+  forceInteractive = false,
   children,
 }: {
   icon: React.ReactNode;
@@ -70,10 +78,17 @@ function SummaryCard({
   /** When set, the card is a link instead of an expand-toggle (no chevron). */
   href?: string;
   borderColour?: string;
+  /** Extra row under the count (e.g. the Documents card's "N to
+   *  acknowledge" line). Rendered whenever loaded without error. */
+  footer?: React.ReactNode;
+  /** Treat the card as having content even when `count` is 0 (e.g.
+   *  Documents: traffic lights all clear but acks outstanding). */
+  forceInteractive?: boolean;
   children?: React.ReactNode;
 }) {
-  const interactive = count > 0 && (href !== undefined || onToggle !== undefined);
-  const cardClassName = `transition-colors ${interactive ? "cursor-pointer hover:bg-muted/50" : ""} ${count > 0 && borderColour ? borderColour : ""}`;
+  const hasContent = count > 0 || forceInteractive;
+  const interactive = hasContent && (href !== undefined || onToggle !== undefined);
+  const cardClassName = `transition-colors ${interactive ? "cursor-pointer hover:bg-muted/50" : ""} ${hasContent && borderColour ? borderColour : ""}`;
 
   const cardBody = (
     <>
@@ -82,7 +97,7 @@ function SummaryCard({
           {icon}
           <CardTitle className="text-sm font-medium">{title}</CardTitle>
         </div>
-        {count > 0 && href === undefined && onToggle !== undefined && (
+        {hasContent && href === undefined && onToggle !== undefined && (
           <div className="text-muted-foreground">
             {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </div>
@@ -100,6 +115,7 @@ function SummaryCard({
             {subtitle}
           </div>
         )}
+        {!loading && !error && footer}
       </CardContent>
     </>
   );
@@ -129,6 +145,7 @@ function SummaryCard({
 
 export function AdminDashboardClient() {
   const router = useRouter();
+  const { memberLabel } = useMemberLabel();
 
   // Sick bookings needing attention
   const [sickBookings, setSickBookings] = useState<IncompleteSickBooking[]>([]);
@@ -144,6 +161,10 @@ export function AdminDashboardClient() {
   const [docsLoading, setDocsLoading] = useState(true);
   const [docsError, setDocsError] = useState<string | null>(null);
   const [docsExpanded, setDocsExpanded] = useState(false);
+  // CLE-231 follow-up — outstanding acknowledgements across every
+  // member the caller can reach; 2nd row on the Documents card.
+  const [ackTotal, setAckTotal] = useState(0);
+  const [ackMembers, setAckMembers] = useState<OrgAckSummaryMember[]>([]);
 
   // Today's absences, holidays, birthdays
   const [absentToday, setAbsentToday] = useState<AbsentMember[]>([]);
@@ -239,6 +260,15 @@ export function AdminDashboardClient() {
       setDocsLoading(false);
     })();
 
+    // CLE-231 follow-up — "N awaiting acknowledgement" row. Soft-fail:
+    // an error just drops the row rather than blanking the card.
+    (async () => {
+      const res = await getOrgOutstandingAcknowledgementSummary();
+      if (cancelled || !res.success) return;
+      setAckTotal(res.totalOutstanding);
+      setAckMembers(res.members);
+    })();
+
     return () => { cancelled = true; };
   }, []);
 
@@ -249,7 +279,7 @@ export function AdminDashboardClient() {
   const docsAmberCount = docsAttention.filter((r) => r.light.colour === "amber").length;
   const docsBorderColour =
     docsRedCount > 0 ? "border-red-300"
-    : docsAmberCount > 0 ? "border-amber-300"
+    : docsAmberCount > 0 || ackTotal > 0 ? "border-amber-300"
     : "border-green-300";
 
   const sickOpenCount = sickBookings.filter((b) => b.completion_status === "open").length;
@@ -371,6 +401,19 @@ export function AdminDashboardClient() {
           expanded={docsExpanded}
           onToggle={() => setDocsExpanded((e) => !e)}
           borderColour={docsBorderColour}
+          forceInteractive={ackTotal > 0}
+          footer={
+            ackTotal > 0 ? (
+              <div className="mt-2 flex items-center justify-between rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+                <span>
+                  <span className="font-medium">{ackTotal}</span> awaiting acknowledgement
+                </span>
+                <span className="text-xs text-amber-800/80 dark:text-amber-200/70">
+                  {ackMembers.length} {ackMembers.length === 1 ? memberLabel : pluralize(memberLabel)}
+                </span>
+              </div>
+            ) : undefined
+          }
           subtitle={
             docsAttention.length > 0 ? (
               <span className="text-sm text-muted-foreground">
@@ -535,7 +578,7 @@ export function AdminDashboardClient() {
            Rows are pre-sorted server-side: red first (worst-first),
            then amber, tie-break by name. Click a row → Employment
            tab, anchored to the Required Documents card. */}
-      {docsExpanded && docsAttention.length > 0 && (
+      {docsExpanded && (docsAttention.length > 0 || ackMembers.length > 0) && (
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
@@ -546,7 +589,8 @@ export function AdminDashboardClient() {
               </CardTitle>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            {docsAttention.length > 0 && (
             <div className="space-y-2">
               {docsAttention.map((r) => (
                 <button
@@ -567,6 +611,28 @@ export function AdminDashboardClient() {
                 </button>
               ))}
             </div>
+            )}
+            {/* CLE-231 follow-up — members who still owe an
+                acknowledgement. Click → that member's Documents tab
+                holding their first outstanding ack. */}
+            {ackMembers.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase text-muted-foreground">Awaiting acknowledgement</p>
+                {ackMembers.map((m) => (
+                  <button
+                    key={m.memberId}
+                    type="button"
+                    onClick={() => router.push(`/members/${m.memberId}/docs?tab=${m.tab}`)}
+                    className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm hover:bg-muted/50 transition-colors text-left"
+                  >
+                    <p className="font-medium truncate">{m.name}</p>
+                    <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 shrink-0">
+                      {m.outstanding} Awaiting Ack
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

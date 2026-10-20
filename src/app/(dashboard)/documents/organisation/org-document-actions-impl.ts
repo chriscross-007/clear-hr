@@ -65,6 +65,7 @@ export async function _listOrgDocuments(
       teamId: caller.teamId,
       rightsProfileId: caller.rights.profileId,
       signedIn: true,
+    invited: true,
       canView: caller.rights.canViewOrganisationDocuments,
       canManage: caller.rights.canManageOrganisationDocuments,
     };

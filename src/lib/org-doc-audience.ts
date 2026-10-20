@@ -78,6 +78,10 @@ export function memberInAudience(a: OrgDocAudience, m: AudienceMember): boolean 
 /** A member row with the two org-doc flags from their rights profile. */
 export interface OrgDocMember extends AudienceMember {
   signedIn: boolean;
+  /** Invited (invite sent, accepted or not) or already signed in. A
+   *  member who has never been invited can't acknowledge anything, so
+   *  they're never counted as owing an acknowledgement. */
+  invited: boolean;
   canView: boolean;
   canManage: boolean;
 }
@@ -88,7 +92,29 @@ export function canSeeOrgDoc(a: OrgDocAudience, m: OrgDocMember): boolean {
 }
 
 export function isExpectedToAcknowledge(a: OrgDocAudience, m: OrgDocMember): boolean {
-  return m.canView && memberInAudience(a, m);
+  // Never-invited members can't acknowledge, so they're never expected to.
+  return m.invited && m.canView && memberInAudience(a, m);
+}
+
+/** True when the member has been invited (accepted or not) or is signed
+ *  in. Used for member-scope ack expectations, mirroring the `invited`
+ *  gate in `isExpectedToAcknowledge`. */
+export function isInvitedMember(row: { invited_at: string | null; user_id: string | null }): boolean {
+  return row.user_id !== null || row.invited_at !== null;
+}
+
+export async function loadMemberInvited(
+  admin: SupabaseClient,
+  organisationId: string,
+  memberId: string,
+): Promise<boolean> {
+  const { data } = await admin
+    .from("members")
+    .select("invited_at, user_id")
+    .eq("organisation_id", organisationId)
+    .eq("id", memberId)
+    .maybeSingle();
+  return data ? isInvitedMember(data as { invited_at: string | null; user_id: string | null }) : false;
 }
 
 type ProfileFlags = {
@@ -99,6 +125,7 @@ type MemberDbRow = {
   id: string;
   user_id: string | null;
   team_id: string | null;
+  invited_at: string | null;
   rights_profile_id: string | null;
   rights_profiles: ProfileFlags | ProfileFlags[] | null;
 };
@@ -110,13 +137,14 @@ function toOrgDocMember(r: MemberDbRow): OrgDocMember {
     teamId: r.team_id,
     rightsProfileId: r.rights_profile_id,
     signedIn: r.user_id !== null,
+    invited: r.user_id !== null || r.invited_at !== null,
     canView: rp?.can_view_organisation_documents === true,
     canManage: rp?.can_manage_organisation_documents === true,
   };
 }
 
 const MEMBER_SELECT =
-  "id, user_id, team_id, rights_profile_id, rights_profiles(can_view_organisation_documents, can_manage_organisation_documents)";
+  "id, user_id, team_id, invited_at, rights_profile_id, rights_profiles(can_view_organisation_documents, can_manage_organisation_documents)";
 
 /** Every member in the org with the fields audience evaluation needs.
  *  Pass the service-role client — this is a cross-user read. */
@@ -146,8 +174,9 @@ export async function loadOrgDocMember(
   return data ? toOrgDocMember(data as unknown as MemberDbRow) : null;
 }
 
-/** Signed-in members expected to acknowledge a doc with this audience.
- *  Matches the coverage denominator used across the Compliance pages. */
+/** Members expected to acknowledge a doc with this audience — invited
+ *  (accepted or not) or signed in. Matches the coverage denominator used
+ *  across the Compliance pages and the outstanding-ack counts. */
 export function expectedAcknowledgerIds(a: OrgDocAudience, members: OrgDocMember[]): string[] {
-  return members.filter((m) => m.signedIn && isExpectedToAcknowledge(a, m)).map((m) => m.id);
+  return members.filter((m) => isExpectedToAcknowledge(a, m)).map((m) => m.id);
 }

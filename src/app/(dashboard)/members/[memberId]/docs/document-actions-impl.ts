@@ -21,7 +21,7 @@ import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
 import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
 import { isRtwSubtype } from "@/lib/documents-rtw";
-import { audienceFromRow, canSeeOrgDoc, type AudienceDbRow } from "@/lib/org-doc-audience";
+import { audienceFromRow, canSeeOrgDoc, loadMemberInvited, type AudienceDbRow } from "@/lib/org-doc-audience";
 import { isHiddenFromCaller, subtypeHiddenFromMember } from "@/lib/documents-member-visibility";
 
 /** CLE-230 — can the caller see this org doc under its audience? */
@@ -31,6 +31,7 @@ function callerCanSeeOrgDoc(caller: DocumentsCaller, doc: unknown): boolean {
     teamId: caller.teamId,
     rightsProfileId: caller.rights.profileId,
     signedIn: true,
+    invited: true,
     canView: caller.rights.canViewOrganisationDocuments,
     canManage: caller.rights.canManageOrganisationDocuments,
   });
@@ -580,6 +581,7 @@ export async function _getMemberRequiredDocumentRows(
         employeeCanUpload: s.employee_can_upload,
         requiresAcknowledgement: s.requires_acknowledgement === true,
         isAcknowledged: newest ? ackedDocIds.has(newest.id) : false,
+        awaitingAckByOwner: false, // set below once owner invite status is known
         documentId: newest?.id ?? null,
         fileName: newest?.file_name ?? null,
         fileSize: newest?.file_size ?? null,
@@ -619,6 +621,7 @@ export async function _getMemberRequiredDocumentRows(
           employeeCanUpload: s.employee_can_upload,
           requiresAcknowledgement: s.requires_acknowledgement === true,
           isAcknowledged: ackedDocIds.has(newest.id),
+          awaitingAckByOwner: false, // set below
           documentId: newest.id,
           fileName: newest.file_name,
           fileSize: newest.file_size,
@@ -642,6 +645,7 @@ export async function _getMemberRequiredDocumentRows(
           employeeCanUpload: false,
           requiresAcknowledgement: false,
           isAcknowledged: false,
+          awaitingAckByOwner: false,
           rtwDocs: emptyRtwDocs,
           documentId: null,
           fileName: null,
@@ -686,6 +690,12 @@ export async function _getMemberRequiredDocumentRows(
       }
     }
 
+    // Never-invited members can't acknowledge, so nothing is "awaited".
+    const ownerInvited = await loadMemberInvited(admin, organisationId, memberId);
+    for (const r of rows) {
+      r.awaitingAckByOwner =
+        ownerInvited && r.requiresAcknowledgement && r.documentId !== null && !r.isAcknowledged;
+    }
     return { success: true, rows };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };

@@ -343,7 +343,7 @@ export function RequiredDocumentsCard({
                                   "Requires acknowledgement" on). Same pill as
                                   the Employment / Other / Org tabs; based on
                                   the member's acks, not the viewer's. */}
-                              {r.requiresAcknowledgement && r.documentId !== null && !r.isAcknowledged && (
+                              {r.awaitingAckByOwner && (
                                 <span className="ml-2 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
                                   Awaiting Ack
                                 </span>

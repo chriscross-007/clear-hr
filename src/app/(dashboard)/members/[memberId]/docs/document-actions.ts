@@ -21,6 +21,7 @@ import {
 } from "./document-types";
 import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
 import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
+import { loadMemberInvited } from "@/lib/org-doc-audience";
 import {
   isDocumentHiddenFromCaller,
   subtypeHiddenFromMember,
@@ -212,7 +213,9 @@ export async function listMemberDocuments(
       })
       .map((r) => r.id);
     const ownerAcked = new Set<string>();
-    if (ackRequiredIds.length > 0) {
+    // Never-invited members can't acknowledge, so nothing is "awaited".
+    const ownerInvited = await loadMemberInvited(admin, caller.organisationId, memberId);
+    if (ownerInvited && ackRequiredIds.length > 0) {
       const { data: acks } = await admin
         .from("document_acknowledgement")
         .select("document_id")
@@ -257,7 +260,8 @@ export async function listMemberDocuments(
           visibleToMember: !subtypeHiddenFromMember(row.document_subtype),
           // An HR-only doc is never put to its owner, so never "awaited".
           awaitingAckByOwner:
-            stObj?.requires_acknowledgement === true
+            ownerInvited
+            && stObj?.requires_acknowledgement === true
             && !subtypeHiddenFromMember(row.document_subtype)
             && !ownerAcked.has(row.id),
         };
@@ -1734,6 +1738,11 @@ export interface RequiredDocumentRow {
    *  not-uploaded row can't have been acked, and this flag stays
    *  false in that case. */
   isAcknowledged: boolean;
+  /** True when the member (the owner, not the caller) still owes an
+   *  acknowledgement on this row's document: subtype requires it, a doc
+   *  exists, no current ack, and the member has been invited (accepted
+   *  or not). Drives the admin "Awaiting Ack" pill. */
+  awaitingAckByOwner: boolean;
   /** True on the RTW row nominated as "primary" — the one currently
    *  providing evidence (or nearest to providing it). Priority:
    *  verified & non-expired > non-expired > expired; ties broken by

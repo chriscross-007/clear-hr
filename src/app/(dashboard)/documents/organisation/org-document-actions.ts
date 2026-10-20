@@ -299,7 +299,7 @@ export async function getOrgDocumentSignedUrl(
     // CLE-230 — outside the doc's audience → not found (never leak existence).
     if (!canSeeOrgDoc(audienceFromRow(doc), {
       id: c.memberId, teamId: c.teamId, rightsProfileId: c.rightsProfileId,
-      signedIn: true, canView: c.canView, canManage: c.canEdit,
+      signedIn: true, invited: true, canView: c.canView, canManage: c.canEdit,
     })) {
       return { success: false, error: "Document not found" };
     }

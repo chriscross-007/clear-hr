@@ -39,6 +39,7 @@ function callerAsOrgDocMember(caller: DocumentsCaller): OrgDocMember {
     teamId: caller.teamId,
     rightsProfileId: caller.rights.profileId,
     signedIn: true,
+    invited: true,
     canView: caller.rights.canViewOrganisationDocuments,
     canManage: caller.rights.canManageOrganisationDocuments,
   };
@@ -246,9 +247,7 @@ export async function _getMyOutstandingAcknowledgements(
  * member's own dashboard (`_getMyOutstandingAcknowledgements`) and the
  * admin view of a member's dashboard (`getOutstandingAcknowledgementsForMember`).
  * Callers are responsible for the access check; pass the service-role
- * client. Member-scope docs owned by the member + org docs whose
- * audience expects them to acknowledge; soft-deleted / disposed docs
- * excluded.
+ * client. Thin wrapper over `_getOutstandingAcknowledgementsForMany`.
  */
 export async function _getOutstandingAcknowledgementsFor(
   admin: DocumentsCaller["admin"],
@@ -258,8 +257,33 @@ export async function _getOutstandingAcknowledgementsFor(
   | { success: true; rows: OutstandingAcknowledgement[] }
   | { success: false; error: string }
 > {
+  const res = await _getOutstandingAcknowledgementsForMany(admin, organisationId, [member]);
+  if (!res.success) return res;
+  return { success: true, rows: res.byMember.get(member.id) ?? [] };
+}
+
+/**
+ * Outstanding acknowledgements for a SET of members in one pass (one
+ * docs query, one disposal-queue query, one acks query). The single
+ * source of the "who owes an ack" rule — also drives the org-wide
+ * count on the admin dashboard (`getOrgOutstandingAcknowledgementSummary`).
+ *
+ * Per member: member-scope docs they own (HR-only Employment docs
+ * excluded — CLE-231) + org docs whose audience expects them (CLE-230);
+ * subtype requires acknowledgement; not queued for disposal / disposed;
+ * no current (non-superseded) ack row. Callers do the access check.
+ */
+export async function _getOutstandingAcknowledgementsForMany(
+  admin: DocumentsCaller["admin"],
+  organisationId: string,
+  members: OrgDocMember[],
+): Promise<
+  | { success: true; byMember: Map<string, OutstandingAcknowledgement[]> }
+  | { success: false; error: string }
+> {
   try {
-    const memberId = member.id;
+    const byMember = new Map<string, OutstandingAcknowledgement[]>();
+    if (members.length === 0) return { success: true, byMember };
 
     type DocJoin = AudienceDbRow & {
       id: string;
@@ -280,6 +304,7 @@ export async function _getOutstandingAcknowledgementsFor(
       )
       .eq("organisation_id", organisationId)
       .order("uploaded_at", { ascending: false });
+    if (docsQuery.error) return { success: false, error: docsQuery.error.message };
     const rows = (docsQuery.data ?? []) as unknown as DocJoin[];
 
     const { data: queuedRows } = await admin
@@ -289,44 +314,63 @@ export async function _getOutstandingAcknowledgementsFor(
     const queued = new Set<string>(((queuedRows ?? []) as { document_id: string }[]).map((r) => r.document_id));
     const today = new Date().toISOString().slice(0, 10);
 
-    const relevant = rows.filter((d) => {
+    const subtypeOf = (d: DocJoin) =>
+      Array.isArray(d.document_subtype) ? d.document_subtype[0] : d.document_subtype;
+
+    const ackable = rows.filter((d) => {
       if (queued.has(d.id)) return false;
       if (d.disposal_date !== null && d.disposal_date <= today) return false;
-      const st = Array.isArray(d.document_subtype) ? d.document_subtype[0] : d.document_subtype;
-      if (!st?.requires_acknowledgement) return false;
-      // CLE-231 — HR-only Employment docs never ask their owner to ack.
-      if (d.owner_scope === "member") return d.owner_id === memberId && !subtypeHiddenFromMember(d.document_subtype);
-      // CLE-230 — org docs: only when the doc's audience expects this member.
-      if (d.owner_scope === "organisation") return isExpectedToAcknowledge(audienceFromRow(d), member);
-      return false;
+      return subtypeOf(d)?.requires_acknowledgement === true;
     });
-    if (relevant.length === 0) return { success: true, rows: [] };
+    if (ackable.length === 0) return { success: true, byMember };
 
-    const docIds = relevant.map((d) => d.id);
-    const { data: acked } = await admin
+    // Which (member, doc) pairs are expected.
+    const expected = new Map<string, DocJoin[]>();
+    for (const m of members) {
+      const list = ackable.filter((d) => {
+        // CLE-231 — HR-only Employment docs never ask their owner to ack.
+        // Never-invited members can't acknowledge, so they owe nothing.
+        if (d.owner_scope === "member") return m.invited && d.owner_id === m.id && !subtypeHiddenFromMember(d.document_subtype);
+        // CLE-230 — org docs: only when the doc's audience expects this member.
+        if (d.owner_scope === "organisation") return isExpectedToAcknowledge(audienceFromRow(d), m);
+        return false;
+      });
+      if (list.length > 0) expected.set(m.id, list);
+    }
+    if (expected.size === 0) return { success: true, byMember };
+
+    const memberIds = Array.from(expected.keys());
+    const docIds = Array.from(new Set(Array.from(expected.values()).flat().map((d) => d.id)));
+    const { data: acked, error: aErr } = await admin
       .from("document_acknowledgement")
-      .select("document_id")
-      .eq("member_id", memberId)
+      .select("document_id, member_id")
+      .in("member_id", memberIds)
       .is("superseded_by_replace_at", null)
       .in("document_id", docIds);
-    const ackedSet = new Set(((acked ?? []) as { document_id: string }[]).map((r) => r.document_id));
+    if (aErr) return { success: false, error: aErr.message };
+    const ackedPairs = new Set(
+      ((acked ?? []) as { document_id: string; member_id: string }[]).map((r) => `${r.member_id}:${r.document_id}`),
+    );
 
-    const out: OutstandingAcknowledgement[] = relevant
-      .filter((d) => !ackedSet.has(d.id))
-      .map((d) => {
-        const st = Array.isArray(d.document_subtype) ? d.document_subtype[0] : d.document_subtype;
-        return {
-          documentId: d.id,
-          fileName: d.file_name,
-          subtypeId: d.subtype_id,
-          subtypeName: st?.name ?? "—",
-          subtypeType: st?.type ?? "attachment",
-          ownerScope: d.owner_scope,
-          createdAt: d.uploaded_at,
-        };
-      });
+    for (const [memberId, list] of expected) {
+      const out: OutstandingAcknowledgement[] = list
+        .filter((d) => !ackedPairs.has(`${memberId}:${d.id}`))
+        .map((d) => {
+          const st = subtypeOf(d);
+          return {
+            documentId: d.id,
+            fileName: d.file_name,
+            subtypeId: d.subtype_id,
+            subtypeName: st?.name ?? "—",
+            subtypeType: st?.type ?? "attachment",
+            ownerScope: d.owner_scope,
+            createdAt: d.uploaded_at,
+          };
+        });
+      if (out.length > 0) byMember.set(memberId, out);
+    }
 
-    return { success: true, rows: out };
+    return { success: true, byMember };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }

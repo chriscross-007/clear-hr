@@ -37,6 +37,7 @@ import {
   _getMyOutstandingAcknowledgements,
   _getDocumentAcknowledgementStatus,
   _getOutstandingAcknowledgementsFor,
+  _getOutstandingAcknowledgementsForMany,
 } from "./acknowledgement-actions-impl";
 import {
   AUDIENCE_COLUMNS,
@@ -267,6 +268,81 @@ export async function getOutstandingAcknowledgementsForMember(
       if (!view || !reach) return { success: false, error: "Member not found" };
     }
     return _getOutstandingAcknowledgementsFor(caller.admin, caller.organisationId, target);
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+/**
+ * CLE-231 follow-up — org-wide "awaiting acknowledgement" summary for
+ * the admin dashboard's Documents card. Counts outstanding acks across
+ * every member the caller can reach (same scope rule as the member
+ * Documents tab: Documents-tab view + cross_user_access team/all), using
+ * the same per-member rule as the member dashboard chip. Self-scope
+ * callers (or no Documents view) get their own record only.
+ */
+export interface OrgAckSummaryMember {
+  memberId: string;
+  name: string;
+  outstanding: number;
+  /** `/members/{id}/docs` tab holding their first outstanding ack —
+   *  same routing as the member dashboard chip. */
+  tab: "certifications" | "employment" | "other" | "org";
+}
+
+export async function getOrgOutstandingAcknowledgementSummary(): Promise<
+  | { success: true; totalOutstanding: number; members: OrgAckSummaryMember[] }
+  | { success: false; error: string }
+> {
+  try {
+    const caller = await buildDocumentsCallerFromCookies();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const { admin, organisationId } = caller;
+
+    const all = await loadOrgDocMembers(admin, organisationId);
+    const view = caller.rights.tabs.documents?.view === true;
+    const scope = caller.rights.crossUserAccess;
+    const inScope = all.filter((m) => {
+      if (m.id === caller.memberId) return true;
+      if (!view) return false;
+      if (scope === "all") return true;
+      if (scope === "team") return caller.teamId !== null && m.teamId === caller.teamId;
+      return false;
+    });
+
+    const res = await _getOutstandingAcknowledgementsForMany(admin, organisationId, inScope);
+    if (!res.success) return res;
+    if (res.byMember.size === 0) return { success: true, totalOutstanding: 0, members: [] };
+
+    const ids = Array.from(res.byMember.keys());
+    const { data: names } = await admin
+      .from("members")
+      .select("id, first_name, last_name")
+      .eq("organisation_id", organisationId)
+      .in("id", ids);
+    const nameOf = new Map(
+      ((names ?? []) as { id: string; first_name: string | null; last_name: string | null }[]).map((r) => [
+        r.id,
+        `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim() || "Unknown",
+      ]),
+    );
+
+    const members: OrgAckSummaryMember[] = ids
+      .map((id) => {
+        const rows = res.byMember.get(id)!;
+        const firstMember = rows.find((r) => r.ownerScope === "member");
+        const tab: OrgAckSummaryMember["tab"] = !firstMember
+          ? "org"
+          : firstMember.subtypeType === "contract"
+            ? "employment"
+            : firstMember.subtypeType === "attachment"
+              ? "other"
+              : "certifications";
+        return { memberId: id, name: nameOf.get(id) ?? "Unknown", outstanding: rows.length, tab };
+      })
+      .sort((a, b) => b.outstanding - a.outstanding || a.name.localeCompare(b.name));
+    const totalOutstanding = members.reduce((n, m) => n + m.outstanding, 0);
+    return { success: true, totalOutstanding, members };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }
