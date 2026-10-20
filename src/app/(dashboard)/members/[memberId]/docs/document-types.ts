@@ -35,6 +35,11 @@ export interface MemberDocumentRow {
    *  (`document_subtype.visible_to_member = false`). Owners never
    *  receive such rows; admin lists use it to mark them "HR only". */
   visibleToMember: boolean;
+  /** CLE-231 follow-up — true when the subtype requires acknowledgement,
+   *  the owner can see the doc, and the OWNER (not the caller) hasn't
+   *  acknowledged it yet. Drives the admin "Awaiting Ack" pill. Only
+   *  populated by `listMemberDocuments`; absent elsewhere. */
+  awaitingAckByOwner?: boolean;
 }
 
 export interface TrashedMemberDocumentRow extends MemberDocumentRow {

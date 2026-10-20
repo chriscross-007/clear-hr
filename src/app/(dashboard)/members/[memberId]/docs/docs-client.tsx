@@ -500,6 +500,13 @@ function DocList({
                   <p className="font-medium">
                     {TYPE_LABEL[r.type] ?? r.type}
                     {r.subtypeName ? <span className="text-muted-foreground"> / {r.subtypeName}</span> : null}
+                    {/* CLE-231 follow-up — same pill the Org tab uses:
+                        the member owes an acknowledgement on this doc. */}
+                    {r.awaitingAckByOwner && (
+                      <span className="ml-2 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                        Awaiting Ack
+                      </span>
+                    )}
                     {showHrOnly && !r.visibleToMember && (
                       <span
                         className="ml-2 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-700 dark:bg-slate-800 dark:text-slate-300"

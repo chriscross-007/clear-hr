@@ -168,7 +168,7 @@ export async function listMemberDocuments(
     const { data, error } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, document_subtype!subtype_id(name, requires_verification, visible_to_member), members!uploaded_by(first_name, last_name)",
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, document_subtype!subtype_id(name, requires_verification, visible_to_member, requires_acknowledgement), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", caller.organisationId)
       .eq("owner_scope", "member")
@@ -192,16 +192,37 @@ export async function listMemberDocuments(
       verified_by: string | null;
       next_review_on: string | null;
       capture_source: "upload" | "photo";
-      document_subtype: { name: string; requires_verification: boolean; visible_to_member?: boolean } | { name: string; requires_verification: boolean; visible_to_member?: boolean }[] | null;
+      document_subtype: { name: string; requires_verification: boolean; visible_to_member?: boolean; requires_acknowledgement?: boolean } | { name: string; requires_verification: boolean; visible_to_member?: boolean; requires_acknowledgement?: boolean }[] | null;
       members: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
     };
     const viewingOwnRecord = caller.isSelf(memberId);
-    const rows: MemberDocumentRow[] = (data ?? [])
+    const liveRows = (data ?? [])
       .map((r) => r as unknown as Row)
       .filter((r) => !queuedIds.has(r.id))
       .filter((r) => r.disposal_date === null || r.disposal_date > today)
       // CLE-231 — HR-only Employment docs never reach their owner.
-      .filter((r) => !(viewingOwnRecord && subtypeHiddenFromMember(r.document_subtype)))
+      .filter((r) => !(viewingOwnRecord && subtypeHiddenFromMember(r.document_subtype)));
+
+    // CLE-231 follow-up — the OWNER's acknowledgements (not the
+    // caller's) so the admin lists can show "Awaiting Ack".
+    const ackRequiredIds = liveRows
+      .filter((r) => {
+        const st = Array.isArray(r.document_subtype) ? (r.document_subtype[0] ?? null) : r.document_subtype;
+        return st?.requires_acknowledgement === true;
+      })
+      .map((r) => r.id);
+    const ownerAcked = new Set<string>();
+    if (ackRequiredIds.length > 0) {
+      const { data: acks } = await admin
+        .from("document_acknowledgement")
+        .select("document_id")
+        .eq("member_id", memberId)
+        .is("superseded_by_replace_at", null)
+        .in("document_id", ackRequiredIds);
+      for (const a of (acks ?? []) as { document_id: string }[]) ownerAcked.add(a.document_id);
+    }
+
+    const rows: MemberDocumentRow[] = liveRows
       .map((row) => {
         const st = row.document_subtype;
         const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
@@ -234,6 +255,11 @@ export async function listMemberDocuments(
           }),
           captureSource: row.capture_source ?? "upload",
           visibleToMember: !subtypeHiddenFromMember(row.document_subtype),
+          // An HR-only doc is never put to its owner, so never "awaited".
+          awaitingAckByOwner:
+            stObj?.requires_acknowledgement === true
+            && !subtypeHiddenFromMember(row.document_subtype)
+            && !ownerAcked.has(row.id),
         };
       });
     return { success: true, rows };
