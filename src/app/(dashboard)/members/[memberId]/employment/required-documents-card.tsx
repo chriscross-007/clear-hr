@@ -336,7 +336,19 @@ export function RequiredDocumentsCard({
                           }
                         >
                           <td className="px-3 py-2">
-                            <p className="font-medium">{subtypeLabel(r.subtypeType, r.subtypeName)}</p>
+                            <p className="font-medium">
+                              {subtypeLabel(r.subtypeType, r.subtypeName)}
+                              {/* CLE-231 follow-up — the member still owes an
+                                  acknowledgement on this doc (subtype has
+                                  "Requires acknowledgement" on). Same pill as
+                                  the Employment / Other / Org tabs; based on
+                                  the member's acks, not the viewer's. */}
+                              {r.requiresAcknowledgement && r.documentId !== null && !r.isAcknowledged && (
+                                <span className="ml-2 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                                  Awaiting Ack
+                                </span>
+                              )}
+                            </p>
                             {r.fileName && (
                               <p className="text-xs text-muted-foreground truncate">{r.fileName}</p>
                             )}
