@@ -23,6 +23,7 @@ import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-stat
 import { isRtwSubtype } from "@/lib/documents-rtw";
 import { audienceFromRow, canSeeOrgDoc, loadMemberInvited, type AudienceDbRow } from "@/lib/org-doc-audience";
 import { isHiddenFromCaller, subtypeHiddenFromMember } from "@/lib/documents-member-visibility";
+import { hasAnyAcknowledgement } from "@/lib/document-ack-lock";
 
 /** CLE-230 — can the caller see this org doc under its audience? */
 function callerCanSeeOrgDoc(caller: DocumentsCaller, doc: unknown): boolean {
@@ -238,6 +239,7 @@ export async function _getDocumentDetail(
         verifiedByName: verifierName,
         verificationNotes: (doc.verification_notes as string | null) ?? null,
         isSelf: isSelf(caller, target.id),
+        hasAcknowledgements: await hasAnyAcknowledgement(admin, doc.id as string),
       },
     };
   } catch (e) {

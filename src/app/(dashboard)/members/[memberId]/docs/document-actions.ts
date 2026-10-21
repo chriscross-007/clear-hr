@@ -22,6 +22,7 @@ import {
 import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
 import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
 import { loadMemberInvited } from "@/lib/org-doc-audience";
+import { ACK_LOCKED_REPLACE_ERROR, hasAnyAcknowledgement } from "@/lib/document-ack-lock";
 import {
   isDocumentHiddenFromCaller,
   subtypeHiddenFromMember,
@@ -287,6 +288,9 @@ export interface DocumentDetailContext {
   verifiedByName: string | null;
   verificationNotes: string | null;
   isSelf: boolean;
+  /** True when anyone has acknowledged this document — its file is
+   *  then locked against Replace. */
+  hasAcknowledgements: boolean;
 }
 
 export async function getDocumentDetail(
@@ -763,6 +767,11 @@ export async function replaceMemberDocument(
         error: "Verified documents can't be replaced — delete and add a new one instead.",
       };
     }
+    // Acknowledged documents are locked: replacing the file would change
+    // what people confirmed they read.
+    if (await hasAnyAcknowledgement(admin, oldDocumentId)) {
+      return { success: false, error: ACK_LOCKED_REPLACE_ERROR };
+    }
 
     // Validate the incoming file.
     const file = formData.get("file");
@@ -942,6 +951,9 @@ export async function finalizeDocumentReplace(
         success: false,
         error: "Verified documents can't be replaced — delete and add a new one instead.",
       };
+    }
+    if (await hasAnyAcknowledgement(admin, oldDocumentId)) {
+      return { success: false, error: ACK_LOCKED_REPLACE_ERROR };
     }
 
     const memberId = oldRow.owner_id as string;

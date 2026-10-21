@@ -634,7 +634,7 @@ export function DocumentDetailsDialog({
                         makes the intent explicit. */}
                     {effectiveCanUpdate && !employeeStripped && (
                       <div className="border-b p-4">
-                        {detail.row.verifiedOn === null ? (
+                        {detail.row.verifiedOn === null && !detail.hasAcknowledgements ? (
                           <ReplaceSection
                             documentId={currentDocumentId}
                             targetMemberId={detail.targetMemberId}
@@ -649,7 +649,9 @@ export function DocumentDetailsDialog({
                               <RefreshCw className="h-4 w-4" /> Replace file
                             </p>
                             <p className="text-sm text-muted-foreground">
-                              This document has been verified and cannot be reloaded. If the wrong document is showing, please Delete and Reload.
+                              {detail.hasAcknowledgements
+                                ? "This document has been acknowledged, so its file can't be replaced. Add the new file as a new document instead."
+                                : "This document has been verified and cannot be reloaded. If the wrong document is showing, please Delete and Reload."}
                             </p>
                           </div>
                         )}
