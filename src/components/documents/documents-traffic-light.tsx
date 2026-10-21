@@ -31,6 +31,12 @@ const ICON_CLASS: Record<Exclude<TrafficLight["colour"], null>, string> = {
   green: "text-green-500",
 };
 
+const STATUS_SYMBOL: Record<Exclude<TrafficLight["colour"], null>, string> = {
+  red: "✕",
+  amber: "!",
+  green: "✓",
+};
+
 const COLOUR_LABEL: Record<Exclude<TrafficLight["colour"], null>, string> = {
   red: "Attention required",
   amber: "Attention soon",
@@ -53,8 +59,18 @@ export function DocumentsTrafficLight({
   const dim = size === "lg" ? "h-6 w-6" : size === "md" ? "h-5 w-5" : "h-4 w-4";
   const tooltipTitle = `${COLOUR_LABEL[light.colour]} — ${trafficLightTooltipText(light)}`;
 
+  // CLE-232 — in the Accessible themes a symbol rides on the icon so
+  // the state doesn't depend on colour alone (✕ red, ! amber, ✓ green).
   const inner = (
-    <FileText className={`${dim} ${iconClass} shrink-0`} aria-label={tooltipTitle} />
+    <span className="relative inline-flex shrink-0">
+      <FileText className={`${dim} ${iconClass} shrink-0`} aria-label={tooltipTitle} />
+      <span
+        aria-hidden
+        className="absolute -bottom-1 -right-1.5 hidden h-3.5 min-w-3.5 items-center justify-center rounded-sm bg-background px-0.5 text-[10px] font-bold leading-none text-foreground ring-1 ring-current a11y:inline-flex"
+      >
+        {STATUS_SYMBOL[light.colour]}
+      </span>
+    </span>
   );
 
   const el = onClick ? (

@@ -30,7 +30,9 @@ export default function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{var t=localStorage.getItem('clearhr-theme');if(t==='vibrant'){document.documentElement.classList.remove('dark');document.documentElement.classList.add('vibrant');}}catch(e){}`,
+            // Apply the stored theme before first paint (avoids a flash of
+            // Dark). Mirrors normaliseTheme() in contexts/theme-context.tsx.
+            __html: `try{var t=localStorage.getItem('clearhr-theme');if(t==='bq')t='accessible';if(t==='vibrant'||t==='accessible'||t==='accessible-dark'){var c=document.documentElement.classList;c.remove('dark');c.add(t);}}catch(e){}`,
           }}
         />
       </head>

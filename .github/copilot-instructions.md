@@ -45,6 +45,9 @@ The canonical project guide is [`../CLAUDE.md`](../CLAUDE.md) at the repo root. 
 - Bucket: `member-documents` (with hyphen). Private — never embed direct URLs. Mint signed URLs server-side via the action layer (see `getDocumentDownloadUrl` in `conversation-actions.ts`). Inline view: 120s. Download: 120s with `{ download: fileName }`.
 - 10 MB cap and the allowed MIME list live in `src/lib/document-limits.ts` (`MAX_DOCUMENT_SIZE`, `ALLOWED_DOCUMENT_CONTENT_TYPES`) — import from there, never redeclare.
 
+## Themes
+- Tailwind `dark:` covers both `dark` and `accessible-dark`; `a11y:` covers both Accessible themes. Don't signal state by colour alone — add text or an `a11y:` symbol.
+
 ## Member documents
 - Never show a PDF in an `<iframe>` — use `<PdfViewer>` from `@/components/documents/pdf-viewer` (viewing controls only).
 - Never replace the file of a document that has any acknowledgement — check `hasAnyAcknowledgement` (`@/lib/document-ack-lock`); a changed file must be a new document.

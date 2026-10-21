@@ -2,7 +2,10 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/* `dark:` styles apply in both dark themes. */
+@custom-variant dark (&:is(.dark *, .accessible-dark *));
+/* `a11y:` styles apply only in the two Accessible themes (CLE-232). */
+@custom-variant a11y (&:is(.accessible *, .accessible-dark *));
 
 @theme inline {
   --color-background: var(--background);
@@ -151,40 +154,79 @@
   --sidebar-ring: oklch(0.50 0.22 260);
 }
 
-/* B&Q theme — white background, bold orange primary, dark charcoal sidebar */
-.bq {
-  --radius: 0.375rem;
+/* Accessible (light) — CLE-232. White background, near-black text,
+   deep blue accents. Body text ~19:1, muted text >= 7:1 (WCAG AAA);
+   borders and inputs >= 3:1 against the background. */
+.accessible {
+  --radius: 0.5rem;
   --background: oklch(1 0 0);
-  --foreground: oklch(0.16 0.01 55);
+  --foreground: oklch(0.13 0 0);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.16 0.01 55);
+  --card-foreground: oklch(0.13 0 0);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.16 0.01 55);
-  --primary: oklch(0.66 0.20 48);
+  --popover-foreground: oklch(0.13 0 0);
+  --primary: oklch(0.40 0.20 262);
   --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.95 0.02 55);
-  --secondary-foreground: oklch(0.20 0.02 55);
-  --muted: oklch(0.95 0.01 55);
-  --muted-foreground: oklch(0.50 0.02 55);
-  --accent: oklch(0.92 0.04 50);
-  --accent-foreground: oklch(0.20 0.02 55);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.88 0.01 55);
-  --input: oklch(0.90 0.01 55);
-  --ring: oklch(0.66 0.20 48);
-  --chart-1: oklch(0.66 0.20 48);
-  --chart-2: oklch(0.58 0.18 200);
-  --chart-3: oklch(0.52 0.15 140);
-  --chart-4: oklch(0.62 0.22 30);
-  --chart-5: oklch(0.70 0.15 80);
-  --sidebar: oklch(0.18 0.02 55);
-  --sidebar-foreground: oklch(0.92 0 0);
-  --sidebar-primary: oklch(0.66 0.20 48);
+  --secondary: oklch(0.94 0 0);
+  --secondary-foreground: oklch(0.13 0 0);
+  --muted: oklch(0.95 0 0);
+  --muted-foreground: oklch(0.38 0 0);
+  --accent: oklch(0.92 0.03 262);
+  --accent-foreground: oklch(0.13 0 0);
+  --destructive: oklch(0.45 0.19 27);
+  --border: oklch(0.50 0 0);
+  --input: oklch(0.45 0 0);
+  --ring: oklch(0.40 0.20 262);
+  --chart-1: oklch(0.40 0.20 262);
+  --chart-2: oklch(0.45 0.15 160);
+  --chart-3: oklch(0.55 0.17 60);
+  --chart-4: oklch(0.42 0.20 320);
+  --chart-5: oklch(0.45 0.19 27);
+  --sidebar: oklch(1 0 0);
+  --sidebar-foreground: oklch(0.13 0 0);
+  --sidebar-primary: oklch(0.40 0.20 262);
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.25 0.02 55);
-  --sidebar-accent-foreground: oklch(0.92 0 0);
-  --sidebar-border: oklch(0.28 0.02 55);
-  --sidebar-ring: oklch(0.66 0.20 48);
+  --sidebar-accent: oklch(0.92 0.03 262);
+  --sidebar-accent-foreground: oklch(0.13 0 0);
+  --sidebar-border: oklch(0.50 0 0);
+  --sidebar-ring: oklch(0.40 0.20 262);
+}
+
+/* Accessible (dark) — CLE-232. Black background, white text, yellow
+   accents and a cyan focus ring. Body text ~21:1, muted text >= 7:1. */
+.accessible-dark {
+  --radius: 0.5rem;
+  --background: oklch(0 0 0);
+  --foreground: oklch(1 0 0);
+  --card: oklch(0.17 0 0);
+  --card-foreground: oklch(1 0 0);
+  --popover: oklch(0.17 0 0);
+  --popover-foreground: oklch(1 0 0);
+  --primary: oklch(0.90 0.17 100);
+  --primary-foreground: oklch(0 0 0);
+  --secondary: oklch(0.25 0 0);
+  --secondary-foreground: oklch(1 0 0);
+  --muted: oklch(0.22 0 0);
+  --muted-foreground: oklch(0.86 0 0);
+  --accent: oklch(0.30 0 0);
+  --accent-foreground: oklch(1 0 0);
+  --destructive: oklch(0.75 0.17 25);
+  --border: oklch(0.72 0 0);
+  --input: oklch(0.78 0 0);
+  --ring: oklch(0.85 0.15 200);
+  --chart-1: oklch(0.90 0.17 100);
+  --chart-2: oklch(0.85 0.15 200);
+  --chart-3: oklch(0.80 0.17 145);
+  --chart-4: oklch(0.80 0.15 320);
+  --chart-5: oklch(0.78 0.17 40);
+  --sidebar: oklch(0 0 0);
+  --sidebar-foreground: oklch(1 0 0);
+  --sidebar-primary: oklch(0.90 0.17 100);
+  --sidebar-primary-foreground: oklch(0 0 0);
+  --sidebar-accent: oklch(0.25 0 0);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-border: oklch(0.72 0 0);
+  --sidebar-ring: oklch(0.85 0.15 200);
 }
 
 @layer base {
@@ -194,4 +236,28 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+/* Accessible themes — beyond colour (CLE-232). Unlayered on purpose so
+   these win over component utilities (e.g. outline-none). */
+html:is(.accessible, .accessible-dark) {
+  /* ~10% larger text everywhere; text-xs raised so nothing renders
+     below 14px. */
+  font-size: 110%;
+  --text-xs: 0.8rem;
+  --text-xs--line-height: calc(1.15 / 0.8);
+}
+:is(.accessible, .accessible-dark) :focus-visible {
+  outline: 3px solid var(--ring) !important;
+  outline-offset: 2px !important;
+}
+/* Text links in page content are always underlined (not colour alone).
+   Card / button / row links (block, flex, rounded, bordered) are left
+   alone — only plain or text-styled links match. */
+:is(.accessible, .accessible-dark) main a:is(:not([class]), [class*="underline"], [class*="text-primary"], [class*="text-blue"]):not([class*="rounded"]):not([class*="border"]):not([class*="flex"]):not([class*="block"]) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* Status pills get an outline so they read without relying on fill. */
+:is(.accessible, .accessible-dark) span.rounded-full.text-xs {
+  box-shadow: inset 0 0 0 1px currentColor;
 }
