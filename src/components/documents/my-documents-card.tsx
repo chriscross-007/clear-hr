@@ -28,6 +28,7 @@
 // rows on every fire; the dialog's own `notifySaved()` dispatches that
 // event on upload so the card refreshes without a page reload.
 
+import { docTabCard, type DocTabKey } from "@/components/documents/doc-tab-theme";
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, Plus } from "lucide-react";
 import {
@@ -69,9 +70,12 @@ function fmtDate(iso: string | null): string {
 }
 
 export function MyDocumentsCard({
+  tone,
   memberId,
   memberName,
 }: {
+  /** Colour-keys the card header to its Documents tab (doc-tab-theme). */
+  tone?: DocTabKey;
   /** The caller's own member id — resolved by the parent server
    *  component. The card only ever runs against the caller, so no
    *  admin affordances are exposed. */
@@ -79,6 +83,7 @@ export function MyDocumentsCard({
   /** Used as the target-member name on the New Document dialog. */
   memberName: string;
 }) {
+  const toneCls = docTabCard(tone);
   const [rows, setRows] = useState<RequiredDocumentRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [detailsDocId, setDetailsDocId] = useState<string | null>(null);
@@ -103,8 +108,8 @@ export function MyDocumentsCard({
   }, [memberId, load]);
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className={toneCls.card}>
+      <CardHeader className={toneCls.header}>
         <CardTitle className="text-base">My certifications</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">

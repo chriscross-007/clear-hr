@@ -17,6 +17,7 @@
 // light and the required-docs card use, so an upload / replace / ack
 // anywhere on the page reloads this list without a router hop.
 
+import { docTabCard, type DocTabKey } from "@/components/documents/doc-tab-theme";
 import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import {
@@ -60,9 +61,12 @@ function fmtDate(iso: string | null): string {
 
 
 export function MyOtherDocumentsCard({
+  tone,
   memberId,
   bucket = "other",
 }: {
+  /** Colour-keys the card header to its Documents tab (doc-tab-theme). */
+  tone?: DocTabKey;
   /** CLE-231 — `employment` lists documents the org has issued to the
    *  caller; `other` lists everything not on Certifications/Employment. */
   bucket?: "other" | "employment";
@@ -71,6 +75,7 @@ export function MyOtherDocumentsCard({
    *  the server action itself resolves the caller. */
   memberId: string;
 }) {
+  const toneCls = docTabCard(tone);
   const [rows, setRows] = useState<OtherMemberDocumentRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [detailsDocId, setDetailsDocId] = useState<string | null>(null);
@@ -91,8 +96,8 @@ export function MyOtherDocumentsCard({
   }, [memberId, load]);
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className={toneCls.card}>
+      <CardHeader className={toneCls.header}>
         <CardTitle className="text-base">
           {bucket === "employment" ? "My employment documents" : "My other documents"}
         </CardTitle>

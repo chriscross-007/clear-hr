@@ -21,7 +21,13 @@
 
 import { useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList } from "@/components/ui/tabs";
+import {
+  DOC_TAB_LIST_CLASS,
+  DocTabTrigger,
+  docTabTooltip,
+} from "@/components/documents/doc-tab-theme";
+import { useMemberLabel } from "@/contexts/member-label-context";
 import { StickyPageHeader } from "@/components/ui/sticky-page-header";
 import { MyDocumentsCard } from "@/components/documents/my-documents-card";
 import { MyOtherDocumentsCard } from "@/components/documents/my-other-documents-card";
@@ -48,6 +54,8 @@ export function MyDocumentsClient({
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { memberLabel } = useMemberLabel();
+  const tipOpts = { self: true, memberLabel };
   const activeTab: TabKey = initialTab === "org" && !canViewOrgDocs ? "certifications" : initialTab;
 
   const onTabChange = useCallback(
@@ -68,36 +76,38 @@ export function MyDocumentsClient({
         <div className="flex items-center justify-between gap-4 mb-3">
           <h1 className="text-2xl font-bold">Documents</h1>
         </div>
-        <TabsList>
-          <TabsTrigger value="certifications">Certifications</TabsTrigger>
-          <TabsTrigger value="employment">Employment</TabsTrigger>
-          <TabsTrigger value="other">Other</TabsTrigger>
-          {canViewOrgDocs && <TabsTrigger value="org">Org</TabsTrigger>}
+        {/* Colour-keyed tab buttons (doc-tab-theme): the active tab's
+            card header uses the same pastel. */}
+        <TabsList className={DOC_TAB_LIST_CLASS}>
+          <DocTabTrigger tab="certifications" tooltip={docTabTooltip("certifications", tipOpts)} />
+          <DocTabTrigger tab="employment" tooltip={docTabTooltip("employment", tipOpts)} />
+          <DocTabTrigger tab="other" tooltip={docTabTooltip("other", tipOpts)} />
+          {canViewOrgDocs && <DocTabTrigger tab="org" tooltip={docTabTooltip("org", tipOpts)} />}
         </TabsList>
       </StickyPageHeader>
 
       <TabsContent value="certifications" className="mt-4">
         <div className="mx-auto max-w-4xl space-y-6">
-          <MyDocumentsCard memberId={memberId} memberName={memberName} />
+          <MyDocumentsCard memberId={memberId} memberName={memberName} tone="certifications" />
         </div>
       </TabsContent>
 
       <TabsContent value="employment" className="mt-4">
         <div className="mx-auto max-w-4xl space-y-6">
-          <MyOtherDocumentsCard memberId={memberId} bucket="employment" />
+          <MyOtherDocumentsCard memberId={memberId} bucket="employment" tone="employment" />
         </div>
       </TabsContent>
 
       <TabsContent value="other" className="mt-4">
         <div className="mx-auto max-w-4xl space-y-6">
-          <MyOtherDocumentsCard memberId={memberId} bucket="other" />
+          <MyOtherDocumentsCard memberId={memberId} bucket="other" tone="other" />
         </div>
       </TabsContent>
 
       {canViewOrgDocs && (
         <TabsContent value="org" className="mt-4">
           <div className="mx-auto max-w-4xl space-y-6">
-            <MyOrgDocumentsList memberId={memberId} initialRows={initialOrgRows} />
+            <MyOrgDocumentsList memberId={memberId} initialRows={initialOrgRows} tone="org" />
           </div>
         </TabsContent>
       )}

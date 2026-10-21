@@ -36,7 +36,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { StickyPageHeader } from "@/components/ui/sticky-page-header";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList } from "@/components/ui/tabs";
+import {
+  DOC_TAB_LIST_CLASS,
+  DocTabTrigger,
+  docTabCard,
+  docTabTooltip,
+  type DocTabKey,
+} from "@/components/documents/doc-tab-theme";
 // CLE-224 — Admin variant of the org-docs list, per-target ack state.
 import { MemberOrgDocumentsList } from "@/components/documents/member-org-documents-list";
 import { useMemberLabel } from "@/contexts/member-label-context";
@@ -145,6 +152,7 @@ export function DocsClient({
   // the default lands on Certifications so the #required-documents
   // traffic-light deep link still resolves inside that card.
   const searchParams = useSearchParams();
+  const tipOpts = { self: false, memberLabel };
   const initialTab = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState<DocsTab>(
     isDocsTab(initialTab) && (initialTab !== "trash" || canManageDeleted) ? initialTab : "certifications",
@@ -245,13 +253,17 @@ export function DocsClient({
           <div className="flex items-center justify-between gap-3 mb-3">
             <h1 className="text-2xl font-bold">Documents</h1>
           </div>
-          <TabsList>
-            <TabsTrigger value="certifications">Certifications</TabsTrigger>
-            <TabsTrigger value="employment">Employment</TabsTrigger>
-            <TabsTrigger value="other">Other</TabsTrigger>
-            <TabsTrigger value="org">Org</TabsTrigger>
+          {/* Colour-keyed tab buttons (doc-tab-theme): the active
+              tab's card header uses the same pastel. */}
+          <TabsList className={DOC_TAB_LIST_CLASS}>
+            <DocTabTrigger tab="certifications" tooltip={docTabTooltip("certifications", tipOpts)} />
+            <DocTabTrigger tab="employment" tooltip={docTabTooltip("employment", tipOpts)} />
+            <DocTabTrigger tab="other" tooltip={docTabTooltip("other", tipOpts)} />
+            <DocTabTrigger tab="org" tooltip={docTabTooltip("org", tipOpts)} />
             {canManageDeleted && (
-              <TabsTrigger value="trash">Trash ({trashRows.length})</TabsTrigger>
+              <DocTabTrigger tab="trash" tooltip={docTabTooltip("trash", tipOpts)}>
+                Trash ({trashRows.length})
+              </DocTabTrigger>
             )}
           </TabsList>
         </StickyPageHeader>
@@ -266,6 +278,7 @@ export function DocsClient({
             memberId={memberId}
             memberName={memberName}
             canEdit={canUpdate}
+            tone="certifications"
           />
         </TabsContent>
 
@@ -273,6 +286,7 @@ export function DocsClient({
             member (contract, reviews, disciplinary). */}
         <TabsContent value="employment" className="mt-4">
           <DocListCard
+            tone="employment"
             title="Employment documents"
             description={`Documents the organisation has issued to this ${memberLabel}. Kinds marked HR only are hidden from the ${memberLabel}.`}
             loading={loading}
@@ -293,6 +307,7 @@ export function DocsClient({
             superseded RTW evidence, etc. */}
         <TabsContent value="other" className="mt-4">
           <DocListCard
+            tone="other"
             title="Other documents"
             description="Everything not held under Certifications or Employment."
             loading={loading}
@@ -311,12 +326,13 @@ export function DocsClient({
         {/* CLE-224 — Org Documents tab. Component owns its own Card
             wrapper (same convention as <MyOrgDocumentsList>). */}
         <TabsContent value="org" className="mt-4">
-          <MemberOrgDocumentsList memberId={memberId} memberName={memberName} />
+          <MemberOrgDocumentsList memberId={memberId} memberName={memberName} tone="org" />
         </TabsContent>
 
         {canManageDeleted && (
           <TabsContent value="trash" className="mt-4">
             <DocListCard
+              tone="trash"
               title="Trash"
               description="Deleted documents are kept for 30 days, then permanently removed."
               loading={loading}
@@ -412,6 +428,7 @@ export function DocsClient({
 // ---------------------------------------------------------------------------
 
 function DocListCard({
+  tone,
   title,
   description,
   loading,
@@ -419,6 +436,7 @@ function DocListCard({
   onAdd,
   children,
 }: {
+  tone: DocTabKey;
   title: string;
   description: string;
   loading: boolean;
@@ -426,9 +444,10 @@ function DocListCard({
   onAdd?: () => void;
   children: React.ReactNode;
 }) {
+  const toneCls = docTabCard(tone);
   return (
-    <Card>
-      <CardHeader>
+    <Card className={toneCls.card}>
+      <CardHeader className={toneCls.header}>
         <div className="flex items-center justify-between gap-3">
           <div>
             <CardTitle className="text-base">{title}</CardTitle>

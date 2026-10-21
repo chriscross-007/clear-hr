@@ -109,7 +109,7 @@ export default async function EmployeeDashboardPage({
     certifications: "Certifications",
     employment: "Employment",
     other: "Other",
-    org: "Org",
+    org: "Organisation",
   };
   const ackHref = outstandingAckCount > 0
     ? `/members/${memberId}/docs?tab=${ackTab}`

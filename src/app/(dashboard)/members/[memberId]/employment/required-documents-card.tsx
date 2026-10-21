@@ -21,6 +21,8 @@
 // set, so the server-side diff audit still fires with add/remove
 // entries as before.
 
+import { docTabCard, type DocTabKey } from "@/components/documents/doc-tab-theme";
+import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { Loader2, Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -76,16 +78,20 @@ function fmtDate(iso: string | null): string {
 }
 
 export function RequiredDocumentsCard({
+  tone,
   memberId,
   memberName,
   canEdit,
 }: {
+  /** Colour-keys the card header to its Documents tab (doc-tab-theme). */
+  tone?: DocTabKey;
   memberId: string;
   memberName: string;
   /** Requires the documents.update tab flag on the target. When
    *  false the +/− controls are hidden and the table is view-only. */
   canEdit: boolean;
 }) {
+  const toneCls = docTabCard(tone);
   const { memberLabel } = useMemberLabel();
   const [rows, setRows] = useState<RequiredDocumentRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -178,8 +184,8 @@ export function RequiredDocumentsCard({
     // CLE-216 — Scroll anchor for the traffic-light click target on
     // the sidebar avatar (and Directory Docs column). `scroll-mt-24`
     // keeps the card clear of the sticky page header when scrolled to.
-    <Card id="required-documents" className="scroll-mt-24">
-      <CardHeader>
+    <Card id="required-documents" className={cn("scroll-mt-24", toneCls.card)}>
+      <CardHeader className={toneCls.header}>
         <CardTitle className="text-base">Certifications</CardTitle>
         <CardDescription>
           Right to Work evidence and the certificates this {memberLabel} is

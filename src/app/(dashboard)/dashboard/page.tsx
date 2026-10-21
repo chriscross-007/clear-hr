@@ -119,7 +119,7 @@ export default async function DashboardPage() {
     certifications: "Certifications",
     employment: "Employment",
     other: "Other",
-    org: "Org",
+    org: "Organisation",
   };
   const ackHref = outstandingAckCount > 0 ? `/my-documents?tab=${ackTab}` : null;
 

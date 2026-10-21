@@ -16,6 +16,7 @@
 //   * No SSR pre-load; fetch on mount (same pattern as
 //     <MyDocumentsCard>).
 
+import { docTabCard, type DocTabKey } from "@/components/documents/doc-tab-theme";
 import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,18 +41,22 @@ function fmtDateTime(iso: string): string {
 }
 
 export function MemberOrgDocumentsList({
+  tone,
   memberId,
   // memberName retained for the future empty-state prompt / audit
   // context; not surfaced anywhere on-screen today, but keeps the
   // component's props aligned with the sibling MyOrgDocumentsList.
   memberName: _memberName,
 }: {
+  /** Colour-keys the card header to its Documents tab (doc-tab-theme). */
+  tone?: DocTabKey;
   /** The target member id — used for the fetch and the event-bus key. */
   memberId: string;
   /** Target member's display name — currently unused, reserved for
    *  future empty-state / audit copy. */
   memberName: string;
 }) {
+  const toneCls = docTabCard(tone);
   const [rows, setRows] = useState<OrgDocumentRowForMember[]>([]);
   // CLE-225 follow-up — initial vs. background refresh. The spinner
   // shows only for the very first mount; subsequent refreshes (event
@@ -80,8 +85,8 @@ export function MemberOrgDocumentsList({
   useEffect(() => onMemberDocsChanged(memberId, () => { void load(); }), [memberId, load]);
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className={toneCls.card}>
+      <CardHeader className={toneCls.header}>
         <CardTitle className="text-base">Organisation documents</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">

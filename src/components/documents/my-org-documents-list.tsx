@@ -15,6 +15,7 @@
 // returns `requiresAcknowledgement` + `isAcknowledged` per row now
 // (CLE-220), so no second round-trip is needed for the pill.
 
+import { docTabCard, type DocTabKey } from "@/components/documents/doc-tab-theme";
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
@@ -36,9 +37,12 @@ function fmtDateTime(iso: string): string {
 }
 
 export function MyOrgDocumentsList({
+  tone,
   memberId,
   initialRows,
 }: {
+  /** Colour-keys the card header to its Documents tab (doc-tab-theme). */
+  tone?: DocTabKey;
   /** The caller's own member id — used to hook into the shared
    *  `clearhr:member-docs-changed` bus so the list refreshes after
    *  the caller acknowledges a doc from the details dialog. */
@@ -48,6 +52,7 @@ export function MyOrgDocumentsList({
    *  comes from the server. */
   initialRows: OrgDocumentRow[];
 }) {
+  const toneCls = docTabCard(tone);
   const [rows, setRows] = useState<OrgDocumentRow[]>(initialRows);
   const [error, setError] = useState<string | null>(null);
   const [detailsDocId, setDetailsDocId] = useState<string | null>(null);
@@ -66,8 +71,8 @@ export function MyOrgDocumentsList({
   useEffect(() => onMemberDocsChanged(memberId, () => { void load(); }), [memberId, load]);
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className={toneCls.card}>
+      <CardHeader className={toneCls.header}>
         <CardTitle className="text-base">Organisation documents</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
