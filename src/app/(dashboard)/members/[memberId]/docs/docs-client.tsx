@@ -5,6 +5,7 @@
 // docs-client, but the underlying storage bucket + row now live on
 // the new `document` table.
 
+import { PdfViewer } from "@/components/documents/pdf-viewer";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -749,7 +750,9 @@ function ViewerDialog({
             /* eslint-disable-next-line @next/next/no-img-element */
             <img src={viewer.url} alt={viewer.fileName} className="mx-auto max-h-[70vh] object-contain" />
           ) : (
-            <iframe src={viewer.url} title={viewer.fileName} className="h-[70vh] w-full" />
+            <div className="h-[70vh] w-full">
+              <PdfViewer url={viewer.url} fileName={viewer.fileName} />
+            </div>
           )}
         </div>
       </DialogContent>

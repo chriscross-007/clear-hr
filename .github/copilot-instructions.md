@@ -46,6 +46,7 @@ The canonical project guide is [`../CLAUDE.md`](../CLAUDE.md) at the repo root. 
 - 10 MB cap and the allowed MIME list live in `src/lib/document-limits.ts` (`MAX_DOCUMENT_SIZE`, `ALLOWED_DOCUMENT_CONTENT_TYPES`) — import from there, never redeclare.
 
 ## Member documents
+- Never show a PDF in an `<iframe>` — use `<PdfViewer>` from `@/components/documents/pdf-viewer` (viewing controls only).
 - Never replace the file of a document that has any acknowledgement — check `hasAnyAcknowledgement` (`@/lib/document-ack-lock`); a changed file must be a new document.
 - Three member tabs: Certifications (RTW + required certificates), Employment (system type `contract`, always labelled "Employment" in UI — use `DOCUMENT_TYPE_LABEL`), Other. Only `certificate` subtypes can be required (`canBeRequired()`).
 - HR-only Employment docs: any new member-doc reader or doc-id action must apply `isHiddenFromCaller` / `isDocumentHiddenFromCaller` / `subtypeHiddenFromMember` from `@/lib/documents-member-visibility` (owner + `visible_to_member = false` → "Document not found").

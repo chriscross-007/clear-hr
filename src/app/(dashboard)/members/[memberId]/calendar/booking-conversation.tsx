@@ -1,5 +1,6 @@
 "use client";
 
+import { PdfViewer, printPdfFromUrl } from "@/components/documents/pdf-viewer";
 import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
 import { Paperclip, SendHorizontal, FileText, X, Loader2, Download, Printer, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -436,9 +437,15 @@ function DocumentViewerDialog({
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const isImage = doc?.contentType.startsWith("image/");
+  const isPdf = doc?.contentType === "application/pdf";
 
   const handlePrint = useCallback(() => {
     if (!doc) return;
+    if (doc.contentType === "application/pdf") {
+      // PDFs print via ClearHR's viewer helper — no browser PDF toolbar.
+      void printPdfFromUrl(doc.url);
+      return;
+    }
     // For images, open a minimal print window
     const printWin = window.open("", "_blank");
     if (!printWin) return;
@@ -452,7 +459,7 @@ function DocumentViewerDialog({
       `);
       printWin.document.close();
     } else {
-      // For PDFs and other files, open in a new tab and let the user print from there
+      // Other files: open in a new tab and let the user print from there.
       printWin.location.href = doc.url;
     }
   }, [doc, isImage]);
@@ -494,7 +501,12 @@ function DocumentViewerDialog({
               className="mx-auto max-h-[70vh] object-contain"
             />
           )}
-          {doc && !isImage && (
+          {doc && isPdf && (
+            <div className="h-[70vh] w-full">
+              <PdfViewer url={doc.url} fileName={doc.fileName} showPrint={false} />
+            </div>
+          )}
+          {doc && !isImage && !isPdf && (
             <iframe
               ref={iframeRef}
               src={doc.url}

@@ -19,6 +19,7 @@
 // Preview signed URL loads eagerly on mount — trade the click-to-view
 // step for a small upfront fetch.
 
+import { PdfViewer } from "@/components/documents/pdf-viewer";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Camera, CheckSquare, Download, FileUp, Loader2, Pencil, SendHorizontal, Smartphone, Upload as UploadIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -526,7 +527,16 @@ export function DocumentDetailsDialog({
                     className="max-h-full max-w-full object-contain"
                   />
                 ) : detail.row.contentType === "application/pdf" ? (
-                  <iframe src={previewUrl} title={detail.row.fileName} className="h-full w-full" />
+                  // ClearHR's own viewer — viewing controls only, same in
+                  // every browser (no browser PDF toolbar / edit tools).
+                  <PdfViewer
+                    url={previewUrl}
+                    fileName={detail.row.fileName}
+                    onDownload={() => {
+                      setReadyToAck(true);
+                      void downloadDocument(currentDocumentId, detail.row.fileName, reloadActivity);
+                    }}
+                  />
                 ) : (
                   <div className="p-6 text-center text-sm text-muted-foreground">
                     Preview not available for this file type.{" "}
@@ -550,7 +560,7 @@ export function DocumentDetailsDialog({
                     Download also unlocks the acknowledge button's read-first
                     gate, so a caller who prefers reading the downloaded copy
                     can Acknowledge without needing the in-dialog preview. */}
-                {previewUrl && (
+                {previewUrl && detail.row.contentType !== "application/pdf" && (
                   <button
                     type="button"
                     onClick={() => {
