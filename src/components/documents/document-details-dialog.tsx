@@ -20,7 +20,7 @@
 // step for a small upfront fetch.
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { Camera, CheckSquare, Download, FileUp, Loader2, Pencil, RefreshCw, SendHorizontal, Smartphone, Upload as UploadIcon } from "lucide-react";
+import { Camera, CheckSquare, Download, FileUp, Loader2, Pencil, SendHorizontal, Smartphone, Upload as UploadIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -646,7 +646,7 @@ export function DocumentDetailsDialog({
                         ) : (
                           <div>
                             <p className="mb-1 flex items-center gap-2 text-base font-semibold">
-                              <RefreshCw className="h-4 w-4" /> Replace file
+                              Replace file
                             </p>
                             <p className="text-sm text-muted-foreground">
                               {detail.hasAcknowledgements
@@ -1195,7 +1195,7 @@ function AcknowledgementSection({
     return (
       <div>
         <p className="mb-1 flex items-center gap-2 text-base font-semibold">
-          <CheckSquare className="h-4 w-4 text-muted-foreground" /> Acknowledgement
+          Acknowledgement
         </p>
         <p className="text-sm text-muted-foreground">
           No acknowledgement is required for this document.
@@ -1213,7 +1213,7 @@ function AcknowledgementSection({
     return (
       <div>
         <p className="mb-1 flex items-center gap-2 text-base font-semibold">
-          <CheckSquare className="h-4 w-4 text-green-600" /> Acknowledgement
+          Acknowledgement
         </p>
         <p className="text-sm text-muted-foreground">
           You acknowledged this document on <span className="font-medium text-foreground">{stamp}</span>.
@@ -1228,7 +1228,7 @@ function AcknowledgementSection({
     return (
       <div>
         <p className="mb-1 flex items-center gap-2 text-base font-semibold">
-          <CheckSquare className="h-4 w-4" /> Acknowledgement
+          Acknowledgement
         </p>
         <p className="text-sm text-muted-foreground">
           Confirm you have read and understood this document. Your acknowledgement will be recorded with your name, the date and time, and your IP address.
@@ -1260,7 +1260,7 @@ function AcknowledgementSection({
     return (
       <div>
         <p className="mb-1 flex items-center gap-2 text-base font-semibold">
-          <CheckSquare className="h-4 w-4" /> Acknowledgement
+          Acknowledgement
         </p>
         <p className="text-sm text-muted-foreground">
           <span className="font-medium text-foreground">
@@ -1285,7 +1285,7 @@ function AcknowledgementSection({
   return (
     <div>
       <p className="mb-1 flex items-center gap-2 text-base font-semibold">
-        <CheckSquare className="h-4 w-4" /> Acknowledgement
+        Acknowledgement
       </p>
       <p className="text-sm text-muted-foreground">
         This document requires acknowledgement from its target Member(s).
@@ -1488,10 +1488,10 @@ function ReplaceSection({
   return (
     <div>
       <p className="text-base font-semibold flex items-center gap-2">
-        <RefreshCw className="h-4 w-4" /> Replace file
+        Replace file
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
-        Only unverified files can be replaced. Once verified, delete and add a new upload instead.
+        Files that have not been Verified or Acknowledged can be replaced.
       </p>
       {error && (
         <div className="mt-2 rounded-md bg-destructive/10 p-2 text-xs text-destructive">{error}</div>
