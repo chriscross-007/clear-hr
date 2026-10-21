@@ -8,7 +8,12 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -18,7 +23,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Palette, Repeat, Users } from "lucide-react";
-import { useTheme } from "@/contexts/theme-context";
+import { THEME_OPTIONS, useTheme, type Theme } from "@/contexts/theme-context";
 import { capitalize } from "@/lib/label-utils";
 import {
   getSwitchableMembers,
@@ -201,12 +206,29 @@ export function HeaderUserMenu({
               Switch Account
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onSelect={() => setTheme(theme === "dark" ? "vibrant" : theme === "vibrant" ? "bq" : "dark")}
-            >
-              <Palette className="mr-2 h-4 w-4" />
-              {theme === "dark" ? "Vibrant theme" : theme === "vibrant" ? "B&Q theme" : "Dark theme"}
-            </DropdownMenuItem>
+            {/* Theme picker — a submenu listing every theme with the
+                current one ticked, rather than cycling on each click. */}
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Palette className="mr-2 h-4 w-4" />
+                Theme
+                <span className="ml-auto pl-3 text-xs text-muted-foreground">
+                  {THEME_OPTIONS.find((o) => o.value === theme)?.label}
+                </span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuRadioGroup
+                  value={theme}
+                  onValueChange={(v) => setTheme(v as Theme)}
+                >
+                  {THEME_OPTIONS.map((o) => (
+                    <DropdownMenuRadioItem key={o.value} value={o.value}>
+                      {o.label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
               <a href="/logout">Log out</a>

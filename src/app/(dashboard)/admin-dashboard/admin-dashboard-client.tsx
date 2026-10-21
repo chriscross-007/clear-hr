@@ -404,11 +404,11 @@ export function AdminDashboardClient() {
           forceInteractive={ackTotal > 0}
           footer={
             ackTotal > 0 ? (
-              <div className="mt-2 flex items-center justify-between rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+              <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
                 <span>
                   <span className="font-medium">{ackTotal}</span> awaiting acknowledgement
                 </span>
-                <span className="text-xs text-amber-800/80 dark:text-amber-200/70">
+                <span className="whitespace-nowrap text-xs text-amber-800/80 dark:text-amber-200/70">
                   {ackMembers.length} {ackMembers.length === 1 ? memberLabel : pluralize(memberLabel)}
                 </span>
               </div>

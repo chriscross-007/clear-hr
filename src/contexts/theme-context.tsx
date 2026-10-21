@@ -2,7 +2,14 @@
 
 import { createContext, useContext, useEffect, useState } from "react";
 
-type Theme = "dark" | "vibrant" | "bq";
+export type Theme = "dark" | "vibrant" | "bq";
+
+/** Picker options, in display order. Labels are user-facing. */
+export const THEME_OPTIONS: { value: Theme; label: string }[] = [
+  { value: "dark", label: "Dark" },
+  { value: "vibrant", label: "Vibrant" },
+  { value: "bq", label: "B&Q" },
+];
 
 interface ThemeContextValue {
   theme: Theme;

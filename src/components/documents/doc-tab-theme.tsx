@@ -27,7 +27,11 @@ export const DOC_TAB_LABEL: Record<DocTabKey, string> = {
 
 /** Classes for the TabsList that holds the coloured triggers: no grey
  *  track, a small gap between buttons. */
-export const DOC_TAB_LIST_CLASS = "h-auto gap-2 bg-transparent p-0 flex-wrap";
+// The base TabsList pins height via `group-data-[orientation=horizontal]/tabs:h-9`;
+// override that same variant so a wrapped second row grows the list
+// (and the sticky header) instead of spilling over the content below.
+export const DOC_TAB_LIST_CLASS =
+  "h-auto group-data-[orientation=horizontal]/tabs:h-auto gap-2 bg-transparent p-0 pb-2 flex-wrap justify-start";
 
 const THEME: Record<DocTabKey, { trigger: string; card: string; header: string }> = {
   certifications: {

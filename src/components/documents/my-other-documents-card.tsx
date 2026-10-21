@@ -37,11 +37,12 @@ import type { OtherMemberDocumentRow } from "@/app/(dashboard)/my-documents/acti
 import { onMemberDocsChanged } from "@/lib/member-docs-events";
 
 // Mirrors the required card's TYPE_LABEL map so the two lists read
-// with the same vocabulary. RTW evidence is excluded upstream so
-// there's no "evidence" branch here.
+// with the same vocabulary. Superseded / expired RTW evidence lands on
+// Other (CLE-228), so "evidence" needs a label too.
 const TYPE_LABEL: Record<string, string> = {
   contract: "Employment",
   certificate: "Certificate",
+  evidence: "RTW Evidence",
   attachment: "Attachment",
 };
 
