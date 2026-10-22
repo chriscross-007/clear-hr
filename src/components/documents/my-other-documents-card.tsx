@@ -191,6 +191,7 @@ export function MyOtherDocumentsCard({
           canUpdate={false}
           hideActivity
           hideHrMetadata
+          memberView
           onClose={() => setDetailsDocId(null)}
           onSaved={load}
         />

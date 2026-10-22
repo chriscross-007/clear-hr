@@ -65,6 +65,8 @@ import {
 } from "@/app/(dashboard)/members/[memberId]/docs/capture-actions";
 import { replaceOrgDocument } from "@/app/(dashboard)/documents/organisation/org-document-actions";
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { useMemberLabel } from "@/contexts/member-label-context";
+import { capitalize, pluralize } from "@/lib/label-utils";
 import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 import { OrgDocAudienceSection } from "@/components/documents/org-doc-audience-section";
 import {
@@ -112,6 +114,14 @@ interface Props {
    *  Replace anyway — this prop is the explicit lever for the intent,
    *  redundant-but-safe for the Replace surface. */
   hideHrMetadata?: boolean;
+  /** The caller is looking at their own documents as a member (the My
+   *  Documents surfaces). Only then does the Acknowledgement section
+   *  offer "I have read and understood" or show "You acknowledged…".
+   *  Everywhere else (admin pages: Org Documents, a member's Documents,
+   *  Compliance) the section only states whether acknowledgement is
+   *  required and the coverage — an admin never acknowledges as a
+   *  member from an admin page. */
+  memberView?: boolean;
 }
 
 function fmtDate(iso: string | null): string {
@@ -241,7 +251,9 @@ export function DocumentDetailsDialog({
   readOnly = false,
   hideActivity = false,
   hideHrMetadata = false,
+  memberView = false,
 }: Props) {
+  const { memberLabel } = useMemberLabel();
   // A read-only opening (from the Trash list) forces every pencil off
   // and the composer off, regardless of whether the caller would
   // ordinarily have update rights.
@@ -687,8 +699,18 @@ export function DocumentDetailsDialog({
                     "No acknowledgement needed" instead of an empty
                     right half. Admins keep the old "only show when
                     required" behaviour to avoid clutter. */}
-                {!readOnly && ackStatus && (ackStatus.requiresAcknowledgement || hideActivity) && (
+                {!readOnly && ackStatus && (ackStatus.requiresAcknowledgement || hideActivity || !memberView) && (
                   <div className="border-b p-4">
+                    {!memberView ? (
+                      <AdminAcknowledgementSection
+                        status={ackStatus}
+                        subject={
+                          detail.row.type === "organisation_document"
+                            ? { plural: true, label: capitalize(pluralize(memberLabel)) }
+                            : { plural: false, label: detail.targetMemberName || capitalize(memberLabel) }
+                        }
+                      />
+                    ) : (
                     <AcknowledgementSection
                       status={ackStatus}
                       readyToAck={readyToAck}
@@ -696,6 +718,7 @@ export function DocumentDetailsDialog({
                       error={ackError}
                       onAcknowledge={handleAcknowledge}
                     />
+                    )}
                   </div>
                 )}
 
@@ -1302,6 +1325,49 @@ function AcknowledgementSection({
       <p className="text-sm text-muted-foreground">
         This document requires acknowledgement from its target Member(s).
       </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AdminAcknowledgementSection — admin pages only (memberView = false).
+//
+// States whether acknowledgement is required and, where available, the
+// coverage. Never offers the acknowledge button and never shows the
+// caller's own ack: on an admin page the caller is acting as an admin,
+// and acknowledging as a member belongs on their own My Documents page.
+// ---------------------------------------------------------------------------
+
+function AdminAcknowledgementSection({
+  status,
+  subject,
+}: {
+  status: DocumentAcknowledgementStatus;
+  /** Who acknowledges: the member label in the plural for org docs,
+   *  the member's name for a member's document. */
+  subject: { plural: boolean; label: string };
+}) {
+  const { requiresAcknowledgement, coverageSummary } = status;
+  const verb = subject.plural ? "are" : "is";
+  return (
+    <div>
+      <p className="mb-1 flex items-center gap-2 text-base font-semibold">
+        Acknowledgement
+      </p>
+      <p className="text-sm text-muted-foreground">
+        {subject.label} {verb} {requiresAcknowledgement ? "" : "not "}required to acknowledge reading this document.
+      </p>
+      {requiresAcknowledgement && coverageSummary && (
+        <p className="mt-1 text-sm text-muted-foreground">
+          <span className="font-medium text-foreground">
+            {coverageSummary.totalAcknowledged} of {coverageSummary.totalExpected}
+          </span>{" "}
+          acknowledged
+          {coverageSummary.outstanding > 0 && (
+            <> · <span className="font-medium text-amber-700 dark:text-amber-400">{coverageSummary.outstanding} outstanding</span></>
+          )}
+        </p>
+      )}
     </div>
   );
 }

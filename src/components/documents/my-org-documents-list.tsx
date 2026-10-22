@@ -147,6 +147,7 @@ export function MyOrgDocumentsList({
           canUpdate={false}
           hideActivity
           hideHrMetadata
+          memberView
           onClose={() => setDetailsDocId(null)}
           onSaved={load}
         />
