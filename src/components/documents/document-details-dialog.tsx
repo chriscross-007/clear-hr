@@ -63,6 +63,7 @@ import {
   queueCaptureTask,
   cancelCaptureTask,
 } from "@/app/(dashboard)/members/[memberId]/docs/capture-actions";
+import { replaceOrgDocument } from "@/app/(dashboard)/documents/organisation/org-document-actions";
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 import { OrgDocAudienceSection } from "@/components/documents/org-doc-audience-section";
@@ -651,6 +652,7 @@ export function DocumentDetailsDialog({
                             targetMemberName={detail.targetMemberName}
                             subtypeId={detail.row.subtypeId}
                             subtypeName={detail.row.subtypeName}
+                            isOrgDocument={detail.row.type === "organisation_document"}
                             onReplaced={pivotToReplacement}
                           />
                         ) : (
@@ -1336,6 +1338,7 @@ function ReplaceSection({
   targetMemberName,
   subtypeId,
   subtypeName,
+  isOrgDocument,
   onReplaced,
 }: {
   documentId: string;
@@ -1343,6 +1346,9 @@ function ReplaceSection({
   targetMemberName: string;
   subtypeId: string | null;
   subtypeName: string | null;
+  /** Org documents replace via `replaceOrgDocument` and have no photo
+   *  capture (that flow belongs to a member). */
+  isOrgDocument: boolean;
   onReplaced: (newDocumentId: string) => void | Promise<void>;
 }) {
   const [mode, setMode] = useState<"idle" | "waiting">("idle");
@@ -1369,7 +1375,9 @@ function ReplaceSection({
     const fd = new FormData();
     fd.set("file", chosen);
     startTransition(async () => {
-      const res = await replaceMemberDocument(documentId, fd);
+      const res = isOrgDocument
+        ? await replaceOrgDocument(documentId, fd)
+        : await replaceMemberDocument(documentId, fd);
       if (!res.success || !res.documentId) {
         setError(res.error ?? "Replace failed");
         return;
@@ -1533,16 +1541,18 @@ function ReplaceSection({
           >
             <FileUp className="h-4 w-4" /> Upload replacement
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={handlePhotoClick}
-            disabled={pending}
-            className="gap-1"
-          >
-            <Camera className="h-4 w-4" /> Take photo
-          </Button>
+          {!isOrgDocument && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={handlePhotoClick}
+              disabled={pending}
+              className="gap-1"
+            >
+              <Camera className="h-4 w-4" /> Take photo
+            </Button>
+          )}
           {pending && (
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" /> Working…

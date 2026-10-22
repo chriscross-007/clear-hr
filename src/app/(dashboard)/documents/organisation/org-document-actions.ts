@@ -23,6 +23,7 @@ import {
   type AudienceDbRow,
   type OrgDocAudience,
 } from "@/lib/org-doc-audience";
+import { ACK_LOCKED_REPLACE_ERROR, hasAnyAcknowledgement } from "@/lib/document-ack-lock";
 import {
   ALLOWED_DOCUMENT_CONTENT_TYPES as ALLOWED_CONTENT_TYPES,
   MAX_DOCUMENT_SIZE as MAX_SIZE,
@@ -430,6 +431,156 @@ export async function uploadOrgDocument(
       metadata: {
         type_subtype: `${subtype.type} / ${subtype.name}`,
         // CLE-219 — file_name + file_size on every doc audit.
+        file_name: file.name.substring(0, 255),
+        file_size: file.size,
+      },
+    });
+
+    revalidatePath("/settings/documents/organisation");
+    revalidatePath("/documents/organisation");
+    return { success: true, documentId: inserted.id as string };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Replace file (org-scope counterpart of replaceMemberDocument)
+//
+// Same rules as the member path: only while the document is unverified
+// and nobody has acknowledged it. Inserts a new row that inherits the
+// old one's subtype, expiry, retention and audience, moves the old row
+// to Trash (disposal_queue), and writes `document.replaced` on the new
+// id with `replaces_document_id` pointing back.
+// ---------------------------------------------------------------------------
+
+export async function replaceOrgDocument(
+  oldDocumentId: string,
+  formData: FormData,
+): Promise<{ success: boolean; error?: string; documentId?: string }> {
+  try {
+    const c = await ctx();
+    if (!c) return { success: false, error: "Not authenticated" };
+    if (!c.canEdit) return { success: false, error: "You don't have permission to change organisation documents." };
+    const admin = getAdmin();
+
+    const { data: oldDoc } = await admin
+      .from("document")
+      .select(
+        "id, organisation_id, owner_scope, file_name, file_size, type, subtype_id, expires_on, retention_class, next_review_on, verified_on, " +
+          AUDIENCE_COLUMNS +
+          ", document_subtype!subtype_id(name)",
+      )
+      .eq("id", oldDocumentId)
+      .single();
+    const old = oldDoc as unknown as
+      | (AudienceDbRow & {
+          id: string;
+          organisation_id: string;
+          owner_scope: string;
+          file_name: string;
+          file_size: number;
+          type: string;
+          subtype_id: string | null;
+          expires_on: string | null;
+          retention_class: string | null;
+          next_review_on: string | null;
+          verified_on: string | null;
+          document_subtype: { name?: string } | { name?: string }[] | null;
+        })
+      | null;
+    if (!old || old.organisation_id !== c.organisationId || old.owner_scope !== "organisation") {
+      return { success: false, error: "Document not found" };
+    }
+    if (old.verified_on !== null) {
+      return {
+        success: false,
+        error: "Verified documents can't be replaced — delete and add a new one instead.",
+      };
+    }
+    if (await hasAnyAcknowledgement(admin, oldDocumentId)) {
+      return { success: false, error: ACK_LOCKED_REPLACE_ERROR };
+    }
+    const { data: queued } = await admin
+      .from("disposal_queue")
+      .select("id")
+      .eq("document_id", oldDocumentId)
+      .maybeSingle();
+    if (queued) return { success: false, error: "This document is in Trash." };
+
+    const file = formData.get("file");
+    if (!(file instanceof File)) return { success: false, error: "No file supplied" };
+    if (file.size > MAX_SIZE) return { success: false, error: "This file is too large. The limit is 10 MB." };
+    if (!ALLOWED_CONTENT_TYPES.includes(file.type as (typeof ALLOWED_CONTENT_TYPES)[number])) {
+      return { success: false, error: "This file type is not accepted." };
+    }
+
+    const uuid = crypto.randomUUID();
+    const ext = file.name.includes(".") ? file.name.substring(file.name.lastIndexOf(".")) : "";
+    const storagePath = `${c.organisationId}/${uuid}${ext}`;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const { error: uploadError } = await admin.storage
+      .from(BUCKET)
+      .upload(storagePath, bytes, { contentType: file.type, upsert: false });
+    if (uploadError) return { success: false, error: uploadError.message };
+
+    const { data: inserted, error: insertError } = await admin
+      .from("document")
+      .insert({
+        organisation_id: c.organisationId,
+        owner_scope: "organisation",
+        owner_id: null,
+        storage_path: storagePath,
+        file_name: file.name.substring(0, 255),
+        file_size: file.size,
+        content_type: file.type,
+        type: old.type,
+        subtype_id: old.subtype_id,
+        expires_on: old.expires_on,
+        retention_class: old.retention_class,
+        next_review_on: old.next_review_on,
+        audience_mode: old.audience_mode ?? "all",
+        audience_team_ids: old.audience_team_ids ?? [],
+        audience_rights_profile_ids: old.audience_rights_profile_ids ?? [],
+        audience_include_member_ids: old.audience_include_member_ids ?? [],
+        uploaded_by: c.memberId,
+      })
+      .select("id")
+      .single();
+    if (insertError || !inserted) {
+      await admin.storage.from(BUCKET).remove([storagePath]);
+      return { success: false, error: insertError?.message ?? "Failed to insert replacement document" };
+    }
+
+    const { error: queueError } = await admin.from("disposal_queue").insert({
+      organisation_id: c.organisationId,
+      document_id: oldDocumentId,
+      queued_by: c.memberId,
+      force_delete_reason: "Replaced by uploader",
+    });
+    if (queueError) {
+      await admin.from("document").delete().eq("id", inserted.id as string);
+      await admin.storage.from(BUCKET).remove([storagePath]);
+      return { success: false, error: queueError.message };
+    }
+
+    const st = old.document_subtype;
+    const subtypeName = Array.isArray(st) ? (st[0]?.name ?? null) : (st?.name ?? null);
+    await logAudit({
+      organisationId: c.organisationId,
+      actorId: c.memberId,
+      actorName: await callerName(admin, c.memberId),
+      action: "document.replaced",
+      targetType: "org_document",
+      targetId: inserted.id as string,
+      targetLabel: file.name,
+      changes: {
+        file_name: { old: old.file_name, new: file.name },
+        file_size: { old: old.file_size, new: file.size },
+      },
+      metadata: {
+        type_subtype: subtypeName ? `${old.type} / ${subtypeName}` : old.type,
+        replaces_document_id: oldDocumentId,
         file_name: file.name.substring(0, 255),
         file_size: file.size,
       },
