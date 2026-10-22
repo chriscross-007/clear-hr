@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
+import { STICKY_HEADER_EXTEND_RIGHT } from "@/lib/sticky-band";
 
 /**
  * Sticky band that pins below the dashboard header (which sits at top-0 with
@@ -69,6 +70,7 @@ export function StickyPageHeader({
       ref={ref}
       className={cn(
         "sticky z-30 -mx-4 sm:-mx-6 lg:-mx-8 bg-background px-4 sm:px-6 lg:px-8 pt-8 pb-3 border-b",
+        STICKY_HEADER_EXTEND_RIGHT,
         className,
       )}
       // Base is 4rem (h-16 of dashboard header); trial/past-due banners

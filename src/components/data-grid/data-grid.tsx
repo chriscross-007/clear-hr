@@ -53,6 +53,7 @@ import {
 } from "@/components/ui/select";
 import { FileDown, Download, ArrowUpDown, Filter as FilterIcon, ArrowUp, ArrowDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { STICKY_BAND_EXTEND_RIGHT } from "@/lib/sticky-band";
 
 // Ensure the ColumnMeta augmentation from employee-columns is available here too
 declare module "@tanstack/react-table" {
@@ -468,6 +469,11 @@ export function DataGrid<T extends object>({
         className={cn(
           "flex items-center justify-between gap-4",
           stickyHeader ? "sticky z-30 bg-background pt-2 pb-4" : "mb-4",
+          // A table wider than the page makes the page scroll sideways;
+          // rows past the toolbar's right edge would scroll up beside it.
+          // Paint the background out to the right with a clipped shadow
+          // (shadows don't add scroll width; a pseudo-element would).
+          stickyHeader && STICKY_BAND_EXTEND_RIGHT,
         )}
         // Auto-pins directly below <StickyPageHeader> via --page-header-height;
         // --top-chrome-extra shifts the whole stack down when a banner shows.
@@ -537,7 +543,11 @@ export function DataGrid<T extends object>({
           emptyMessage={emptyMessage}
         />
       ) : (
-      <div className="rounded-md border">
+      // With stickyHeader the table can't scroll inside its own box
+      // (sticky needs the page to scroll), so a wide table overflows.
+      // `w-max min-w-full` lets the bordered box grow with the table so
+      // its right edge stays on the table's edge.
+      <div className={cn("rounded-md border", stickyHeader && "w-max min-w-full")}>
         <Table
           className="w-full"
           containerClassName={stickyHeader ? "overflow-x-visible" : undefined}

@@ -9,6 +9,7 @@ import { getEffectiveRightsForUser, getRightsEditorCount, getPendingRightsEditor
 import { HeaderUserMenu } from "./header-user-menu";
 import { Sidebar } from "./sidebar";
 import { FlashNotice } from "@/components/ui/flash-notice";
+import { STICKY_HEADER_EXTEND_RIGHT } from "@/lib/sticky-band";
 
 // CLE-196b-1 — Dashboard shell rewired onto the Rights Profiles v2
 // resolver. `members.role` / `members.permissions` reads are gone;
@@ -157,7 +158,7 @@ export default async function DashboardLayout({
       >
         {/* Sticky top strip: banners + header. Fully opaque background so
             scrolling data never bleeds through. */}
-        <div className="sticky top-0 z-50 border-b bg-background">
+        <div className={`sticky top-0 z-50 border-b bg-background ${STICKY_HEADER_EXTEND_RIGHT}`}>
           {showTrialBanner && (
             <div className="bg-amber-500 px-4 py-2 text-center text-sm font-medium text-white">
               Your trial ends in {trialDaysLeft} day{trialDaysLeft !== 1 ? "s" : ""}.{" "}
