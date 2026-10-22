@@ -9,8 +9,6 @@ import { getEffectiveRightsForUser, getRightsEditorCount, getPendingRightsEditor
 import { HeaderUserMenu } from "./header-user-menu";
 import { Sidebar } from "./sidebar";
 import { FlashNotice } from "@/components/ui/flash-notice";
-import { STICKY_HEADER_EXTEND_RIGHT } from "@/lib/sticky-band";
-
 // CLE-196b-1 — Dashboard shell rewired onto the Rights Profiles v2
 // resolver. `members.role` / `members.permissions` reads are gone;
 // everything downstream (sidebar visibility, trial banner audience,
@@ -156,9 +154,13 @@ export default async function DashboardLayout({
         className="flex min-h-screen flex-col"
         style={{ ["--top-chrome-extra" as string]: `${topChromeExtra}px` }}
       >
-        {/* Sticky top strip: banners + header. Fully opaque background so
-            scrolling data never bleeds through. */}
-        <div className={`sticky top-0 z-50 border-b bg-background ${STICKY_HEADER_EXTEND_RIGHT}`}>
+        {/* Fixed top strip: banners + header. Fully opaque background so
+            scrolling data never bleeds through. `fixed` (not sticky) so it
+            also stays put when a wide table scrolls the page sideways; the
+            spacer below holds its height in the flow (4rem header + 1px
+            border + 36px per banner via --top-chrome-extra). */}
+        <div aria-hidden style={{ height: "calc(var(--top-chrome-extra, 0px) + 4rem + 1px)" }} className="shrink-0" />
+        <div className="fixed inset-x-0 top-0 z-50 border-b bg-background">
           {showTrialBanner && (
             <div className="bg-amber-500 px-4 py-2 text-center text-sm font-medium text-white">
               Your trial ends in {trialDaysLeft} day{trialDaysLeft !== 1 ? "s" : ""}.{" "}

@@ -1,5 +1,6 @@
-// Classes for sticky bands (dashboard top bar, <StickyPageHeader>,
-// <DataGrid stickyHeader /> toolbar) so they stay opaque when a wide
+// Classes for in-page sticky bands (<StickyPageHeader>,
+// <DataGrid stickyHeader /> toolbar; the dashboard top bar and sidebar
+// are position: fixed instead) so they stay opaque when a wide
 // table makes the whole page scroll sideways.
 //
 // Without these, table rows past a band's right-hand edge scroll up

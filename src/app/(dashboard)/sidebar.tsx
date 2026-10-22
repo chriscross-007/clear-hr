@@ -140,8 +140,13 @@ export function Sidebar({
 
   return (
     <>
+      {/* Holds the sidebar's space in the flex row; the nav itself is
+          `fixed` so it never scrolls sideways when a wide table makes the
+          page scroll horizontally (sticky can't do that: its containing
+          block is only viewport-wide). */}
+      <div aria-hidden className="w-48 shrink-0" />
       <nav
-        className="w-48 shrink-0 border-r bg-background sticky overflow-y-auto"
+        className="fixed left-0 z-40 w-48 border-r bg-background overflow-y-auto"
         // Shift below the top-chrome (dashboard header + any active trial /
         // past-due banner). `--top-chrome-extra` is set on the dashboard
         // layout root (36px per active banner, 0 otherwise). Height matches
