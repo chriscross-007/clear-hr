@@ -1235,7 +1235,7 @@ function ReviewSection({
             Mark as reviewed
           </Button>
           <span className="text-xs text-muted-foreground">
-            {interval === null ? "Clears the review date." : `Sets the next review to today + ${reviewIntervalLabel(interval).replace(/ \(.*\)$/, "")}.`}
+            {interval === null ? "Clears the next review date." : `Sets the next review to today + ${reviewIntervalLabel(interval).replace(/ \(.*\)$/, "")}.`}
           </span>
         </div>
       )}
