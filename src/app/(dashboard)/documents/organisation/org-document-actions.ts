@@ -24,6 +24,7 @@ import {
   type OrgDocAudience,
 } from "@/lib/org-doc-audience";
 import { ACK_LOCKED_REPLACE_ERROR, hasAnyAcknowledgement } from "@/lib/document-ack-lock";
+import { deriveDocumentStatuses, nextReviewAfterReview, seedNextReviewOn } from "@/lib/document-status";
 import {
   ALLOWED_DOCUMENT_CONTENT_TYPES as ALLOWED_CONTENT_TYPES,
   MAX_DOCUMENT_SIZE as MAX_SIZE,
@@ -102,6 +103,35 @@ export async function listOrgDocuments(): Promise<{
   const caller = await buildDocumentsCallerFromCookies();
   if (!caller) return { success: false, error: "Not authenticated", rows: [] };
   return _listOrgDocuments(caller);
+}
+
+// CLE-234 — Org documents needing HR attention (expired / expiring soon
+// / overdue review / review due soon). Counted once per document on the
+// admin dashboard's Documents card. Managers only.
+export interface OrgDocAttentionRow {
+  id: string;
+  name: string;
+  fileName: string;
+  statuses: OrgDocumentRow["statuses"];
+}
+
+export async function getOrgDocumentsNeedingAttention(): Promise<{
+  success: boolean;
+  error?: string;
+  rows: OrgDocAttentionRow[];
+}> {
+  const caller = await buildDocumentsCallerFromCookies();
+  if (!caller) return { success: false, error: "Not authenticated", rows: [] };
+  if (!caller.rights.canManageOrganisationDocuments) return { success: true, rows: [] };
+  const res = await _listOrgDocuments(caller);
+  if (!res.success) return { success: false, error: res.error, rows: [] };
+  const rank = (st: OrgDocumentRow["statuses"]) =>
+    st.includes("expired") ? 0 : st.includes("overdue_review") ? 1 : st.includes("expiring_soon") ? 2 : 3;
+  const rows = res.rows
+    .filter((r) => r.statuses.length > 0)
+    .map((r) => ({ id: r.id, name: r.subtypeName ?? r.fileName, fileName: r.fileName, statuses: r.statuses }))
+    .sort((a, b) => rank(a.statuses) - rank(b.statuses) || a.name.localeCompare(b.name));
+  return { success: true, rows };
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +215,7 @@ export async function getOrgDocumentsForMember(
     const { data, error } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, uploaded_by, uploaded_at, " +
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, next_review_on, uploaded_by, uploaded_at, " +
         AUDIENCE_COLUMNS +
         ", document_subtype!subtype_id(name, requires_acknowledgement), members!uploaded_by(first_name, last_name)",
       )
@@ -202,6 +232,7 @@ export async function getOrgDocumentsForMember(
       type: string;
       subtype_id: string | null;
       expires_on: string | null;
+      next_review_on: string | null;
       uploaded_by: string | null;
       uploaded_at: string;
       document_subtype:
@@ -250,6 +281,13 @@ export async function getOrgDocumentsForMember(
         subtypeId: r.subtype_id,
         subtypeName: stObj?.name ?? null,
         expiresOn: r.expires_on,
+        nextReviewOn: r.next_review_on,
+        statuses: deriveDocumentStatuses({
+          requiresVerification: false,
+          verifiedOn: null,
+          expiresOn: r.expires_on,
+          nextReviewOn: r.next_review_on,
+        }),
         uploadedBy: `${memPair?.first_name ?? ""} ${memPair?.last_name ?? ""}`.trim() || "Unknown",
         uploadedAt: r.uploaded_at,
         requiresAcknowledgement,
@@ -374,7 +412,7 @@ export async function uploadOrgDocument(
 
     const { data: subtype } = await admin
       .from("document_subtype")
-      .select("id, type, name, retention_class, expiry_required")
+      .select("id, type, name, retention_class, expiry_required, review_period_months")
       .eq("id", subtypeId)
       .eq("organisation_id", c.organisationId)
       .single();
@@ -411,6 +449,8 @@ export async function uploadOrgDocument(
         subtype_id: subtype.id,
         expires_on: expiresOn,
         retention_class: subtype.retention_class,
+        // CLE-234 — Next review date seeded from the subtype's interval.
+        next_review_on: seedNextReviewOn(subtype.review_period_months as number | null),
         uploaded_by: c.memberId,
       })
       .select("id")
@@ -600,7 +640,7 @@ export async function replaceOrgDocument(
 
 export async function updateOrgDocumentMetadata(
   documentId: string,
-  patch: { subtypeId?: string | null; expiresOn?: string | null },
+  patch: { subtypeId?: string | null; expiresOn?: string | null; nextReviewOn?: string | null },
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const c = await ctx();
@@ -610,7 +650,7 @@ export async function updateOrgDocumentMetadata(
 
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, type, subtype_id, expires_on, file_name, file_size, document_subtype!subtype_id(name)")
+      .select("id, organisation_id, owner_scope, type, subtype_id, expires_on, next_review_on, file_name, file_size, document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== c.organisationId || doc.owner_scope !== "organisation") {
@@ -642,6 +682,9 @@ export async function updateOrgDocumentMetadata(
     if (patch.expiresOn !== undefined) {
       updates.expires_on = patch.expiresOn;
     }
+    if (patch.nextReviewOn !== undefined) {
+      updates.next_review_on = patch.nextReviewOn;
+    }
     if (Object.keys(updates).length === 1) return { success: true };
 
     const { error } = await admin
@@ -657,6 +700,9 @@ export async function updateOrgDocumentMetadata(
     }
     if (patch.expiresOn !== undefined && patch.expiresOn !== doc.expires_on) {
       changes.expires_on = { old: doc.expires_on, new: patch.expiresOn };
+    }
+    if (patch.nextReviewOn !== undefined && patch.nextReviewOn !== doc.next_review_on) {
+      changes.next_review_on = { old: doc.next_review_on, new: patch.nextReviewOn };
     }
     if (Object.keys(changes).length > 0) {
       const stAny = doc.document_subtype as unknown as { name?: string } | { name?: string }[] | null;
@@ -682,6 +728,63 @@ export async function updateOrgDocumentMetadata(
     revalidatePath("/settings/documents/organisation");
     revalidatePath("/documents/organisation");
     return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
+}
+
+// CLE-234 — Mark as reviewed (org scope). Same rule as member docs:
+// Next review date = today + the subtype's interval, or cleared when the
+// interval is None. Audited only when the date actually changes.
+export async function markOrgDocumentReviewed(
+  documentId: string,
+): Promise<{ success: boolean; error?: string; nextReviewOn?: string | null; changed?: boolean }> {
+  try {
+    const c = await ctx();
+    if (!c) return { success: false, error: "Not authenticated" };
+    if (!c.canEdit) return { success: false, error: "You don't have permission to change organisation documents." };
+    const admin = getAdmin();
+
+    const { data: doc } = await admin
+      .from("document")
+      .select("id, organisation_id, owner_scope, type, next_review_on, file_name, file_size, document_subtype!subtype_id(name, review_period_months)")
+      .eq("id", documentId)
+      .single();
+    if (!doc || doc.organisation_id !== c.organisationId || doc.owner_scope !== "organisation") {
+      return { success: false, error: "Document not found" };
+    }
+    const st = doc.document_subtype as unknown as { name?: string; review_period_months?: number | null } | { name?: string; review_period_months?: number | null }[] | null;
+    const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
+
+    const oldDate = (doc.next_review_on as string | null) ?? null;
+    const newDate = nextReviewAfterReview(stObj?.review_period_months ?? null);
+    if (newDate === oldDate) return { success: true, nextReviewOn: oldDate, changed: false };
+
+    const { error } = await admin
+      .from("document")
+      .update({ next_review_on: newDate, updated_at: new Date().toISOString() })
+      .eq("id", documentId)
+      .eq("organisation_id", c.organisationId);
+    if (error) return { success: false, error: error.message };
+
+    await logAudit({
+      organisationId: c.organisationId,
+      actorId: c.memberId,
+      actorName: await callerName(admin, c.memberId),
+      action: "document.reviewed",
+      targetType: "org_document",
+      targetId: documentId,
+      targetLabel: (doc.file_name as string) ?? "",
+      changes: { next_review_on: { old: oldDate, new: newDate } },
+      metadata: {
+        type_subtype: stObj?.name ? `${doc.type} / ${stObj.name}` : (doc.type as string),
+        file_name: doc.file_name as string,
+        file_size: doc.file_size as number,
+      },
+    });
+
+    revalidatePath("/documents/organisation");
+    return { success: true, nextReviewOn: newDate, changed: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }

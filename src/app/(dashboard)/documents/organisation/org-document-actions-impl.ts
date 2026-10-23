@@ -8,6 +8,7 @@
 // by mobile Tier 1.
 
 import type { DocumentsCaller } from "@/lib/documents-caller";
+import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
 import {
   AUDIENCE_COLUMNS,
   audienceFromRow,
@@ -28,6 +29,10 @@ export interface OrgDocumentRow {
   subtypeId: string | null;
   subtypeName: string | null;
   expiresOn: string | null;
+  /** CLE-234 — Next review date (admin action). */
+  nextReviewOn: string | null;
+  /** CLE-234 — expiry + review statuses (org docs are never verified). */
+  statuses: DocumentStatus[];
   uploadedBy: string;
   uploadedAt: string;
   requiresAcknowledgement: boolean;
@@ -73,7 +78,7 @@ export async function _listOrgDocuments(
     const { data, error } = await admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, uploaded_by, uploaded_at, " +
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, next_review_on, uploaded_by, uploaded_at, " +
         AUDIENCE_COLUMNS +
         ", document_subtype!subtype_id(name, requires_acknowledgement), members!uploaded_by(first_name, last_name)",
       )
@@ -90,6 +95,7 @@ export async function _listOrgDocuments(
       type: string;
       subtype_id: string | null;
       expires_on: string | null;
+      next_review_on: string | null;
       uploaded_by: string | null;
       uploaded_at: string;
       document_subtype:
@@ -136,6 +142,13 @@ export async function _listOrgDocuments(
         subtypeId: r.subtype_id,
         subtypeName: stObj?.name ?? null,
         expiresOn: r.expires_on,
+        nextReviewOn: r.next_review_on,
+        statuses: deriveDocumentStatuses({
+          requiresVerification: false,
+          verifiedOn: null,
+          expiresOn: r.expires_on,
+          nextReviewOn: r.next_review_on,
+        }),
         uploadedBy: `${memPair?.first_name ?? ""} ${memPair?.last_name ?? ""}`.trim() || "Unknown",
         uploadedAt: r.uploaded_at,
         requiresAcknowledgement: stObj?.requires_acknowledgement === true,

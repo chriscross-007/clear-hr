@@ -30,6 +30,9 @@ import {
   getOrgDocumentsAttention,
   type DocumentsAttentionRow,
 } from "@/app/(dashboard)/documents/compliance-actions";
+import { getOrgDocumentsNeedingAttention, type OrgDocAttentionRow } from "@/app/(dashboard)/documents/organisation/org-document-actions";
+import { STATUS_LABEL, STATUS_TONE } from "@/lib/document-status";
+import { cn } from "@/lib/utils";
 import {
   getOrgOutstandingAcknowledgementSummary,
   type OrgAckSummaryMember,
@@ -165,6 +168,8 @@ export function AdminDashboardClient() {
   // member the caller can reach; 2nd row on the Documents card.
   const [ackTotal, setAckTotal] = useState(0);
   const [ackMembers, setAckMembers] = useState<OrgAckSummaryMember[]>([]);
+  // CLE-234 — org documents needing attention, counted once each.
+  const [orgDocsAttention, setOrgDocsAttention] = useState<OrgDocAttentionRow[]>([]);
 
   // Today's absences, holidays, birthdays
   const [absentToday, setAbsentToday] = useState<AbsentMember[]>([]);
@@ -269,6 +274,13 @@ export function AdminDashboardClient() {
       setAckMembers(res.members);
     })();
 
+    // CLE-234 — "N organisation documents need attention" row. Soft-fail.
+    (async () => {
+      const res = await getOrgDocumentsNeedingAttention();
+      if (cancelled || !res.success) return;
+      setOrgDocsAttention(res.rows);
+    })();
+
     return () => { cancelled = true; };
   }, []);
 
@@ -279,7 +291,8 @@ export function AdminDashboardClient() {
   const docsAmberCount = docsAttention.filter((r) => r.light.colour === "amber").length;
   const docsBorderColour =
     docsRedCount > 0 ? "border-red-300"
-    : docsAmberCount > 0 || ackTotal > 0 ? "border-amber-300"
+    : orgDocsAttention.some((d) => d.statuses.includes("expired") || d.statuses.includes("overdue_review")) ? "border-red-300"
+    : docsAmberCount > 0 || ackTotal > 0 || orgDocsAttention.length > 0 ? "border-amber-300"
     : "border-green-300";
 
   const sickOpenCount = sickBookings.filter((b) => b.completion_status === "open").length;
@@ -401,17 +414,27 @@ export function AdminDashboardClient() {
           expanded={docsExpanded}
           onToggle={() => setDocsExpanded((e) => !e)}
           borderColour={docsBorderColour}
-          forceInteractive={ackTotal > 0}
+          forceInteractive={ackTotal > 0 || orgDocsAttention.length > 0}
           footer={
-            ackTotal > 0 ? (
-              <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
-                <span>
-                  <span className="font-medium">{ackTotal}</span> awaiting acknowledgement
-                </span>
-                <span className="whitespace-nowrap text-xs text-amber-800/80 dark:text-amber-200/70">
-                  {ackMembers.length} {ackMembers.length === 1 ? memberLabel : pluralize(memberLabel)}
-                </span>
-              </div>
+            ackTotal > 0 || orgDocsAttention.length > 0 ? (
+              <>
+                {ackTotal > 0 && (
+                  <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+                    <span>
+                      <span className="font-medium">{ackTotal}</span> awaiting acknowledgement
+                    </span>
+                    <span className="whitespace-nowrap text-xs text-amber-800/80 dark:text-amber-200/70">
+                      {ackMembers.length} {ackMembers.length === 1 ? memberLabel : pluralize(memberLabel)}
+                    </span>
+                  </div>
+                )}
+                {orgDocsAttention.length > 0 && (
+                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+                    <span className="font-medium">{orgDocsAttention.length}</span>{" "}
+                    organisation {orgDocsAttention.length === 1 ? "document needs" : "documents need"} attention
+                  </div>
+                )}
+              </>
             ) : undefined
           }
           subtitle={
@@ -578,7 +601,7 @@ export function AdminDashboardClient() {
            Rows are pre-sorted server-side: red first (worst-first),
            then amber, tie-break by name. Click a row → Employment
            tab, anchored to the Required Documents card. */}
-      {docsExpanded && (docsAttention.length > 0 || ackMembers.length > 0) && (
+      {docsExpanded && (docsAttention.length > 0 || ackMembers.length > 0 || orgDocsAttention.length > 0) && (
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
@@ -611,6 +634,33 @@ export function AdminDashboardClient() {
                 </button>
               ))}
             </div>
+            )}
+            {/* CLE-234 — organisation documents needing HR action,
+                one row per document. Click → Org Documents page. */}
+            {orgDocsAttention.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase text-muted-foreground">Organisation documents</p>
+                {orgDocsAttention.map((d) => (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => router.push("/documents/organisation")}
+                    className="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted/50 transition-colors text-left"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{d.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">{d.fileName}</p>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                      {d.statuses.map((st) => (
+                        <span key={st} className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap", STATUS_TONE[st].className)}>
+                          {STATUS_LABEL[st]}
+                        </span>
+                      ))}
+                    </div>
+                  </button>
+                ))}
+              </div>
             )}
             {/* CLE-231 follow-up — members who still owe an
                 acknowledgement. Click → that member's Documents tab

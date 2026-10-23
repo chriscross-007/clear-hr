@@ -43,6 +43,8 @@ import {
   uploadOrgDocument,
 } from "@/app/(dashboard)/documents/organisation/org-document-actions";
 import type { OrgDocumentRow } from "@/app/(dashboard)/documents/organisation/org-document-actions-impl";
+import { STATUS_LABEL, STATUS_TONE } from "@/lib/document-status";
+import { cn } from "@/lib/utils";
 
 const TYPE_LABEL: Record<string, string> = {
   organisation_document: "Organisation document",
@@ -129,6 +131,8 @@ export function OrganisationDocsClient({
                 {/* CLE-230 — audience summary, managers only. */}
                 {canEdit && <th className="px-4 py-2 font-medium hidden md:table-cell">Visible to</th>}
                 <th className="px-4 py-2 font-medium hidden lg:table-cell">Expires</th>
+                {/* CLE-234 — expiry + review status, managers only. */}
+                {canEdit && <th className="px-4 py-2 font-medium hidden md:table-cell">Status</th>}
                 <th className="px-4 py-2 font-medium hidden lg:table-cell">Uploaded</th>
                 <th className="px-4 py-2 text-right" />
               </tr>
@@ -166,6 +170,17 @@ export function OrganisationDocsClient({
                     </td>
                   )}
                   <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">{fmtDate(r.expiresOn)}</td>
+                  {canEdit && (
+                    <td className="px-4 py-2 hidden md:table-cell">
+                      <div className="flex flex-wrap gap-1">
+                        {r.statuses.map((st) => (
+                          <span key={st} className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap", STATUS_TONE[st].className)}>
+                            {STATUS_LABEL[st]}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                  )}
                   <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">{fmtDateTime(r.uploadedAt)}</td>
                   <td className="px-4 py-2 text-right">
                     <div className="flex items-center justify-end gap-0.5">

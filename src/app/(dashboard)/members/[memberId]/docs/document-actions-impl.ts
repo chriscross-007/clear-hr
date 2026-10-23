@@ -19,7 +19,7 @@
 
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
-import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
+import { deriveDocumentStatuses, seedNextReviewOn, type DocumentStatus } from "@/lib/document-status";
 import { isRtwSubtype } from "@/lib/documents-rtw";
 import { audienceFromRow, canSeeOrgDoc, loadMemberInvited, type AudienceDbRow } from "@/lib/org-doc-audience";
 import { isHiddenFromCaller, subtypeHiddenFromMember } from "@/lib/documents-member-visibility";
@@ -140,7 +140,7 @@ export async function _getDocumentDetail(
     const { data: doc } = await admin
       .from("document")
       .select(
-        "id, organisation_id, owner_scope, owner_id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, verification_notes, audience_mode, audience_team_ids, audience_rights_profile_ids, audience_include_member_ids, document_subtype!subtype_id(name, requires_verification, visible_to_member)",
+        "id, organisation_id, owner_scope, owner_id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, verification_notes, audience_mode, audience_team_ids, audience_rights_profile_ids, audience_include_member_ids, document_subtype!subtype_id(name, requires_verification, visible_to_member, review_period_months)",
       )
       .eq("id", documentId)
       .single();
@@ -196,8 +196,8 @@ export async function _getDocumentDetail(
     }
 
     const st = doc.document_subtype as unknown as
-      | { name?: string; requires_verification?: boolean; visible_to_member?: boolean }
-      | { name?: string; requires_verification?: boolean; visible_to_member?: boolean }[]
+      | { name?: string; requires_verification?: boolean; visible_to_member?: boolean; review_period_months?: number | null }
+      | { name?: string; requires_verification?: boolean; visible_to_member?: boolean; review_period_months?: number | null }[]
       | null;
     const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
     const requiresVerification = stObj?.requires_verification === true;
@@ -229,6 +229,17 @@ export async function _getDocumentDetail(
       visibleToMember: !subtypeHiddenFromMember(st),
     };
 
+    // CLE-234 — last Mark as reviewed (only audited when it changed the date).
+    const { data: lastReview } = await admin
+      .from("audit_log")
+      .select("actor_name, created_at")
+      .eq("organisation_id", organisationId)
+      .eq("target_id", doc.id as string)
+      .eq("action", "document.reviewed")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
     return {
       success: true,
       detail: {
@@ -240,6 +251,9 @@ export async function _getDocumentDetail(
         verificationNotes: (doc.verification_notes as string | null) ?? null,
         isSelf: isSelf(caller, target.id),
         hasAcknowledgements: await hasAnyAcknowledgement(admin, doc.id as string),
+        reviewPeriodMonths: stObj?.review_period_months ?? null,
+        lastReviewedAt: (lastReview?.created_at as string | undefined) ?? null,
+        lastReviewedByName: (lastReview?.actor_name as string | undefined) ?? null,
       },
     };
   } catch (e) {
@@ -368,7 +382,7 @@ export async function _uploadMemberDocument(
     const { data: subtype } = await admin
       .from("document_subtype")
       .select(
-        "id, type, name, retention_class, expiry_required, employee_can_upload, visible_to_member",
+        "id, type, name, retention_class, expiry_required, employee_can_upload, visible_to_member, review_period_months",
       )
       .eq("id", subtypeId)
       .eq("organisation_id", organisationId)
@@ -414,6 +428,8 @@ export async function _uploadMemberDocument(
         subtype_id: subtype.id,
         expires_on: expiresOn,
         retention_class: subtype.retention_class,
+        // CLE-234 — Next review date seeded from the subtype's interval.
+        next_review_on: seedNextReviewOn(subtype.review_period_months as number | null),
         uploaded_by: caller.memberId,
       })
       .select("id")

@@ -1,5 +1,6 @@
 "use client";
 
+// UNUSED since CLE-232 (nothing imports it) — safe to delete.
 // CLE-207 — Shared Verify/Renew dialog used by both the per-member
 // Documents surface and the org-wide compliance dashboard so HR can
 // clear rows without hopping through to each employee's page.
@@ -20,7 +21,6 @@ import {
 } from "@/components/ui/dialog";
 import {
   verifyMemberDocument,
-  renewMemberDocument,
 } from "@/app/(dashboard)/members/[memberId]/docs/document-actions";
 import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 
@@ -72,11 +72,12 @@ export function VerifyDialog({
   function handleSave() {
     setError(null);
     startTransition(async () => {
-      const fn = mode === "verify" ? verifyMemberDocument : renewMemberDocument;
+      // CLE-234 — Renew removed; Verify is one-off per file.
+      const fn = verifyMemberDocument;
       const res = await fn(documentId, {
         verifiedOn,
         verificationNotes: notes || null,
-        nextReviewOn: nextReviewOn || null,
+
       });
       if (!res.success) { setError(res.error ?? "Failed to save"); return; }
       if (memberId) dispatchMemberDocsChanged(memberId);

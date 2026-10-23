@@ -72,12 +72,9 @@ const ACTION_LABELS: Record<string, string> = {
   "document.expired": "Document expired",
   "document.review_overdue": "Document overdue for review",
   "document.verified": "Document verified",
-  // CLE-232 — The UI now presents re-sightings as "Verify" too (no
-  // "Renew" button), but the server still splits the audit action
-  // names so the trail can tell first-sightings from re-sightings.
-  // The label makes the distinction explicit for anyone reading
-  // historical rows.
+  // Historical only — Renew (re-verify) was removed in CLE-234.
   "document.renewed": "Document verified (re-sighting)",
+  "document.reviewed": "Document marked as reviewed",
   "document.acknowledged": "Document acknowledged",
   "document.remind_sent": "Reminder sent to outstanding acknowledgers",
   "member.expected_documents_added": "Required certifications added",
@@ -132,6 +129,7 @@ const FILTER_ACTIONS = [
   "document.review_overdue",
   "document.verified",
   "document.renewed",
+  "document.reviewed",
   "document.acknowledged",
   "document.remind_sent",
   "member.expected_documents_added",

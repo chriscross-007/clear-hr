@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { seedNextReviewOn } from "@/lib/document-status";
 import { verifyCaller } from "../../lib";
 import {
   ALLOWED_CAMERA_CAPTURE_TYPES as ALLOWED_IMAGE_TYPES,
@@ -106,7 +107,7 @@ export async function POST(request: Request) {
     // Subtype must be member-scope in tenant.
     const { data: subtype } = await admin
       .from("document_subtype")
-      .select("id, type, name, retention_class, expiry_required")
+      .select("id, type, name, retention_class, expiry_required, review_period_months")
       .eq("id", subtypeId)
       .eq("organisation_id", organisationId)
       .single();
@@ -166,6 +167,8 @@ export async function POST(request: Request) {
         subtype_id: subtype.id,
         expires_on: expiresOn,
         retention_class: subtype.retention_class,
+        // CLE-234 — Next review date seeded from the subtype's interval.
+        next_review_on: seedNextReviewOn(subtype.review_period_months as number | null),
         uploaded_by: callerMemberId,
         capture_source: "photo",
       })

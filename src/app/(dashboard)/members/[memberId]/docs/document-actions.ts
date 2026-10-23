@@ -19,8 +19,9 @@ import {
   type MemberDocumentRow,
   type TrashedMemberDocumentRow,
 } from "./document-types";
-import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
+import { deriveDocumentStatuses, nextReviewAfterReview, type DocumentStatus } from "@/lib/document-status";
 import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
+import { canBeVerified } from "@/app/(dashboard)/settings/documents/subtype-types";
 import { loadMemberInvited } from "@/lib/org-doc-audience";
 import { ACK_LOCKED_REPLACE_ERROR, hasAnyAcknowledgement } from "@/lib/document-ack-lock";
 import {
@@ -291,6 +292,11 @@ export interface DocumentDetailContext {
   /** True when anyone has acknowledged this document — its file is
    *  then locked against Replace. */
   hasAcknowledgements: boolean;
+  /** CLE-234 — the subtype's review interval (months); null = None (ad hoc). */
+  reviewPeriodMonths: number | null;
+  /** CLE-234 — last "Mark as reviewed" that changed the date. */
+  lastReviewedAt: string | null;
+  lastReviewedByName: string | null;
 }
 
 export async function getDocumentDetail(
@@ -1350,17 +1356,19 @@ export async function restoreMemberDocument(
 }
 
 // ---------------------------------------------------------------------------
-// Verify + Renew
+// Verify (CLE-234)
 // ---------------------------------------------------------------------------
 //
-// Both write to the same set of columns on the document row; the
-// action names differ so the audit trail shows first-sight vs
-// re-sight cadence.
+// Verify = "HR confirms this copy is genuine". Only for member-supplied
+// kinds (certificate / evidence / attachment) whose subtype requires
+// verification. One-off per file: a new file is a new document and is
+// verified again, so an already-verified document is refused. Verify no
+// longer touches `next_review_on` — Review is independent (see
+// markMemberDocumentReviewed). The former Renew (re-verify) is gone.
 
-async function verifyOrRenew(
-  actionName: "document.verified" | "document.renewed",
+export async function verifyMemberDocument(
   documentId: string,
-  input: { verifiedOn?: string | null; verificationNotes?: string | null; nextReviewOn?: string | null } = {},
+  input: { verifiedOn?: string | null; verificationNotes?: string | null } = {},
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const caller = await resolveCaller();
@@ -1372,16 +1380,19 @@ async function verifyOrRenew(
     }
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, owner_id, type, expires_on, file_name, file_size, document_subtype!subtype_id(name, requires_verification, review_period_months)")
+      .select("id, organisation_id, owner_scope, owner_id, type, expires_on, verified_on, file_name, file_size, document_subtype!subtype_id(name, requires_verification)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== caller.organisationId || doc.owner_scope !== "member") {
       return { success: false, error: "Document not found" };
     }
-    const st = doc.document_subtype as unknown as { name: string; requires_verification: boolean; review_period_months: number | null } | { name: string; requires_verification: boolean; review_period_months: number | null }[] | null;
+    const st = doc.document_subtype as unknown as { name: string; requires_verification: boolean } | { name: string; requires_verification: boolean }[] | null;
     const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
-    if (!stObj?.requires_verification) {
+    if (!canBeVerified(doc.type as string) || !stObj?.requires_verification) {
       return { success: false, error: "This kind of document doesn't need verification." };
+    }
+    if (doc.verified_on) {
+      return { success: false, error: "This document has already been verified." };
     }
     const target = await getTarget(admin, doc.owner_id as string, caller.organisationId);
     if (!target) return { success: false, error: "Document not found" };
@@ -1407,31 +1418,15 @@ async function verifyOrRenew(
     if (doc.expires_on !== null && (doc.expires_on as string) < today) {
       return { success: false, error: "This document has already expired. Upload a current one first." };
     }
-    // CLE-212 follow-up — verify/renew is the moment the review cycle
-    // resets. When the subtype has a `review_period_months`, always
-    // recompute `next_review_on` from the new verification date; any
-    // inbound value (including a stale one the dialog might resend)
-    // is deliberately ignored. Subtypes with no review period leave
-    // the existing `next_review_on` alone — those deadlines are
-    // manually managed via the Review pencil, so verify/renew does
-    // not touch the column at all.
-    const updates: Record<string, unknown> = {
-      verified_on: verifiedOn,
-      verified_by: caller.memberId,
-      verification_notes: input.verificationNotes ?? null,
-      updated_at: new Date().toISOString(),
-    };
-    let nextReviewOn: string | null = null;
-    if (stObj.review_period_months !== null) {
-      const d = new Date(verifiedOn + "T00:00:00Z");
-      d.setUTCMonth(d.getUTCMonth() + Number(stObj.review_period_months));
-      nextReviewOn = d.toISOString().slice(0, 10);
-      updates.next_review_on = nextReviewOn;
-    }
 
     const { error } = await admin
       .from("document")
-      .update(updates)
+      .update({
+        verified_on: verifiedOn,
+        verified_by: caller.memberId,
+        verification_notes: input.verificationNotes ?? null,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", documentId)
       .eq("organisation_id", caller.organisationId);
     if (error) return { success: false, error: error.message };
@@ -1440,7 +1435,7 @@ async function verifyOrRenew(
       organisationId: caller.organisationId,
       actorId: caller.memberId,
       actorName: await callerName(admin, caller.memberId),
-      action: actionName,
+      action: "document.verified",
       targetType: "member_document",
       targetId: documentId,
       targetLabel: (doc.file_name as string) ?? "",
@@ -1448,10 +1443,6 @@ async function verifyOrRenew(
         member: memberDisplay(target),
         type_subtype: typeSubtypeLabel(doc.type as string, stObj.name),
         verified_on: verifiedOn,
-        // Only record next_review_on when we actually touched it —
-        // i.e. the subtype has a review period. Otherwise the doc's
-        // manually-managed deadline is untouched by verify/renew.
-        ...(nextReviewOn !== null ? { next_review_on: nextReviewOn } : {}),
         // CLE-219 — file_name + file_size on every doc audit.
         file_name: doc.file_name as string,
         file_size: doc.file_size as number,
@@ -1466,18 +1457,74 @@ async function verifyOrRenew(
   }
 }
 
-export async function verifyMemberDocument(
-  documentId: string,
-  input: { verifiedOn?: string | null; verificationNotes?: string | null; nextReviewOn?: string | null } = {},
-): Promise<{ success: boolean; error?: string }> {
-  return verifyOrRenew("document.verified", documentId, input);
-}
+// ---------------------------------------------------------------------------
+// Mark as reviewed (CLE-234)
+// ---------------------------------------------------------------------------
+//
+// Sets Next review date = today + the subtype's review interval, or
+// clears it when the interval is None (ad hoc). Clicking again the same
+// day computes the same date, so nothing changes. Audited
+// (`document.reviewed`) only when the date actually changes.
 
-export async function renewMemberDocument(
+export async function markMemberDocumentReviewed(
   documentId: string,
-  input: { verifiedOn?: string | null; verificationNotes?: string | null; nextReviewOn?: string | null } = {},
-): Promise<{ success: boolean; error?: string }> {
-  return verifyOrRenew("document.renewed", documentId, input);
+): Promise<{ success: boolean; error?: string; nextReviewOn?: string | null; changed?: boolean }> {
+  try {
+    const caller = await resolveCaller();
+    if (!caller) return { success: false, error: "Not authenticated" };
+    const admin = getAdmin();
+    if (await isDocumentHiddenFromCaller(admin, documentId, caller.memberId)) {
+      return { success: false, error: "Document not found" };
+    }
+    const { data: doc } = await admin
+      .from("document")
+      .select("id, organisation_id, owner_scope, owner_id, type, next_review_on, file_name, file_size, document_subtype!subtype_id(name, review_period_months)")
+      .eq("id", documentId)
+      .single();
+    if (!doc || doc.organisation_id !== caller.organisationId || doc.owner_scope !== "member") {
+      return { success: false, error: "Document not found" };
+    }
+    const target = await getTarget(admin, doc.owner_id as string, caller.organisationId);
+    if (!target) return { success: false, error: "Document not found" };
+    if (!caller.canUpdateTarget({ memberId: target.id, teamId: target.team_id })) {
+      return { success: false, error: "You don't have permission to change this document." };
+    }
+    const st = doc.document_subtype as unknown as { name?: string; review_period_months?: number | null } | { name?: string; review_period_months?: number | null }[] | null;
+    const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
+
+    const oldDate = (doc.next_review_on as string | null) ?? null;
+    const newDate = nextReviewAfterReview(stObj?.review_period_months ?? null);
+    if (newDate === oldDate) return { success: true, nextReviewOn: oldDate, changed: false };
+
+    const { error } = await admin
+      .from("document")
+      .update({ next_review_on: newDate, updated_at: new Date().toISOString() })
+      .eq("id", documentId)
+      .eq("organisation_id", caller.organisationId);
+    if (error) return { success: false, error: error.message };
+
+    await logAudit({
+      organisationId: caller.organisationId,
+      actorId: caller.memberId,
+      actorName: await callerName(admin, caller.memberId),
+      action: "document.reviewed",
+      targetType: "member_document",
+      targetId: documentId,
+      targetLabel: (doc.file_name as string) ?? "",
+      changes: { next_review_on: { old: oldDate, new: newDate } },
+      metadata: {
+        member: memberDisplay(target),
+        type_subtype: typeSubtypeLabel(doc.type as string, stObj?.name ?? null),
+        file_name: doc.file_name as string,
+        file_size: doc.file_size as number,
+      },
+    });
+
+    revalidatePath(`/members/${doc.owner_id}/docs`);
+    return { success: true, nextReviewOn: newDate, changed: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
+  }
 }
 
 // ---------------------------------------------------------------------------

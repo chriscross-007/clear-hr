@@ -18,7 +18,7 @@ import type {
   DocumentSubtypeDto,
   DocumentSubtypeWritePayload,
 } from "./subtype-types";
-import { canBeRequired, hasMemberVisibilitySwitch } from "./subtype-types";
+import { canBeRequired, canBeVerified, hasMemberVisibilitySwitch } from "./subtype-types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -107,8 +107,12 @@ function payloadToRow(p: DocumentSubtypeWritePayload): Record<string, unknown> {
     employee_can_upload: p.employeeCanUpload,
     retention_class: p.retentionClass,
     expiry_required: p.expiryRequired,
-    requires_verification: p.requiresVerification,
-    review_period_months: p.reviewPeriodMonths,
+    // CLE-234 — verification only applies to member-supplied types.
+    requires_verification: canBeVerified(p.type) ? p.requiresVerification : false,
+    review_period_months:
+      p.reviewPeriodMonths !== null && Number.isFinite(p.reviewPeriodMonths) && p.reviewPeriodMonths > 0
+        ? Math.floor(p.reviewPeriodMonths)
+        : null,
     // CLE-231 — only certificates can be required; only Employment
     // subtypes can be hidden from the member. Enforced here so a stale
     // client can't write an invalid combination.

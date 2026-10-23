@@ -36,17 +36,23 @@ export interface SweepResult {
   errors: string[];
 }
 
-// CLE-212 follow-up — "audit once per verification cycle" dedupe.
+// CLE-212 follow-up — "audit once per cycle" dedupe.
 // Returns true when the given transition action has already been
-// audited for this document since its most recent verify/renew (i.e.
-// the current verification cycle). Used to stop the sweep firing the
-// same `document.expired` / `document.review_overdue` row more than
-// once for the same state.
+// audited for this document since the last event that could have
+// changed its state. Stops the sweep firing the same
+// `document.expired` / `document.review_overdue` row more than once.
 //
-// Semantics: fetch the newest audit row on the doc among {this
-// transition action, document.verified, document.renewed}. If the
-// newest is the transition action, we've already audited this cycle.
-// If the newest is a verify/renew (or nothing matches), we haven't.
+// CLE-234 — expiry and review are independent of verification. A
+// cycle resets on:
+//   - expired: a metadata edit (expiry date changed) or a (legacy)
+//     verify / renew;
+//   - review_overdue: Mark as reviewed, a metadata edit (Next review
+//     date changed) or a (legacy) verify / renew.
+const RESET_ACTIONS: Record<"document.expired" | "document.review_overdue", string[]> = {
+  "document.expired": ["document.metadata_updated", "document.verified", "document.renewed"],
+  "document.review_overdue": ["document.reviewed", "document.metadata_updated", "document.verified", "document.renewed"],
+};
+
 async function alreadyAuditedThisCycle(
   admin: SupabaseClient,
   targetId: string,
@@ -56,7 +62,7 @@ async function alreadyAuditedThisCycle(
     .from("audit_log")
     .select("action")
     .eq("target_id", targetId)
-    .in("action", [transitionAction, "document.verified", "document.renewed"])
+    .in("action", [transitionAction, ...RESET_ACTIONS[transitionAction]])
     .order("created_at", { ascending: false })
     .limit(1);
   return data?.[0]?.action === transitionAction;
@@ -73,6 +79,7 @@ const TYPE_DISPLAY: Record<string, string> = {
   policy: "Policy",
   handbook: "Handbook",
   attachment: "Attachment",
+  organisation_document: "Organisation document",
   other: "Other",
 };
 
@@ -112,8 +119,7 @@ export async function runDocumentsSweep(
   //
   // CLE-212 follow-up. Was "expires_on = yesterday" (fires once on the
   // transition day, misses everything if the sweep didn't run or the
-  // date was backdated). Now "expires_on ≤ today, once per verification
-  // cycle" — matches the doc's live-derived `expired` status, so the
+  // date was backdated). Now "expires_on ≤ today, once per cycle" — matches the doc's live-derived `expired` status, so the
   // audit log stays honest about the state the user sees.
   // ---------------------------------------------------------------------------
   let expired = 0;
@@ -123,8 +129,7 @@ export async function runDocumentsSweep(
       .select(
         "id, organisation_id, file_name, file_size, type, owner_scope, owner_id, expires_on, document_subtype!subtype_id(name, requires_verification)",
       )
-      .lte("expires_on", today)
-      .not("verified_on", "is", null);
+      .lte("expires_on", today);
     if (opts?.organisationId) q = q.eq("organisation_id", opts.organisationId);
     const { data, error } = await q;
     if (error) {
@@ -136,7 +141,7 @@ export async function runDocumentsSweep(
       for (const row of data ?? []) {
         const st = row.document_subtype as unknown as { name?: string; requires_verification?: boolean } | { name?: string; requires_verification?: boolean }[] | null;
         const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
-        if (!stObj?.requires_verification) continue;
+        // CLE-234 — applies whether or not the subtype needs verification.
         if (await alreadyAuditedThisCycle(admin, row.id as string, "document.expired")) continue;
         const member = row.owner_id ? memMap.get(row.owner_id as string) ?? null : null;
         await logAudit({
@@ -148,7 +153,7 @@ export async function runDocumentsSweep(
           targetId: row.id as string,
           targetLabel: (row.file_name as string) ?? "",
           metadata: {
-            type_subtype: typeSubtypeLabel(row.type as string, stObj.name ?? null),
+            type_subtype: typeSubtypeLabel(row.type as string, stObj?.name ?? null),
             ...(member ? { member } : {}),
             // CLE-219 — file_name + file_size on every doc audit.
             file_name: (row.file_name as string) ?? "",
@@ -175,8 +180,7 @@ export async function runDocumentsSweep(
       .select(
         "id, organisation_id, file_name, file_size, type, owner_scope, owner_id, expires_on, document_subtype!subtype_id(name, requires_verification)",
       )
-      .lte("next_review_on", today)
-      .not("verified_on", "is", null);
+      .lte("next_review_on", today);
     if (opts?.organisationId) q = q.eq("organisation_id", opts.organisationId);
     const { data, error } = await q;
     if (error) {
@@ -190,7 +194,7 @@ export async function runDocumentsSweep(
         if (row.expires_on !== null && (row.expires_on as string) <= today) continue;
         const st = row.document_subtype as unknown as { name?: string; requires_verification?: boolean } | { name?: string; requires_verification?: boolean }[] | null;
         const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
-        if (!stObj?.requires_verification) continue;
+        // CLE-234 — applies whether or not the subtype needs verification.
         if (await alreadyAuditedThisCycle(admin, row.id as string, "document.review_overdue")) continue;
         const member = row.owner_id ? memMap.get(row.owner_id as string) ?? null : null;
         await logAudit({
@@ -202,7 +206,7 @@ export async function runDocumentsSweep(
           targetId: row.id as string,
           targetLabel: (row.file_name as string) ?? "",
           metadata: {
-            type_subtype: typeSubtypeLabel(row.type as string, stObj.name ?? null),
+            type_subtype: typeSubtypeLabel(row.type as string, stObj?.name ?? null),
             ...(member ? { member } : {}),
             // CLE-219 — file_name + file_size on every doc audit.
             file_name: (row.file_name as string) ?? "",

@@ -47,7 +47,10 @@ import {
   RETENTION_CLASSES,
   scopeForType,
   canBeRequired,
+  canBeVerified,
   hasMemberVisibilitySwitch,
+  REVIEW_INTERVAL_OPTIONS,
+  reviewIntervalLabel,
   type DocumentSubtypeDto,
   type DocumentSubtypeWritePayload,
   type DocumentType,
@@ -370,7 +373,6 @@ function SubtypeEditorDialog({
           employeeCanUpload: false,
           requiresVerification: false,
           trackablePerMember: false,
-          reviewPeriodMonths: null,
           // Retention class is a GDPR concept — how long personal-data
           // records survive after an employee leaves. Org docs have no
           // personal data and no auto-disposal, so the value is inert.
@@ -457,12 +459,16 @@ function SubtypeEditorDialog({
                   value={payload.employeeCanUpload}
                   onChange={(v) => update("employeeCanUpload", v)}
                 />
-                <FlagRow
-                  label="Requires HR verification"
-                  description="Documents of this subtype must be sighted by HR."
-                  value={payload.requiresVerification}
-                  onChange={(v) => update("requiresVerification", v)}
-                />
+                {/* CLE-234 — Verify only applies to documents a member
+                    supplies (Certifications, RTW evidence, Other). */}
+                {canBeVerified(payload.type) && (
+                  <FlagRow
+                    label="Requires HR verification"
+                    description="HR confirms each file is a true copy (e.g. has seen the original)."
+                    value={payload.requiresVerification}
+                    onChange={(v) => update("requiresVerification", v)}
+                  />
+                )}
                 {/* CLE-231 — only certificates can be required of a
                     member (they appear as placeholders on the member's
                     Certifications tab once required). */}
@@ -490,9 +496,7 @@ function SubtypeEditorDialog({
             {/* Applies to both scopes. */}
             <FlagRow
               label="Expiry required"
-              description={isOrgScope
-                ? "Doc has an expiry / review-by date."
-                : "Upload flow requires an expiry date."}
+              description="An expiry date must be entered on upload. Use only when the document really expires — otherwise use a review interval."
               value={payload.expiryRequired}
               onChange={(v) => update("expiryRequired", v)}
             />
@@ -506,34 +510,33 @@ function SubtypeEditorDialog({
             />
           </div>
 
-          {/* Review interval is a per-member concept (DBS every 3 yrs
-              etc.). Meaningless for org docs.
-              inputMode="numeric" + pattern gets a numeric-only keypad
-              on mobile without the desktop spinner arrows the plain
-              type="number" renders. Empty string = no interval set. */}
-          {!isOrgScope && (
-            <div className="flex flex-col gap-3">
-              <div className="space-y-2">
-                <Label>Review interval (months)</Label>
-                <p className="text-xs text-muted-foreground">
-                  Check and reverify after a number of months.
-                </p>
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={payload.reviewPeriodMonths ?? ""}
-                  onChange={(e) => {
-                    const raw = e.target.value.replace(/[^0-9]/g, "");
-                    update(
-                      "reviewPeriodMonths",
-                      raw === "" ? null : Number(raw),
-                    );
-                  }}
-                />
-              </div>
-            </div>
-          )}
+          {/* CLE-234 — Review interval applies to every type, both
+              scopes. None = ad hoc (no date seeded; an admin can set a
+              Next review date by hand). A number seeds Next review date
+              = upload date + interval, and "Mark as reviewed" rolls it
+              to today + interval. */}
+          <div className="space-y-2">
+            <Label>Review interval</Label>
+            <p className="text-xs text-muted-foreground">
+              How often HR should check whether these documents need updating.
+              None means reviews are set by hand when needed.
+            </p>
+            <Select
+              value={payload.reviewPeriodMonths === null ? "none" : String(payload.reviewPeriodMonths)}
+              onValueChange={(v) => update("reviewPeriodMonths", v === "none" ? null : Number(v))}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">{reviewIntervalLabel(null)}</SelectItem>
+                {Array.from(new Set([
+                  ...REVIEW_INTERVAL_OPTIONS,
+                  ...(payload.reviewPeriodMonths !== null ? [payload.reviewPeriodMonths] : []),
+                ])).sort((a, b) => a - b).map((m) => (
+                  <SelectItem key={m} value={String(m)}>{reviewIntervalLabel(m)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <DialogFooter>

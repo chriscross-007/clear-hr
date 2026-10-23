@@ -56,7 +56,6 @@ import {
   softDeleteMemberDocument,
   restoreMemberDocument,
   verifyMemberDocument,
-  renewMemberDocument,
   backdateDisposalQueue,
   getMemberRequiredDocumentRows,
 } from "./document-actions";

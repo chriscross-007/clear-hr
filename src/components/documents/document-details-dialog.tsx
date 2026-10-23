@@ -51,7 +51,7 @@ import {
   postDocumentComment,
   updateMemberDocumentMetadata,
   verifyMemberDocument,
-  renewMemberDocument,
+  markMemberDocumentReviewed,
   getMemberDocumentSignedUrl,
   getSubtypesForUpload,
   replaceMemberDocument,
@@ -63,7 +63,8 @@ import {
   queueCaptureTask,
   cancelCaptureTask,
 } from "@/app/(dashboard)/members/[memberId]/docs/capture-actions";
-import { replaceOrgDocument } from "@/app/(dashboard)/documents/organisation/org-document-actions";
+import { replaceOrgDocument, updateOrgDocumentMetadata, markOrgDocumentReviewed } from "@/app/(dashboard)/documents/organisation/org-document-actions";
+import { canBeVerified, reviewIntervalLabel } from "@/app/(dashboard)/settings/documents/subtype-types";
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
@@ -604,10 +605,8 @@ export function DocumentDetailsDialog({
                     acknowledge dialog. The Acknowledgement section
                     (below) stays visible so an employee can still
                     click "I have read and understood".
-                    Verify + Review were merged into a single Verify
-                    section (CLE-232) — "Last verified" + "Next verify"
-                    live together, driven by `verified_on` + the
-                    subtype's `review_period_months`. */}
+                    CLE-234 — Verify (member-supplied kinds only) and
+                    Review are separate sections again. */}
                 {!hideHrMetadata && (
                   <>
                     {/* CLE-230 — Visible to (org docs, managers only).
@@ -628,9 +627,19 @@ export function DocumentDetailsDialog({
                       />
                     </div>
 
-                    {/* Verify (incorporates the former Review section) */}
+                    {/* CLE-234 — Verify (member-supplied kinds only) and
+                        Review are independent sections. */}
+                    {canBeVerified(detail.row.type) && (
+                      <div className="border-b p-4">
+                        <VerifySection
+                          detail={detail}
+                          canUpdate={effectiveCanUpdate && !employeeStripped}
+                          onSaved={refreshDetailAndHistory}
+                        />
+                      </div>
+                    )}
                     <div className="border-b p-4">
-                      <VerifySection
+                      <ReviewSection
                         detail={detail}
                         canUpdate={effectiveCanUpdate && !employeeStripped}
                         onSaved={refreshDetailAndHistory}
@@ -911,6 +920,18 @@ function PencilButton({ onClick, label }: { onClick: () => void; label: string }
   );
 }
 
+/** Org documents and member documents have separate metadata actions
+ *  (each refuses the other's scope with "Document not found"). Pick by
+ *  the document's type. */
+function updateDocumentMetadata(
+  detail: DocumentDetailContext,
+  patch: { subtypeId?: string | null; expiresOn?: string | null; nextReviewOn?: string | null },
+) {
+  return detail.row.type === "organisation_document"
+    ? updateOrgDocumentMetadata(detail.row.id, patch)
+    : updateMemberDocumentMetadata(detail.row.id, patch);
+}
+
 function SubtypePencil({
   detail,
   subtypes,
@@ -928,7 +949,7 @@ function SubtypePencil({
   function save() {
     setError(null);
     startTransition(async () => {
-      const res = await updateMemberDocumentMetadata(detail.row.id, {
+      const res = await updateDocumentMetadata(detail, {
         subtypeId: subtypeId || null,
       });
       if (!res.success) { setError(res.error ?? "Save failed"); return; }
@@ -986,7 +1007,7 @@ function ExpiryPencil({
   function save() {
     setError(null);
     startTransition(async () => {
-      const res = await updateMemberDocumentMetadata(detail.row.id, {
+      const res = await updateDocumentMetadata(detail, {
         expiresOn: expiresOn || null,
       });
       if (!res.success) { setError(res.error ?? "Save failed"); return; }
@@ -1012,11 +1033,13 @@ function ExpiryPencil({
         <div className="space-y-1">
           <Label className="text-xs">Expires on</Label>
           <Input type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
-          <p className="text-[10px] text-muted-foreground">Leave blank if the document has no expiry.</p>
+          <p className="text-[10px] text-muted-foreground">
+            Leave blank if the document has no expiry. If the file has no real expiry date, set a Next review date instead.
+          </p>
         </div>
         <div className="flex justify-end gap-2">
           <Button size="sm" variant="outline" onClick={() => setOpen(false)} disabled={pending}>Cancel</Button>
-          <Button size="sm" onClick={save} disabled={pending}>Save</Button>
+          <Button size="sm" onClick={save} disabled={pending || (expiresOn || null) === (detail.row.expiresOn ?? null)}>Save</Button>
         </div>
       </PopoverContent>
     </Popover>
@@ -1047,38 +1070,15 @@ function ExpirySection({
   );
 }
 
-// CLE-232 — Verify now owns both "Last verified" and "Next verify"
-// (what was previously a separate "Review" section). The three
-// vocabulary variants in the previous UI — Verify / Review / Renew —
-// described the same mental model ("HR has sighted this document and
-// attests it's still valid") and conflated the user. One section, one
-// verb.
+// CLE-234 — Verify and Review are independent.
 //
-// Shape:
-//   - "Last verified: <date> by <actor>"  (or "Not yet verified")
-//   - "Next verify: <date>"               (or "No review required";
-//                                          or hidden until first verify)
-//   - [Verify] button → confirmation popover → sets verified_on =
-//     today + recomputes next_review_on from the subtype's
-//     review_period_months (server-side; `verifyOrRenew`).
-//
-// Deliberately omitted vs the old UI:
-//   - Date picker on the Verify button. Always "today". The server
-//     still accepts an optional verifiedOn and still rejects future
-//     dates / past-expiry docs; the UI just doesn't surface the field.
-//     If HR ever needs to backdate a verification, it comes back as a
-//     Tier 2 affordance.
-//   - Pencil on "Next verify". The review cadence is a tenant-level
-//     policy on `document_subtype.review_period_months`; overriding
-//     it per-doc is a Tier 2 power-user affordance. Removing the
-//     pencil cuts one more thing that can be edited by mistake.
-//
-// Server dispatch is still split: `verifyMemberDocument` on first
-// sighting, `renewMemberDocument` on subsequent (so the audit trail
-// retains the distinction via `document.verified` vs
-// `document.renewed`). The UI deliberately presents both as the same
-// button labelled "Verify" — the two audit action names relabel to
-// read coherently in audit-client.tsx's ACTION_LABELS.
+// Verify = "HR confirms this copy is genuine". Shown only for kinds a
+// member supplies (certificate / RTW evidence / attachment), one-off per
+// file: once verified there is no button (a new file is a new document).
+// Review = "check whether this still needs updating", for every kind:
+// Next review date (editable), the subtype's interval, the last review,
+// and Mark as reviewed (today + interval, or clear when the interval is
+// None; repeat clicks the same day change nothing).
 function VerifySection({
   detail,
   canUpdate,
@@ -1088,9 +1088,7 @@ function VerifySection({
   canUpdate: boolean;
   onSaved: () => Promise<void>;
 }) {
-  const requires = detail.row.requiresVerification;
-
-  if (!requires) {
+  if (!detail.row.requiresVerification) {
     return (
       <div>
         <p className="text-base font-semibold">Verify</p>
@@ -1100,38 +1098,22 @@ function VerifySection({
   }
 
   const verifiedOn = detail.row.verifiedOn;
-  const nextReviewOn = detail.row.nextReviewOn;
-
   return (
     <div>
       <p className="text-base font-semibold">Verify</p>
-      <div className="mt-1 space-y-1 text-sm">
-        <p>
-          {verifiedOn ? (
-            <>
-              Last verified: <strong>{fmtDate(verifiedOn)}</strong>
-              {detail.verifiedByName && (
-                <span className="text-muted-foreground"> by {detail.verifiedByName}</span>
-              )}
-            </>
-          ) : (
-            <span className="text-muted-foreground">Not yet verified</span>
-          )}
-        </p>
-        {/* Next verify — hidden until the first verification lands,
-            then shows either the subtype-driven re-sight date or "No
-            review required" when the subtype has no cadence. */}
-        {verifiedOn && (
-          <p>
-            {nextReviewOn ? (
-              <>Next verify: <strong>{fmtDate(nextReviewOn)}</strong></>
-            ) : (
-              <span className="text-muted-foreground">No review required</span>
+      <p className="mt-1 text-sm">
+        {verifiedOn ? (
+          <>
+            Verified <strong>{fmtDate(verifiedOn)}</strong>
+            {detail.verifiedByName && (
+              <span className="text-muted-foreground"> by {detail.verifiedByName}</span>
             )}
-          </p>
+          </>
+        ) : (
+          <span className="text-muted-foreground">Not yet verified</span>
         )}
-      </div>
-      {canUpdate && (
+      </p>
+      {canUpdate && !verifiedOn && (
         <div className="mt-3">
           <VerifyButton detail={detail} onSaved={onSaved} />
         </div>
@@ -1150,24 +1132,16 @@ function VerifyButton({
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  // Which server action to dispatch to is derived from state, not
-  // button copy. The button always reads "Verify". The server
-  // distinguishes first-sighting vs re-sighting via two action names
-  // for the audit trail.
-  const isReSighting = detail.row.verifiedOn !== null;
 
   function save() {
     setError(null);
     startTransition(async () => {
-      const fn = isReSighting ? renewMemberDocument : verifyMemberDocument;
-      // Always "today". No `nextReviewOn` sent — the server
-      // recomputes it from the subtype's review_period_months.
       const today = new Date().toISOString().slice(0, 10);
-      const verifyRes = await fn(detail.row.id, {
+      const res = await verifyMemberDocument(detail.row.id, {
         verifiedOn: today,
         verificationNotes: null,
       });
-      if (!verifyRes.success) { setError(verifyRes.error ?? "Verify failed"); return; }
+      if (!res.success) { setError(res.error ?? "Verify failed"); return; }
       setOpen(false);
       await onSaved();
     });
@@ -1181,12 +1155,132 @@ function VerifyButton({
       <PopoverContent className="w-80 space-y-2">
         <p className="text-sm font-medium">Mark as verified today?</p>
         <p className="text-xs text-muted-foreground">
-          This records that you&apos;ve sighted the document and it&apos;s still valid as of today.
+          This records that you&apos;ve checked this file is a true copy of the original.
         </p>
         {error && <div className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">{error}</div>}
         <div className="flex justify-end gap-2 pt-1">
           <Button size="sm" variant="outline" onClick={() => setOpen(false)} disabled={pending}>Cancel</Button>
           <Button size="sm" onClick={save} disabled={pending}>Confirm</Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function ReviewSection({
+  detail,
+  canUpdate,
+  onSaved,
+}: {
+  detail: DocumentDetailContext;
+  canUpdate: boolean;
+  onSaved: () => Promise<void>;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const nextReviewOn = detail.row.nextReviewOn;
+  const interval = detail.reviewPeriodMonths;
+
+  function markReviewed() {
+    setError(null);
+    setNote(null);
+    startTransition(async () => {
+      const res = detail.row.type === "organisation_document"
+        ? await markOrgDocumentReviewed(detail.row.id)
+        : await markMemberDocumentReviewed(detail.row.id);
+      if (!res.success) { setError(res.error ?? "Couldn't mark as reviewed"); return; }
+      if (!res.changed) { setNote("Already reviewed today — nothing to change."); return; }
+      await onSaved();
+    });
+  }
+
+  const lastReviewed = detail.lastReviewedAt
+    ? new Date(detail.lastReviewedAt).toLocaleDateString("en-GB", {
+        day: "2-digit", month: "short", year: "numeric",
+      })
+    : null;
+
+  return (
+    <div>
+      <p className="text-base font-semibold">Review</p>
+      <div className="mt-1 space-y-1 text-sm">
+        <div className="flex items-center gap-2">
+          <span>
+            Next review{" "}
+            {nextReviewOn ? <strong>{fmtDate(nextReviewOn)}</strong> : <span className="text-muted-foreground">not set</span>}
+          </span>
+          {canUpdate && <NextReviewPencil detail={detail} onSaved={onSaved} />}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {interval === null
+            ? "Ad hoc — set a review date when one is needed."
+            : `Reviewed every ${reviewIntervalLabel(interval).replace(/ \(.*\)$/, "")}.`}
+        </p>
+        {lastReviewed && (
+          <p className="text-xs text-muted-foreground">
+            Last reviewed {lastReviewed}
+            {detail.lastReviewedByName && <> by {detail.lastReviewedByName}</>}
+          </p>
+        )}
+      </div>
+      {error && <div className="mt-2 rounded-md bg-destructive/10 p-2 text-xs text-destructive">{error}</div>}
+      {note && <p className="mt-2 text-xs text-muted-foreground">{note}</p>}
+      {canUpdate && nextReviewOn && (
+        <div className="mt-3 flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={markReviewed} disabled={pending}>
+            {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Mark as reviewed
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            {interval === null ? "Clears the review date." : `Sets the next review to today + ${reviewIntervalLabel(interval).replace(/ \(.*\)$/, "")}.`}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NextReviewPencil({
+  detail,
+  onSaved,
+}: {
+  detail: DocumentDetailContext;
+  onSaved: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState<string>(detail.row.nextReviewOn ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function save() {
+    setError(null);
+    startTransition(async () => {
+      const res = await updateDocumentMetadata(detail, { nextReviewOn: value || null });
+      if (!res.success) { setError(res.error ?? "Save failed"); return; }
+      setOpen(false);
+      await onSaved();
+    });
+  }
+
+  return (
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) setValue(detail.row.nextReviewOn ?? ""); }}>
+      <PopoverTrigger asChild>
+        <span>
+          <PencilButton onClick={() => setOpen(true)} label="Edit next review date" />
+        </span>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 space-y-2">
+        <p className="text-sm font-medium">Next review date</p>
+        {error && <div className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">{error}</div>}
+        <div className="space-y-1">
+          <Label className="text-xs">Review by</Label>
+          <Input type="date" value={value} onChange={(e) => setValue(e.target.value)} />
+          <p className="text-[10px] text-muted-foreground">Leave blank for no review date.</p>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button size="sm" variant="outline" onClick={() => setOpen(false)} disabled={pending}>Cancel</Button>
+          <Button size="sm" onClick={save} disabled={pending || (value || null) === (detail.row.nextReviewOn ?? null)}>Save</Button>
         </div>
       </PopoverContent>
     </Popover>
@@ -1307,7 +1401,7 @@ function AcknowledgementSection({
           )}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          See the Compliance dashboard's Acknowledgements tab for the full list.
+          See the Compliance dashboard&apos;s Acknowledgements tab for the full list.
         </p>
       </div>
     );
@@ -1371,13 +1465,6 @@ function AdminAcknowledgementSection({
     </div>
   );
 }
-
-// CLE-232 — The former ReviewSection + ReviewPencil moved into
-// VerifySection above. The "Next verify" line reads straight from
-// `detail.row.nextReviewOn`, which the server recomputes from the
-// subtype's review_period_months on every Verify. Overriding the date
-// per-doc is no longer a UI affordance — change the subtype's
-// `review_period_months` in Settings → Document Subtypes instead.
 
 // ---------------------------------------------------------------------------
 // Replace file (CLE-217).

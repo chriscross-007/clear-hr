@@ -64,6 +64,28 @@ export function hasMemberVisibilitySwitch(type: DocumentType | string): boolean 
   return type === "contract";
 }
 
+/** CLE-234 — Verify ("this copy is genuine") only applies to documents
+ *  a member can supply: Certifications (certificate + RTW evidence) and
+ *  Other (attachment). Employment and Organisation documents are issued
+ *  by the organisation, so there is nothing to verify. */
+export function canBeVerified(type: DocumentType | string): boolean {
+  return type === "certificate" || type === "evidence" || type === "attachment";
+}
+
+/** CLE-234 — Review interval choices offered in the subtype editor.
+ *  `null` = None (review is ad hoc: no date seeded, an admin may set
+ *  one by hand on any document). */
+export const REVIEW_INTERVAL_OPTIONS: number[] = [1, 2, 3, 6, 9, 12, 18, 24, 36, 48, 60];
+
+export function reviewIntervalLabel(months: number | null): string {
+  if (months === null) return "None (ad hoc)";
+  if (months % 12 === 0) {
+    const y = months / 12;
+    return `${months} months (${y} year${y === 1 ? "" : "s"})`;
+  }
+  return `${months} month${months === 1 ? "" : "s"}`;
+}
+
 export const RETENTION_CLASSES = [
   "contract",
   "certificate",
