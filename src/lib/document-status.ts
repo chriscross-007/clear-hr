@@ -1,3 +1,5 @@
+import { canBeVerified } from "@/app/(dashboard)/settings/documents/subtype-types";
+
 // CLE-207 — Pure status derivation. Called by list responses and the
 // compliance dashboard so every surface agrees on what a document's
 // state is. No server-only dependencies — safe to import from client
@@ -98,6 +100,20 @@ export function addMonthsIso(iso: string, months: number): string {
  *  no-ops. */
 export function nextReviewAfterReview(reviewPeriodMonths: number | null | undefined, todayIso?: string): string | null {
   return seedNextReviewOn(reviewPeriodMonths, todayIso);
+}
+
+/** CLE-234 — Next review date for a newly uploaded document. The review
+ *  clock starts when the document is live: on upload when its subtype
+ *  doesn't need verification, otherwise on Verify (see
+ *  verifyMemberDocument) — so a doc awaiting verification starts with
+ *  no review date. */
+export function seedNextReviewOnUpload(subtype: {
+  type: string;
+  requires_verification?: boolean | null;
+  review_period_months?: number | null;
+}): string | null {
+  if (canBeVerified(subtype.type) && subtype.requires_verification === true) return null;
+  return seedNextReviewOn(subtype.review_period_months ?? null);
 }
 
 /** CLE-234 — the Next review date a new document of a subtype starts

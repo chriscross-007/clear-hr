@@ -19,7 +19,7 @@
 
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
-import { deriveDocumentStatuses, seedNextReviewOn, type DocumentStatus } from "@/lib/document-status";
+import { deriveDocumentStatuses, seedNextReviewOnUpload, type DocumentStatus } from "@/lib/document-status";
 import { isRtwSubtype } from "@/lib/documents-rtw";
 import { audienceFromRow, canSeeOrgDoc, loadMemberInvited, type AudienceDbRow } from "@/lib/org-doc-audience";
 import { isHiddenFromCaller, subtypeHiddenFromMember } from "@/lib/documents-member-visibility";
@@ -382,7 +382,7 @@ export async function _uploadMemberDocument(
     const { data: subtype } = await admin
       .from("document_subtype")
       .select(
-        "id, type, name, retention_class, expiry_required, employee_can_upload, visible_to_member, review_period_months",
+        "id, type, name, retention_class, expiry_required, employee_can_upload, visible_to_member, review_period_months, requires_verification",
       )
       .eq("id", subtypeId)
       .eq("organisation_id", organisationId)
@@ -428,8 +428,8 @@ export async function _uploadMemberDocument(
         subtype_id: subtype.id,
         expires_on: expiresOn,
         retention_class: subtype.retention_class,
-        // CLE-234 — Next review date seeded from the subtype's interval.
-        next_review_on: seedNextReviewOn(subtype.review_period_months as number | null),
+        // CLE-234 — Next review date seeded from the subtype's interval (on Verify instead when verification applies).
+        next_review_on: seedNextReviewOnUpload(subtype as { type: string; requires_verification?: boolean | null; review_period_months?: number | null }),
         uploaded_by: caller.memberId,
       })
       .select("id")

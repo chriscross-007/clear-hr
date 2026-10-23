@@ -1213,7 +1213,9 @@ function ReviewSection({
           {canUpdate && <NextReviewPencil detail={detail} onSaved={onSaved} />}
         </div>
         <p className="text-xs text-muted-foreground">
-          {interval === null
+          {interval !== null && detail.row.requiresVerification && !detail.row.verifiedOn && !nextReviewOn
+            ? `Reviewed every ${reviewIntervalLabel(interval).replace(/ \(.*\)$/, "")}, starting when the document is verified.`
+            : interval === null
             ? "Ad hoc — set a review date when one is needed."
             : `Reviewed every ${reviewIntervalLabel(interval).replace(/ \(.*\)$/, "")}.`}
         </p>

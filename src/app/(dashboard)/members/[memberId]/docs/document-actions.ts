@@ -19,7 +19,7 @@ import {
   type MemberDocumentRow,
   type TrashedMemberDocumentRow,
 } from "./document-types";
-import { deriveDocumentStatuses, nextReviewAfterReview, type DocumentStatus } from "@/lib/document-status";
+import { deriveDocumentStatuses, nextReviewAfterReview, seedNextReviewOn, type DocumentStatus } from "@/lib/document-status";
 import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
 import { canBeVerified } from "@/app/(dashboard)/settings/documents/subtype-types";
 import { loadMemberInvited } from "@/lib/org-doc-audience";
@@ -1362,9 +1362,10 @@ export async function restoreMemberDocument(
 // Verify = "HR confirms this copy is genuine". Only for member-supplied
 // kinds (certificate / evidence / attachment) whose subtype requires
 // verification. One-off per file: a new file is a new document and is
-// verified again, so an already-verified document is refused. Verify no
-// longer touches `next_review_on` — Review is independent (see
-// markMemberDocumentReviewed). The former Renew (re-verify) is gone.
+// verified again, so an already-verified document is refused. Verifying
+// starts the review clock: Next review date = verified date + interval
+// (upload doesn't seed it for kinds that need verification). The former
+// Renew (re-verify) is gone; later checks use Mark as reviewed.
 
 export async function verifyMemberDocument(
   documentId: string,
@@ -1380,13 +1381,13 @@ export async function verifyMemberDocument(
     }
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, owner_id, type, expires_on, verified_on, file_name, file_size, document_subtype!subtype_id(name, requires_verification)")
+      .select("id, organisation_id, owner_scope, owner_id, type, expires_on, verified_on, file_name, file_size, document_subtype!subtype_id(name, requires_verification, review_period_months)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== caller.organisationId || doc.owner_scope !== "member") {
       return { success: false, error: "Document not found" };
     }
-    const st = doc.document_subtype as unknown as { name: string; requires_verification: boolean } | { name: string; requires_verification: boolean }[] | null;
+    const st = doc.document_subtype as unknown as { name: string; requires_verification: boolean; review_period_months?: number | null } | { name: string; requires_verification: boolean; review_period_months?: number | null }[] | null;
     const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
     if (!canBeVerified(doc.type as string) || !stObj?.requires_verification) {
       return { success: false, error: "This kind of document doesn't need verification." };
@@ -1419,12 +1420,18 @@ export async function verifyMemberDocument(
       return { success: false, error: "This document has already expired. Upload a current one first." };
     }
 
+    // CLE-234 — the review clock starts when the document goes live,
+    // i.e. on Verify for kinds that need it: Next review date =
+    // verified date + the subtype's interval. With no interval (None /
+    // ad hoc) any hand-set date is left alone.
+    const nextReviewOn = seedNextReviewOn(stObj.review_period_months ?? null, verifiedOn);
     const { error } = await admin
       .from("document")
       .update({
         verified_on: verifiedOn,
         verified_by: caller.memberId,
         verification_notes: input.verificationNotes ?? null,
+        ...(nextReviewOn !== null ? { next_review_on: nextReviewOn } : {}),
         updated_at: new Date().toISOString(),
       })
       .eq("id", documentId)
@@ -1443,6 +1450,7 @@ export async function verifyMemberDocument(
         member: memberDisplay(target),
         type_subtype: typeSubtypeLabel(doc.type as string, stObj.name),
         verified_on: verifiedOn,
+        ...(nextReviewOn !== null ? { next_review_on: nextReviewOn } : {}),
         // CLE-219 — file_name + file_size on every doc audit.
         file_name: doc.file_name as string,
         file_size: doc.file_size as number,
