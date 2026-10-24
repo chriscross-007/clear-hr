@@ -21,6 +21,7 @@
 // set, so the server-side diff audit still fires with add/remove
 // entries as before.
 
+import { sortDocs } from "@/lib/document-sort";
 import { docTabCard, type DocTabKey } from "@/components/documents/doc-tab-theme";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useState, useTransition } from "react";
@@ -219,7 +220,7 @@ export function RequiredDocumentsCard({
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((r) => {
+                    {sortDocs(rows, (r) => ({ type: r.subtypeType, subtypeName: r.subtypeName, fileName: r.fileName })).map((r) => {
                       // CLE-215 — RTW aggregate row uses its own
                       // rendering path: a single row whose Subtype
                       // cell lists every non-expired qualifying doc
@@ -260,7 +261,7 @@ export function RequiredDocumentsCard({
                               <p className="font-medium">Right to Work evidence</p>
                               {r.rtwDocs && r.rtwDocs.length > 0 ? (
                                 <div className="mt-1 flex flex-wrap gap-1">
-                                  {r.rtwDocs.map((d) => (
+                                  {sortDocs(r.rtwDocs, (d) => ({ type: d.subtypeType, subtypeName: d.subtypeName, fileName: d.fileName })).map((d) => (
                                     <button
                                       key={d.documentId}
                                       type="button"

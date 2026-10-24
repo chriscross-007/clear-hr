@@ -28,6 +28,7 @@
 // rows on every fire; the dialog's own `notifySaved()` dispatches that
 // event on upload so the card refreshes without a page reload.
 
+import { sortDocs } from "@/lib/document-sort";
 import { docTabCard, type DocTabKey } from "@/components/documents/doc-tab-theme";
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, Plus } from "lucide-react";
@@ -134,7 +135,7 @@ export function MyDocumentsCard({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => {
+                {sortDocs(rows, (r) => ({ type: r.subtypeType, subtypeName: r.subtypeName, fileName: r.fileName })).map((r) => {
                   // RTW aggregate row — a read-only placeholder for
                   // employees. Admins get a "+ Add" here; we
                   // deliberately don't (RTW evidence goes through HR).
@@ -153,7 +154,7 @@ export function MyDocumentsCard({
                           <p className="font-medium">Right to Work evidence</p>
                           {r.rtwDocs && r.rtwDocs.length > 0 ? (
                             <div className="mt-1 flex flex-wrap gap-1">
-                              {r.rtwDocs.map((d) => (
+                              {sortDocs(r.rtwDocs, (d) => ({ type: d.subtypeType, subtypeName: d.subtypeName, fileName: d.fileName })).map((d) => (
                                 <button
                                   key={d.documentId}
                                   type="button"

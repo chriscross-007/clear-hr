@@ -5,6 +5,7 @@
 // docs-client, but the underlying storage bucket + row now live on
 // the new `document` table.
 
+import { sortDocs } from "@/lib/document-sort";
 import { PdfViewer } from "@/components/documents/pdf-viewer";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -507,7 +508,7 @@ function DocList({
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {sortDocs(rows, (r) => ({ type: r.type, subtypeName: r.subtypeName, fileName: r.fileName })).map((r) => (
             <tr
               key={r.id}
               className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
@@ -614,7 +615,7 @@ function TrashList({
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {sortDocs(rows, (r) => ({ type: r.type, subtypeName: r.subtypeName, fileName: r.fileName })).map((r) => (
             <tr
               key={r.id}
               className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"

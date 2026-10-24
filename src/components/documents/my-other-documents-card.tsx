@@ -17,6 +17,7 @@
 // light and the required-docs card use, so an upload / replace / ack
 // anywhere on the page reloads this list without a router hop.
 
+import { sortDocs } from "@/lib/document-sort";
 import { docTabCard, type DocTabKey } from "@/components/documents/doc-tab-theme";
 import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -137,7 +138,7 @@ export function MyOtherDocumentsCard({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {sortDocs(rows, (r) => ({ type: r.subtypeType, subtypeName: r.subtypeName, fileName: r.fileName })).map((r) => (
                   <tr
                     key={r.documentId}
                     className="border-b last:border-b-0 cursor-pointer hover:bg-muted/30"

@@ -16,6 +16,7 @@
 //   * No SSR pre-load; fetch on mount (same pattern as
 //     <MyDocumentsCard>).
 
+import { sortDocs } from "@/lib/document-sort";
 import { docTabCard, type DocTabKey } from "@/components/documents/doc-tab-theme";
 import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -112,7 +113,7 @@ export function MemberOrgDocumentsList({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {sortDocs(rows, (r) => ({ type: r.type, subtypeName: r.subtypeName, fileName: r.fileName })).map((r) => (
                   <tr
                     key={r.id}
                     className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
