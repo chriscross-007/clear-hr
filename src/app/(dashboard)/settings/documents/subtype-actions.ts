@@ -18,6 +18,7 @@ import type {
   DocumentSubtypeDto,
   DocumentSubtypeWritePayload,
 } from "./subtype-types";
+import { seedNextReviewOn } from "@/lib/document-status";
 import { canBeRequired, canBeVerified, canMemberUpload, canRequireAcknowledgement, canRequireExpiry, hasMemberVisibilitySwitch } from "./subtype-types";
 
 // ---------------------------------------------------------------------------
@@ -219,6 +220,28 @@ export async function updateDocumentSubtype(
     return { success: false, error: error.message };
   }
 
+  // Ad hoc → interval: documents of this subtype with no Next review date
+  // get one now (today + the new interval), as if they'd just gone live.
+  // Documents still awaiting verification are skipped — their clock
+  // starts when they're verified.
+  let reviewDatesSeeded = 0;
+  const afterRow = payloadToRow(payload);
+  const newInterval = afterRow.review_period_months as number | null;
+  const oldInterval = beforeRow ? (beforeRow as unknown as DbRow).review_period_months : null;
+  if (beforeRow && oldInterval === null && newInterval !== null) {
+    const seeded = seedNextReviewOn(newInterval);
+    let q = admin
+      .from("document")
+      .update({ next_review_on: seeded, updated_at: new Date().toISOString() })
+      .eq("organisation_id", guard.organisationId)
+      .eq("subtype_id", id)
+      .is("next_review_on", null);
+    if (afterRow.requires_verification === true) q = q.not("verified_on", "is", null);
+    const { data: seededRows, error: seedError } = await q.select("id");
+    if (seedError) return { success: false, error: seedError.message };
+    reviewDatesSeeded = (seededRows ?? []).length;
+  }
+
   if (beforeRow) {
     const b = beforeRow as unknown as DbRow;
     const beforeValues: Record<string, unknown> = {
@@ -245,6 +268,7 @@ export async function updateDocumentSubtype(
         targetId: id,
         targetLabel: `${payload.type} — ${payload.name.trim()}`,
         changes,
+        ...(reviewDatesSeeded > 0 ? { metadata: { review_dates_seeded: reviewDatesSeeded } } : {}),
       });
     }
   }

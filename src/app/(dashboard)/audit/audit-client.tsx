@@ -261,6 +261,7 @@ const FIELD_LABELS: Record<string, string> = {
   subtype_id: "Subtype",
   expires_on: "Expires on",
   next_review_on: "Next review on",
+  review_dates_seeded: "Review dates set",
   verified_on: "Verified on",
   // CLE-215 — audit now writes the positive form ("RTW required")
   // to match the UI toggle. Legacy keys are kept below so audit rows
