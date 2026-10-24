@@ -50,6 +50,7 @@ import {
   canBeVerified,
   canMemberUpload,
   canRequireAcknowledgement,
+  canRequireExpiry,
   hasMemberVisibilitySwitch,
   REVIEW_INTERVAL_OPTIONS,
   reviewIntervalLabel,
@@ -501,13 +502,16 @@ function SubtypeEditorDialog({
                 )}
               </>
             )}
-            {/* Applies to both scopes. */}
-            <FlagRow
-              label="Expiry required"
-              description="An expiry date must be entered on upload. Use only when the document really expires — otherwise use a review interval."
-              value={payload.expiryRequired}
-              onChange={(v) => update("expiryRequired", v)}
-            />
+            {/* Org document uploads don't ask for an expiry date (it's
+                set on the Details dialog), so no switch for org scope. */}
+            {canRequireExpiry(payload.type) && (
+              <FlagRow
+                label="Expiry required"
+                description="An expiry date must be entered on upload. Use only when the document really expires — otherwise use a review interval."
+                value={payload.expiryRequired}
+                onChange={(v) => update("expiryRequired", v)}
+              />
+            )}
             {/* Certificates and RTW evidence are supplied by the
                 member — nothing for them to acknowledge. */}
             {canRequireAcknowledgement(payload.type) && (

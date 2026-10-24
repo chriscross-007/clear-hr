@@ -18,7 +18,7 @@ import type {
   DocumentSubtypeDto,
   DocumentSubtypeWritePayload,
 } from "./subtype-types";
-import { canBeRequired, canBeVerified, canMemberUpload, canRequireAcknowledgement, hasMemberVisibilitySwitch } from "./subtype-types";
+import { canBeRequired, canBeVerified, canMemberUpload, canRequireAcknowledgement, canRequireExpiry, hasMemberVisibilitySwitch } from "./subtype-types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -106,7 +106,7 @@ function payloadToRow(p: DocumentSubtypeWritePayload): Record<string, unknown> {
     name: p.name.trim(),
     employee_can_upload: canMemberUpload(p.type) ? p.employeeCanUpload : false,
     retention_class: p.retentionClass,
-    expiry_required: p.expiryRequired,
+    expiry_required: canRequireExpiry(p.type) ? p.expiryRequired : false,
     // CLE-234 — verification only applies to member-supplied types.
     requires_verification: canBeVerified(p.type) ? p.requiresVerification : false,
     review_period_months:

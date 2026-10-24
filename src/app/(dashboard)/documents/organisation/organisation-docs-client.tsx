@@ -4,7 +4,7 @@
 // read view lives at /documents/organisation and reuses the read +
 // download actions without the mutation surface.
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ExternalLink, FileText, Loader2, Plus, Trash2 } from "lucide-react";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
@@ -254,7 +254,6 @@ function UploadDialog({ onClose, onUploaded }: { onClose: () => void; onUploaded
   const [subtypes, setSubtypes] = useState<Awaited<ReturnType<typeof getOrgUploadSubtypes>>["subtypes"]>([]);
   const [subtypeId, setSubtypeId] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [expiresOn, setExpiresOn] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -264,9 +263,6 @@ function UploadDialog({ onClose, onUploaded }: { onClose: () => void; onUploaded
       if (res.success) setSubtypes(res.subtypes);
     })();
   }, []);
-
-  const current = useMemo(() => subtypes.find((s) => s.id === subtypeId) ?? null, [subtypes, subtypeId]);
-  const expiryRequired = current?.expiryRequired ?? false;
 
   const grouped = subtypes.reduce<Record<string, typeof subtypes>>((acc, s) => {
     (acc[s.type] ??= []).push(s);
@@ -280,7 +276,6 @@ function UploadDialog({ onClose, onUploaded }: { onClose: () => void; onUploaded
     const fd = new FormData();
     fd.set("file", file);
     fd.set("subtypeId", subtypeId);
-    if (expiresOn) fd.set("expiresOn", expiresOn);
     startTransition(async () => {
       const res = await uploadOrgDocument(fd);
       if (!res.success) { setError(res.error ?? "Upload failed"); return; }
@@ -295,7 +290,9 @@ function UploadDialog({ onClose, onUploaded }: { onClose: () => void; onUploaded
           <DialogTitle>Upload organisation document</DialogTitle>
           <DialogDescription>
             Choose the subtype. Organisation-scope subtypes (Employee Handbook and
-            any you&apos;ve added in Settings) are the only options here.
+            any you&apos;ve added in Settings) are the only options here. Expiry,
+            review date and who can see it are set on the document&apos;s details
+            after upload.
           </DialogDescription>
         </DialogHeader>
 
@@ -318,11 +315,6 @@ function UploadDialog({ onClose, onUploaded }: { onClose: () => void; onUploaded
                 ))}
               </SelectContent>
             </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Expires on {expiryRequired && <span className="text-destructive">*</span>}</Label>
-            <Input type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
-            {!expiryRequired && <p className="text-xs text-muted-foreground">Optional for this subtype.</p>}
           </div>
           <div className="space-y-2">
             <Label>File</Label>

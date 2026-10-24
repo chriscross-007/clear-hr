@@ -421,11 +421,10 @@ export async function uploadOrgDocument(
     if (!ORG_TYPES.has(subtype.type as string)) {
       return { success: false, error: "This subtype isn't allowed for organisation documents." };
     }
-    if (subtype.expiry_required && !expiresOn) {
-      return { success: false, error: "This document type needs an expiry date." };
-    }
-    // Past-expiry check intentionally omitted to allow the
-    // retention/status sweeps to be tested end-to-end.
+    // The upload dialog no longer asks for an expiry date (set it on the
+    // document's details afterwards), so "expiry required" is not
+    // enforced at upload for org documents. A date passed by another
+    // caller is still stored.
 
     const uuid = crypto.randomUUID();
     const ext = file.name.includes(".") ? file.name.substring(file.name.lastIndexOf(".")) : "";

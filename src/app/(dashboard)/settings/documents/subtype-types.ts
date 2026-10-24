@@ -87,6 +87,13 @@ export function canMemberUpload(type: DocumentType | string): boolean {
   return type !== "contract" && type !== "organisation_document";
 }
 
+/** "Expiry required" makes the upload ask for an expiry date. Org
+ *  document uploads don't ask (expiry is set on the Details dialog), so
+ *  the flag only applies to member-scope kinds. */
+export function canRequireExpiry(type: DocumentType | string): boolean {
+  return type !== "organisation_document";
+}
+
 /** CLE-234 — Review interval choices offered in the subtype editor.
  *  `null` = None (review is ad hoc: no date seeded, an admin may set
  *  one by hand on any document). */
