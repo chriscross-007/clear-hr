@@ -18,7 +18,7 @@ import type {
   DocumentSubtypeDto,
   DocumentSubtypeWritePayload,
 } from "./subtype-types";
-import { canBeRequired, canBeVerified, hasMemberVisibilitySwitch } from "./subtype-types";
+import { canBeRequired, canBeVerified, canMemberUpload, canRequireAcknowledgement, hasMemberVisibilitySwitch } from "./subtype-types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -104,7 +104,7 @@ function payloadToRow(p: DocumentSubtypeWritePayload): Record<string, unknown> {
   return {
     type: p.type,
     name: p.name.trim(),
-    employee_can_upload: p.employeeCanUpload,
+    employee_can_upload: canMemberUpload(p.type) ? p.employeeCanUpload : false,
     retention_class: p.retentionClass,
     expiry_required: p.expiryRequired,
     // CLE-234 — verification only applies to member-supplied types.
@@ -117,7 +117,7 @@ function payloadToRow(p: DocumentSubtypeWritePayload): Record<string, unknown> {
     // subtypes can be hidden from the member. Enforced here so a stale
     // client can't write an invalid combination.
     trackable_per_member: canBeRequired(p.type) ? p.trackablePerMember : false,
-    requires_acknowledgement: p.requiresAcknowledgement,
+    requires_acknowledgement: canRequireAcknowledgement(p.type) ? p.requiresAcknowledgement : false,
     visible_to_member: hasMemberVisibilitySwitch(p.type) ? p.visibleToMember : true,
   };
 }

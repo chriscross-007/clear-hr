@@ -48,6 +48,8 @@ import {
   scopeForType,
   canBeRequired,
   canBeVerified,
+  canMemberUpload,
+  canRequireAcknowledgement,
   hasMemberVisibilitySwitch,
   REVIEW_INTERVAL_OPTIONS,
   reviewIntervalLabel,
@@ -56,6 +58,7 @@ import {
   type DocumentType,
   type RetentionClass,
 } from "./subtype-types";
+import { capitalize, pluralize } from "@/lib/label-utils";
 
 const TYPE_LABEL: Record<DocumentType, string> = {
   // CLE-231 — `contract` is shown as Employment: documents the
@@ -128,6 +131,7 @@ export function DocumentSubtypesClient({
   initialSubtypes: DocumentSubtypeDto[];
 }) {
   const router = useRouter();
+  const { memberLabel } = useMemberLabel();
   const [subtypes, setSubtypes] = useState<DocumentSubtypeDto[]>(initialSubtypes);
   // Resync when the server rerenders (router.refresh() after a save).
   // Without this the useState snapshot from first mount would stick
@@ -221,7 +225,7 @@ export function DocumentSubtypesClient({
                             )}
                             {s.employeeCanUpload && (
                               <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700 dark:bg-green-900/30 dark:text-green-300">
-                                Employee upload
+                                {capitalize(memberLabel)} upload
                               </span>
                             )}
                             {s.expiryRequired && (
@@ -453,12 +457,16 @@ function SubtypeEditorDialog({
             {/* Personal-scope-only flags — hidden entirely for org docs. */}
             {!isOrgScope && (
               <>
-                <FlagRow
-                  label="Employee can upload"
-                  description="Employees may attach this subtype to their own record."
-                  value={payload.employeeCanUpload}
-                  onChange={(v) => update("employeeCanUpload", v)}
-                />
+                {/* Employment documents are always issued by the
+                    organisation, so members can't upload them. */}
+                {canMemberUpload(payload.type) && (
+                  <FlagRow
+                    label={`${capitalize(memberLabel)} can upload`}
+                    description={`${capitalize(pluralize(memberLabel))} may attach this subtype to their own record.`}
+                    value={payload.employeeCanUpload}
+                    onChange={(v) => update("employeeCanUpload", v)}
+                  />
+                )}
                 {/* CLE-234 — Verify only applies to documents a member
                     supplies (Certifications, RTW evidence, Other). */}
                 {canBeVerified(payload.type) && (
@@ -500,14 +508,18 @@ function SubtypeEditorDialog({
               value={payload.expiryRequired}
               onChange={(v) => update("expiryRequired", v)}
             />
-            <FlagRow
-              label="Requires acknowledgement"
-              description={isOrgScope
-                ? "Every Member with view rights must click to confirm they've read this."
-                : "The document's owner must click to confirm they've read this."}
-              value={payload.requiresAcknowledgement}
-              onChange={(v) => update("requiresAcknowledgement", v)}
-            />
+            {/* Certificates and RTW evidence are supplied by the
+                member — nothing for them to acknowledge. */}
+            {canRequireAcknowledgement(payload.type) && (
+              <FlagRow
+                label="Requires acknowledgement"
+                description={isOrgScope
+                  ? `Every ${memberLabel} with view rights must click to confirm they've read this.`
+                  : "The document's owner must click to confirm they've read this."}
+                value={payload.requiresAcknowledgement}
+                onChange={(v) => update("requiresAcknowledgement", v)}
+              />
+            )}
           </div>
 
           {/* CLE-234 — Review interval applies to every type, both

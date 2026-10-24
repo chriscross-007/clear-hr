@@ -72,6 +72,21 @@ export function canBeVerified(type: DocumentType | string): boolean {
   return type === "certificate" || type === "evidence" || type === "attachment";
 }
 
+/** Acknowledgement only makes sense for documents the organisation
+ *  issues or shares (Employment, Other, Organisation). Certificates and
+ *  RTW evidence are supplied by the member, so there is nothing for them
+ *  to acknowledge. */
+export function canRequireAcknowledgement(type: DocumentType | string): boolean {
+  return type !== "certificate" && type !== "evidence";
+}
+
+/** Members can upload member-scope documents they supply. Employment
+ *  (`contract`) documents are always issued by the organisation, and
+ *  organisation documents are never member uploads. */
+export function canMemberUpload(type: DocumentType | string): boolean {
+  return type !== "contract" && type !== "organisation_document";
+}
+
 /** CLE-234 — Review interval choices offered in the subtype editor.
  *  `null` = None (review is ad hoc: no date seeded, an admin may set
  *  one by hand on any document). */
