@@ -20,7 +20,9 @@ import {
 export function NotificationsCard({ initial }: { initial: DocumentNotificationSettings }) {
   const router = useRouter();
   const { memberLabel } = useMemberLabel();
-  const members = capitalize(pluralize(memberLabel));
+  // Mid-sentence uses lower case ("Remind colleagues…"); sentence starts capitalise.
+  const membersLower = pluralize(memberLabel).toLowerCase();
+  const members = capitalize(membersLower);
   const [values, setValues] = useState<DocumentNotificationSettings>(initial);
   const [saved, setSaved] = useState<DocumentNotificationSettings>(initial);
   const [error, setError] = useState<string | null>(null);
@@ -30,18 +32,18 @@ export function NotificationsCard({ initial }: { initial: DocumentNotificationSe
   const rows: Array<{ key: keyof DocumentNotificationSettings; label: string; help: string }> = [
     {
       key: "memberAcks",
-      label: `Remind ${pluralize(memberLabel)} to acknowledge documents`,
+      label: `Remind ${membersLower} to acknowledge documents`,
       help: `${members} get an email the night after a document needs their acknowledgement, then reminders after 7 and 30 days.`,
     },
     {
       key: "memberExpiry",
-      label: `Tell ${pluralize(memberLabel)} when their certificates are expiring`,
+      label: `Tell ${membersLower} when their certificates are expiring`,
       help: `${members} get an email 30, 14 and 3 days before one of their own certificates or Right to Work documents expires.`,
     },
     {
       key: "adminDigest",
       label: "Daily documents summary for admins",
-      help: `Admins get one email each morning listing what is new: expired, overdue for review, expiring, awaiting verification and missing documents. Only the ${pluralize(memberLabel)} they can manage are included. Nothing is sent on days with nothing new.`,
+      help: `Admins get one email each morning listing what is new: expired, overdue for review, expiring, awaiting verification and missing documents. Only the ${membersLower} they can manage are included. Nothing is sent on days with nothing new.`,
     },
   ];
 
