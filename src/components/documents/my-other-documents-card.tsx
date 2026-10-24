@@ -60,6 +60,14 @@ function fmtDate(iso: string | null): string {
   });
 }
 
+/** Acknowledged column — the member's own acknowledgement timestamp,
+ *  shown as a UK date. "—" when not (yet) acknowledged. */
+function fmtAckDate(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-GB", {
+    day: "2-digit", month: "short", year: "numeric",
+  });
+}
 
 export function MyOtherDocumentsCard({
   tone,
@@ -124,8 +132,8 @@ export function MyOtherDocumentsCard({
                 <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
                   <th className="px-3 py-2 font-medium">Document</th>
                   <th className="px-3 py-2 font-medium">Status</th>
-                  <th className="px-3 py-2 font-medium hidden md:table-cell">Verified</th>
                   <th className="px-3 py-2 font-medium hidden md:table-cell">Expires</th>
+                  <th className="px-3 py-2 font-medium hidden md:table-cell">Acknowledged</th>
                 </tr>
               </thead>
               <tbody>
@@ -167,10 +175,10 @@ export function MyOtherDocumentsCard({
                       </div>
                     </td>
                     <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
-                      {fmtDate(r.verifiedOn)}
+                      {fmtDate(r.expiresOn)}
                     </td>
                     <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
-                      {fmtDate(r.expiresOn)}
+                      {fmtAckDate(r.acknowledgedAt)}
                     </td>
                   </tr>
                 ))}

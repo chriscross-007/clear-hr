@@ -24,15 +24,12 @@ import type { OrgDocumentRow } from "@/app/(dashboard)/documents/organisation/or
 import { onMemberDocsChanged } from "@/lib/member-docs-events";
 import { fmtBytes } from "@/lib/format-bytes";
 
-function fmtDate(iso: string | null): string {
+/** Acknowledged column — the caller's own acknowledgement timestamp,
+ *  shown as a UK date. "—" when not (yet) acknowledged. */
+function fmtAckDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso + "T00:00:00Z").toLocaleDateString("en-GB", {
-    day: "2-digit", month: "short", year: "numeric", timeZone: "UTC",
-  });
-}
-function fmtDateTime(iso: string): string {
   return new Date(iso).toLocaleDateString("en-GB", {
-    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+    day: "2-digit", month: "short", year: "numeric",
   });
 }
 
@@ -93,8 +90,9 @@ export function MyOrgDocumentsList({
                       the same way as the two My Documents cards on the
                       other tab. Separate Subtype column dropped. */}
                   <th className="px-3 py-2 font-medium">Document</th>
-                  <th className="px-3 py-2 font-medium hidden lg:table-cell">Expires</th>
-                  <th className="px-3 py-2 font-medium hidden lg:table-cell">Uploaded</th>
+                  {/* Expires / Uploaded aren't of interest to the member;
+                      what matters is whether they've acknowledged it. */}
+                  <th className="px-3 py-2 font-medium hidden md:table-cell">Acknowledged</th>
                 </tr>
               </thead>
               <tbody>
@@ -126,8 +124,7 @@ export function MyOrgDocumentsList({
                           </p>
                         </div>
                     </td>
-                    <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell">{fmtDate(r.expiresOn)}</td>
-                    <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell">{fmtDateTime(r.uploadedAt)}</td>
+                    <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">{fmtAckDate(r.acknowledgedAt)}</td>
                   </tr>
                 ))}
               </tbody>

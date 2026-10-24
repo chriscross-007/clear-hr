@@ -295,6 +295,7 @@ export async function getOrgDocumentsForMember(
         // *caller* — kept only so the shape matches OrgDocumentRow;
         // admin surfaces should read `isAcknowledgedByTarget`.
         isAcknowledged: false,
+        acknowledgedAt: null,
         isAcknowledgedByTarget,
         audienceMode: audienceFromRow(r).mode,
         audienceCount: null,

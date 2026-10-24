@@ -37,6 +37,8 @@ export interface OrgDocumentRow {
   uploadedAt: string;
   requiresAcknowledgement: boolean;
   isAcknowledged: boolean;
+  /** When the caller acknowledged this document (ISO timestamp), or null. */
+  acknowledgedAt: string | null;
   /** CLE-230 — "all" (Everyone) or "selected". */
   audienceMode: AudienceMode;
   /** CLE-230 — number of members in the audience (who can view org
@@ -116,15 +118,17 @@ export async function _listOrgDocuments(
     }
 
     const ackedSet = new Set<string>();
+    const ackedAt = new Map<string, string>();
     if (visibleRows.length > 0) {
       const { data: acks } = await admin
         .from("document_acknowledgement")
-        .select("document_id")
+        .select("document_id, acknowledged_at")
         .eq("member_id", memberId)
         .is("superseded_by_replace_at", null)
         .in("document_id", visibleRows.map((r) => r.id));
-      for (const a of ((acks ?? []) as { document_id: string }[])) {
+      for (const a of ((acks ?? []) as { document_id: string; acknowledged_at: string }[])) {
         ackedSet.add(a.document_id);
+        ackedAt.set(a.document_id, a.acknowledged_at);
       }
     }
 
@@ -153,6 +157,7 @@ export async function _listOrgDocuments(
         uploadedAt: r.uploaded_at,
         requiresAcknowledgement: stObj?.requires_acknowledgement === true,
         isAcknowledged: ackedSet.has(r.id),
+        acknowledgedAt: ackedAt.get(r.id) ?? null,
         audienceMode: audienceFromRow(r).mode,
         audienceCount: me.canManage
           ? orgMembers.filter((m) => isExpectedToAcknowledge(audienceFromRow(r), m)).length

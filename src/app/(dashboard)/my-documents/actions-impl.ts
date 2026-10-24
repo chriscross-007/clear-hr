@@ -30,6 +30,8 @@ export interface OtherMemberDocumentRow {
   verifiedOn: string | null;
   requiresAcknowledgement: boolean;
   isAcknowledged: boolean;
+  /** When the caller acknowledged this document (ISO timestamp), or null. */
+  acknowledgedAt: string | null;
 }
 
 /** CLE-231 — the member's own Other tab: everything that isn't on
@@ -161,11 +163,13 @@ async function _getMyMemberDocumentsBucket(
     const docIds = filtered.map((d) => d.id);
     const { data: ackRows } = await admin
       .from("document_acknowledgement")
-      .select("document_id")
+      .select("document_id, acknowledged_at")
       .eq("member_id", memberId)
       .is("superseded_by_replace_at", null)
       .in("document_id", docIds);
-    const ackedIds = new Set<string>(((ackRows ?? []) as { document_id: string }[]).map((r) => r.document_id));
+    const ackedAt = new Map<string, string>(
+      ((ackRows ?? []) as { document_id: string; acknowledged_at: string }[]).map((r) => [r.document_id, r.acknowledged_at]),
+    );
 
     const rows: OtherMemberDocumentRow[] = filtered.map((d) => {
       const st = Array.isArray(d.document_subtype) ? (d.document_subtype[0] ?? null) : d.document_subtype;
@@ -188,7 +192,8 @@ async function _getMyMemberDocumentsBucket(
         expiresOn: d.expires_on,
         verifiedOn: d.verified_on,
         requiresAcknowledgement,
-        isAcknowledged: ackedIds.has(d.id),
+        isAcknowledged: ackedAt.has(d.id),
+        acknowledgedAt: ackedAt.get(d.id) ?? null,
       };
     });
 
