@@ -311,6 +311,225 @@ export async function sendBookingCancelledEmail(data: BookingEmailData): Promise
 }
 
 // ---------------------------------------------------------------------------
+// Documents (CLE-235)
+//
+// Document emails carry user-supplied text (file names, subtype names),
+// so everything interpolated goes through `escapeHtml`. Each sender
+// returns true only when Resend accepted the message — the nightly job
+// logs a touch in `document_email_log` only on success, so a failed or
+// skipped send (no RESEND_API_KEY) is retried the next night.
+// ---------------------------------------------------------------------------
+
+export function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+async function sendDocEmail(to: string, subject: string, html: string, tag: string): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.warn(`[email] ${tag}: RESEND_API_KEY not set — email skipped`);
+    return false;
+  }
+  try {
+    const resend = new Resend(apiKey);
+    const { error } = await resend.emails.send({ from: FROM, to, subject, html });
+    if (error) {
+      console.error(`[email] ${tag} failed for ${to}:`, error);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error(`[email] ${tag} failed for ${to}:`, e);
+    return false;
+  }
+}
+
+/** House date style (CLAUDE.md): "04 Nov 2026". */
+function fmtDocDate(iso: string): string {
+  return new Date(iso.slice(0, 10) + "T00:00:00Z").toLocaleDateString("en-GB", {
+    day: "2-digit", month: "short", year: "numeric", timeZone: "UTC",
+  });
+}
+
+function docLine(primary: string, secondary?: string | null, badge?: string | null): string {
+  const b = badge
+    ? ` <span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:9999px;background:#fef3c7;color:#92400e;font-size:11px">${escapeHtml(badge)}</span>`
+    : "";
+  const s = secondary ? `<div style="color:#6b7280;font-size:12px">${escapeHtml(secondary)}</div>` : "";
+  return `<li style="margin:0 0 8px">${escapeHtml(primary)}${b}${s}</li>`;
+}
+
+export interface MemberAckItem {
+  fileName: string;
+  subtypeName: string;
+  /** First email for this document (vs a reminder). */
+  isNew: boolean;
+}
+
+export interface MemberExpiryItem {
+  fileName: string;
+  subtypeName: string;
+  expiresOn: string;
+  daysLeft: number;
+}
+
+export interface AdminDigestLine {
+  text: string;
+  detail?: string | null;
+  /** App path (no host), e.g. `/members/{id}/docs?tab=certifications`. */
+  path: string;
+}
+
+export interface AdminDigestSection {
+  title: string;
+  tone: "red" | "amber";
+  lines: AdminDigestLine[];
+}
+
+const DIGEST_SECTION_CAP = 25;
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * The nightly documents email — one per person per night. Carries the
+ * person's own part (documents to acknowledge, their certificates about
+ * to expire) and/or, for admins, the daily summary sections. Sent only
+ * when at least one part has content.
+ */
+export async function sendNightlyDocumentsEmail(data: {
+  to: string;
+  firstName: string;
+  orgName: string;
+  ackItems: MemberAckItem[];
+  /** Path for the acknowledge button, e.g. `/my-documents?tab=org`. */
+  ackPath: string;
+  expiryItems: MemberExpiryItem[];
+  /** Path for the expiry button, e.g. `/my-documents?tab=certifications`. */
+  expiryPath: string;
+  digestSections: AdminDigestSection[];
+  baseUrl: string;
+}): Promise<boolean> {
+  const { ackItems, expiryItems } = data;
+  const sections = data.digestSections.filter((s) => s.lines.length > 0);
+  const hasOwn = ackItems.length > 0 || expiryItems.length > 0;
+  if (!hasOwn && sections.length === 0) return false;
+  const digestTotal = sections.reduce((n, s) => n + s.lines.length, 0);
+  const org = escapeHtml(data.orgName);
+
+  // Subject — the summary wins when present; otherwise describe the
+  // member's own part.
+  let subject: string;
+  if (sections.length > 0) {
+    subject = `Documents summary — ${plural(digestTotal, "item needs", "items need")} attention`;
+  } else if (ackItems.length > 0 && expiryItems.length > 0) {
+    subject = "Your documents need attention";
+  } else if (ackItems.length > 0) {
+    const allReminders = ackItems.every((i) => !i.isNew);
+    const what = `${plural(ackItems.length, "document", "documents")} to acknowledge`;
+    subject = allReminders ? `Reminder: ${what}` : what;
+  } else if (expiryItems.length === 1) {
+    subject = `Your ${expiryItems[0].subtypeName} expires on ${fmtDocDate(expiryItems[0].expiresOn)}`;
+  } else {
+    subject = `${expiryItems.length} of your documents expire soon`;
+  }
+
+  const parts: string[] = [`<p>Hi ${escapeHtml(data.firstName)},</p>`];
+
+  if (ackItems.length > 0) {
+    parts.push(`
+      <h3 style="margin:24px 0 8px;color:#18181b;font-size:15px">To acknowledge</h3>
+      <p style="margin:0 0 12px">${org} needs you to read and acknowledge ${ackItems.length === 1 ? "this document" : "these documents"}:</p>
+      <ul style="margin:0 0 12px;padding-left:20px;font-size:14px">
+        ${ackItems.map((i) => docLine(i.fileName, i.subtypeName, i.isNew ? "New" : null)).join("")}
+      </ul>
+      ${cta("Read & acknowledge", appLink(data.baseUrl, data.ackPath))}
+    `);
+  }
+
+  if (expiryItems.length > 0) {
+    parts.push(`
+      <h3 style="margin:24px 0 8px;color:#18181b;font-size:15px">Expiring soon</h3>
+      <p style="margin:0 0 12px">${expiryItems.length === 1 ? "This document expires" : "These documents expire"} soon. Please renew ${expiryItems.length === 1 ? "it" : "them"} and give ${org} a copy of the new one.</p>
+      <ul style="margin:0 0 12px;padding-left:20px;font-size:14px">
+        ${expiryItems
+          .map((i) =>
+            docLine(
+              i.subtypeName,
+              `${i.fileName} — expires ${fmtDocDate(i.expiresOn)} (${i.daysLeft === 1 ? "1 day" : `${i.daysLeft} days`})`,
+            ),
+          )
+          .join("")}
+      </ul>
+      ${cta("View my documents", appLink(data.baseUrl, data.expiryPath))}
+    `);
+  }
+
+  if (sections.length > 0) {
+    parts.push(`
+      <h3 style="margin:${hasOwn ? "32px" : "24px"} 0 4px;color:#18181b;font-size:15px">Documents summary</h3>
+      <p style="margin:0">New since the last summary for ${org}:</p>
+    `);
+    for (const s of sections) {
+      const colour = s.tone === "red" ? "#dc2626" : "#d97706";
+      const shown = s.lines.slice(0, DIGEST_SECTION_CAP);
+      const more = s.lines.length - shown.length;
+      parts.push(`
+        <h4 style="margin:20px 0 8px;color:${colour};font-size:14px">${escapeHtml(s.title)} (${s.lines.length})</h4>
+        <ul style="margin:0;padding-left:20px;font-size:14px">
+          ${shown
+            .map((l) => {
+              const d = l.detail ? `<div style="color:#6b7280;font-size:12px">${escapeHtml(l.detail)}</div>` : "";
+              return `<li style="margin:0 0 8px"><a href="${appLink(data.baseUrl, l.path)}" style="color:#18181b">${escapeHtml(l.text)}</a>${d}</li>`;
+            })
+            .join("")}
+        </ul>
+        ${more > 0 ? `<p style="margin:4px 0 0;color:#6b7280;font-size:12px">…and ${more} more.</p>` : ""}
+      `);
+    }
+    parts.push(cta("Open Compliance", appLink(data.baseUrl, "/documents/compliance")));
+  }
+
+  return sendDocEmail(
+    data.to,
+    subject,
+    wrap(`<h2 style="margin:0 0 16px;color:#18181b">Documents</h2>${parts.join("")}`, org),
+    "sendNightlyDocumentsEmail",
+  );
+}
+
+/** "Remind outstanding" button on the Compliance → Acknowledgements tab. */
+export async function sendAckReminderEmail(data: {
+  to: string;
+  firstName: string;
+  orgName: string;
+  subtypeName: string;
+  fileName: string;
+  baseUrl: string;
+}): Promise<boolean> {
+  return sendDocEmail(
+    data.to,
+    `Reminder: acknowledge ${data.subtypeName}`,
+    wrap(
+      `
+        <h2 style="margin:0 0 16px;color:#18181b">Reminder: document to acknowledge</h2>
+        <p>Hi ${escapeHtml(data.firstName)},</p>
+        <p>${escapeHtml(data.orgName)} needs you to read and acknowledge <strong>${escapeHtml(data.fileName)}</strong> (${escapeHtml(data.subtypeName)}).</p>
+        ${cta("Read & acknowledge", appLink(data.baseUrl, "/my-documents"))}
+      `,
+      escapeHtml(data.orgName),
+    ),
+    "sendAckReminderEmail",
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 6. Upcoming holiday reminder (used by cron)
 // ---------------------------------------------------------------------------
 

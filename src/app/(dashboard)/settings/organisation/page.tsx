@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { OrganisationSettingsForm } from "./organisation-form";
 import { BillingContactCard } from "./billing-contact-card";
 import { getBillingContactContext } from "./billing-contact-actions";
+import { NotificationsCard } from "./notifications-card";
 
 // CLE-191 — /settings/organisation. Holds the org-identity fields that
 // used to live across the dialog's General + Holiday Year tabs:
@@ -43,7 +44,7 @@ export default async function OrganisationSettingsPage() {
   const { data: org } = await supabase
     .from("organisations")
     .select(
-      "name, member_label, currency_symbol, country_code, require_mfa, plan, holiday_year_start_type, holiday_year_start_day, holiday_year_start_month, bank_holiday_handling, bank_holiday_colour",
+      "name, member_label, currency_symbol, country_code, require_mfa, plan, holiday_year_start_type, holiday_year_start_day, holiday_year_start_month, bank_holiday_handling, bank_holiday_colour, notify_member_doc_acks, notify_member_doc_expiry, notify_admin_doc_digest",
     )
     .eq("id", caller.organisation_id)
     .single();
@@ -84,6 +85,15 @@ export default async function OrganisationSettingsPage() {
         initialHolidayYearStartMonth={Number(org.holiday_year_start_month ?? 4)}
         initialBankHolidayHandling={org.bank_holiday_handling ?? "additional"}
         initialBankHolidayColour={org.bank_holiday_colour ?? "#EF4444"}
+      />
+
+      {/* CLE-235 — nightly document email switches. */}
+      <NotificationsCard
+        initial={{
+          memberAcks: org.notify_member_doc_acks !== false,
+          memberExpiry: org.notify_member_doc_expiry !== false,
+          adminDigest: org.notify_admin_doc_digest !== false,
+        }}
       />
     </div>
   );

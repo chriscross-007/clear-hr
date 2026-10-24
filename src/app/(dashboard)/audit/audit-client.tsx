@@ -262,6 +262,10 @@ const FIELD_LABELS: Record<string, string> = {
   expires_on: "Expires on",
   next_review_on: "Next review on",
   review_dates_seeded: "Review dates set",
+  // CLE-235 — Settings → Organisation → Notifications
+  notify_member_doc_acks: "Acknowledgement reminder emails",
+  notify_member_doc_expiry: "Certificate expiry emails",
+  notify_admin_doc_digest: "Daily documents summary",
   verified_on: "Verified on",
   // CLE-215 — audit now writes the positive form ("RTW required")
   // to match the UI toggle. Legacy keys are kept below so audit rows

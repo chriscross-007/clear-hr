@@ -28,7 +28,7 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createHash } from "node:crypto";
-import { Resend } from "resend";
+import { sendAckReminderEmail } from "@/lib/email";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { logAudit } from "@/lib/audit";
 import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
@@ -825,47 +825,21 @@ export async function remindOutstanding(
         organisations: { name?: string } | { name?: string }[] | null;
       }>;
 
-      const apiKey = process.env.RESEND_API_KEY;
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.clear-hr.com";
-      const resend = apiKey ? new Resend(apiKey) : null;
 
       for (const r of rows) {
         if (!r.email) continue;
         const orgRel = Array.isArray(r.organisations) ? r.organisations[0] : r.organisations;
-        const orgName = orgRel?.name ?? "your organisation";
-        const first = r.first_name ?? "there";
-        const subtypeName = subtypeRow.name ?? "document";
-
-        // Fire-and-forget per Member. Failure of one email doesn't
-        // block the rest — we still stamp the throttle either way,
-        // per the "throttle behaves correctly even before email is
-        // fully wired" guidance in Ticket D.
-        if (resend) {
-          try {
-            await resend.emails.send({
-              from: "ClearHR <noreply@contacts.clear-hr.com>",
-              to: r.email,
-              subject: `Reminder: acknowledge ${subtypeName}`,
-              html: `
-                <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:560px;margin:0 auto;padding:24px">
-                  <div style="margin-bottom:24px"><strong style="font-size:18px;color:#18181b">ClearHR</strong></div>
-                  <h2 style="margin:0 0 16px;color:#18181b">Reminder: document to acknowledge</h2>
-                  <p>Hi ${first},</p>
-                  <p>You have an outstanding <strong>${subtypeName}</strong> that needs your acknowledgement.</p>
-                  <p><a href="${baseUrl}/login?next=${encodeURIComponent("/my-documents")}" style="display:inline-block;padding:12px 24px;background:#18181b;color:#fff;text-decoration:none;border-radius:6px">Review &amp; acknowledge</a></p>
-                  <div style="margin-top:32px;padding-top:16px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:12px">You are receiving this because you are a member of ${orgName} on ClearHR.</div>
-                </div>
-              `,
-            });
-          } catch (e) {
-            console.error("[remindOutstanding] send failed for", r.email, e);
-          }
-        } else {
-          // TODO: wire Resend template — RESEND_API_KEY not set in
-          // this environment. Stamp the throttle anyway so behaviour
-          // is deterministic.
-          console.warn("[remindOutstanding] RESEND_API_KEY not set — email skipped");
-        }
+        // One failed send doesn't block the rest; the throttle is
+        // stamped either way. CLE-235 — shared template in email.ts.
+        await sendAckReminderEmail({
+          to: r.email,
+          firstName: r.first_name ?? "there",
+          orgName: orgRel?.name ?? "your organisation",
+          subtypeName: subtypeRow.name ?? "document",
+          fileName: doc.file_name,
+          baseUrl,
+        });
         sentCount += 1;
       }
     }
