@@ -45,14 +45,24 @@ export interface OrgDocumentRow {
    *  docs and match it). Only computed for callers who can manage org
    *  docs (drives the admin list's "Visible to" column); null otherwise. */
   audienceCount: number | null;
+  /** CLE-233 — version number (1 for the first) and, in the Archived
+   *  view, when it was archived. */
+  versionNumber: number;
+  archivedAt: string | null;
 }
 
 export async function _listOrgDocuments(
   caller: DocumentsCaller,
+  opts?: { archived?: boolean },
 ): Promise<{ success: boolean; error?: string; rows: OrgDocumentRow[] }> {
   try {
     if (!caller.rights.canViewOrganisationDocuments) {
       return { success: false, error: "Forbidden", rows: [] };
+    }
+    // CLE-233 — the Archived view is for managers only.
+    const archivedView = opts?.archived === true;
+    if (archivedView && !caller.rights.canManageOrganisationDocuments) {
+      return { success: true, rows: [] };
     }
     const { admin, memberId, organisationId } = caller;
 
@@ -77,16 +87,18 @@ export async function _listOrgDocuments(
       canManage: caller.rights.canManageOrganisationDocuments,
     };
 
-    const { data, error } = await admin
+    let docQuery = admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, next_review_on, uploaded_by, uploaded_at, " +
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, next_review_on, uploaded_by, uploaded_at, archived_at, version_number, " +
         AUDIENCE_COLUMNS +
         ", document_subtype!subtype_id(name, requires_acknowledgement), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", organisationId)
-      .eq("owner_scope", "organisation")
-      .order("uploaded_at", { ascending: false });
+      .eq("owner_scope", "organisation");
+    // CLE-233 — current view hides archived documents; Archived view shows only them.
+    docQuery = archivedView ? docQuery.not("archived_at", "is", null) : docQuery.is("archived_at", null);
+    const { data, error } = await docQuery.order(archivedView ? "archived_at" : "uploaded_at", { ascending: false });
     if (error) return { success: false, error: error.message, rows: [] };
 
     type Row = AudienceDbRow & {
@@ -100,6 +112,8 @@ export async function _listOrgDocuments(
       next_review_on: string | null;
       uploaded_by: string | null;
       uploaded_at: string;
+      archived_at: string | null;
+      version_number: number | null;
       document_subtype:
         | { name: string; requires_acknowledgement?: boolean }
         | { name: string; requires_acknowledgement?: boolean }[]
@@ -162,6 +176,8 @@ export async function _listOrgDocuments(
         audienceCount: me.canManage
           ? orgMembers.filter((m) => isExpectedToAcknowledge(audienceFromRow(r), m)).length
           : null,
+        versionNumber: r.version_number ?? 1,
+        archivedAt: r.archived_at,
       };
     });
     return { success: true, rows };

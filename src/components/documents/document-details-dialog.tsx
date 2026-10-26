@@ -21,7 +21,7 @@
 
 import { PdfViewer } from "@/components/documents/pdf-viewer";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { Camera, CheckSquare, Download, FileUp, Loader2, Pencil, SendHorizontal, Smartphone, Upload as UploadIcon } from "lucide-react";
+import { Archive, ArchiveRestore, Camera, CheckSquare, Download, FileUp, Layers, Loader2, Pencil, SendHorizontal, Smartphone, Upload as UploadIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -65,6 +65,12 @@ import {
 } from "@/app/(dashboard)/members/[memberId]/docs/capture-actions";
 import { replaceOrgDocument, updateOrgDocumentMetadata, markOrgDocumentReviewed } from "@/app/(dashboard)/documents/organisation/org-document-actions";
 import { canBeVerified, reviewIntervalLabel } from "@/app/(dashboard)/settings/documents/subtype-types";
+import {
+  archiveDocument,
+  publishNewDocumentVersion,
+  restoreArchivedDocument,
+} from "@/app/(dashboard)/documents/document-lifecycle-actions";
+import { canArchiveType, canVersionType } from "@/lib/document-archive";
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useMemberLabel } from "@/contexts/member-label-context";
 import { capitalize, pluralize } from "@/lib/label-utils";
@@ -152,6 +158,9 @@ const ACTION_LABEL_OVERRIDES: Record<string, string> = {
   "document.restored": "Restored from Trash",
   "document.purged": "Permanently deleted",
   "document.replaced": "File replaced",
+  "document.archived": "Archived",
+  "document.unarchived": "Restored from archive",
+  "document.version_published": "New version published",
 };
 
 function actionLabel(action: string): string {
@@ -258,7 +267,6 @@ export function DocumentDetailsDialog({
   // A read-only opening (from the Trash list) forces every pencil off
   // and the composer off, regardless of whether the caller would
   // ordinarily have update rights.
-  const effectiveCanUpdate = canUpdate && !readOnly;
   // CLE-217 — the currently-displayed document id is lifted from the
   // prop into local state so the Replace flow can pivot the whole
   // dialog to the freshly-created replacement id without the parent
@@ -269,6 +277,9 @@ export function DocumentDetailsDialog({
   const [currentDocumentId, setCurrentDocumentId] = useState(documentId);
   useEffect(() => { setCurrentDocumentId(documentId); }, [documentId]);
   const [detail, setDetail] = useState<DocumentDetailContext | null>(null);
+  // CLE-233 — an archived document is read-only too.
+  const isArchived = !!detail?.archivedAt;
+  const effectiveCanUpdate = canUpdate && !readOnly && !isArchived;
   const [activity, setActivity] = useState<DocumentActivityItem[] | null>(null);
   const [subtypes, setSubtypes] = useState<Array<{ id: string; name: string; type: string }>>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -495,11 +506,16 @@ export function DocumentDetailsDialog({
               </p>
 
               {/* Row 3: status pills (+ "In Trash" pill in read-only mode). */}
-              {(detail.row.statuses.length > 0 || readOnly) && (
+              {(detail.row.statuses.length > 0 || readOnly || isArchived) && (
                 <div className="flex flex-wrap justify-center gap-1">
                   {readOnly && (
                     <span className="inline-block rounded-full bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200">
                       In Trash
+                    </span>
+                  )}
+                  {isArchived && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-800 dark:bg-slate-700 dark:text-slate-100">
+                      <Archive className="h-3 w-3" /> Archived
                     </span>
                   )}
                   {detail.row.statuses.map((s) => (
@@ -524,6 +540,41 @@ export function DocumentDetailsDialog({
                   <span className="text-muted-foreground">{fmtDateTime(detail.row.uploadedAt)}</span>
                 </span>
               </div>
+
+              {/* CLE-233 — version chain. */}
+              {(detail.versionNumber > 1 || detail.previousVersion || detail.nextVersion) && (
+                <p className="flex flex-wrap items-center justify-center gap-x-1 text-xs text-muted-foreground">
+                  <Layers className="h-3.5 w-3.5" />
+                  <span>Version {detail.versionNumber}</span>
+                  {detail.previousVersion && (
+                    <>
+                      <span>· replaces</span>
+                      <button
+                        type="button"
+                        className="underline hover:text-foreground"
+                        onClick={() => setCurrentDocumentId(detail.previousVersion!.id)}
+                      >
+                        Version {detail.previousVersion.versionNumber}
+                      </button>
+                      {detail.previousVersion.archivedAt && (
+                        <span>(archived {fmtDate(detail.previousVersion.archivedAt.slice(0, 10))})</span>
+                      )}
+                    </>
+                  )}
+                  {detail.nextVersion && (
+                    <>
+                      <span>· replaced by</span>
+                      <button
+                        type="button"
+                        className="underline hover:text-foreground"
+                        onClick={() => setCurrentDocumentId(detail.nextVersion!.id)}
+                      >
+                        Version {detail.nextVersion.versionNumber}
+                      </button>
+                    </>
+                  )}
+                </p>
+              )}
             </DialogHeader>
 
             <div className="grid grid-cols-2 gap-0" style={{ height: "min(70vh, 620px)" }}>
@@ -683,11 +734,25 @@ export function DocumentDetailsDialog({
                             </p>
                             <p className="text-sm text-muted-foreground">
                               {detail.hasAcknowledgements
-                                ? "This document has been acknowledged, so its file can't be replaced. Add the new file as a new document instead."
+                                ? canVersionType(detail.row.type)
+                                  ? "This document has been acknowledged, so its file can't be replaced. Publish a new version instead (below)."
+                                  : "This document has been acknowledged, so its file can't be replaced. Add the new file as a new document instead."
                                 : "This document has been verified and cannot be reloaded. If the wrong document is showing, please Delete and Reload."}
                             </p>
                           </div>
                         )}
+                      </div>
+                    )}
+
+                    {/* CLE-233 — new version / archive / restore. */}
+                    {!readOnly && !employeeStripped && detail.canManageLifecycle && canArchiveType(detail.row.type) && (
+                      <div className="border-b p-4">
+                        <LifecycleSection
+                          detail={detail}
+                          documentId={currentDocumentId}
+                          onChanged={refreshDetailAndHistory}
+                          onPublished={pivotToReplacement}
+                        />
                       </div>
                     )}
                   </>
@@ -713,6 +778,7 @@ export function DocumentDetailsDialog({
                     {!memberView ? (
                       <AdminAcknowledgementSection
                         status={ackStatus}
+                        archived={!!detail.archivedAt}
                         subject={
                           detail.row.type === "organisation_document"
                             ? { plural: true, label: capitalize(pluralize(memberLabel)) }
@@ -823,7 +889,7 @@ export function DocumentDetailsDialog({
                       for employees viewing their own record without
                       update rights, and for the read-only mode used
                       when reviewing a trashed doc. */}
-                  {!employeeStripped && !readOnly && (
+                  {!employeeStripped && !readOnly && !isArchived && (
                     <div className="mt-2 shrink-0">
                       <ActivityComposer documentId={currentDocumentId} onPosted={reloadActivity} />
                     </div>
@@ -1426,6 +1492,154 @@ function AcknowledgementSection({
 }
 
 // ---------------------------------------------------------------------------
+// CLE-233 — LifecycleSection: publish a new version / archive / restore.
+// Admin-only (detail.canManageLifecycle). New version for organisation +
+// Employment documents; Archive for those plus Certificates / RTW evidence.
+// ---------------------------------------------------------------------------
+
+function LifecycleSection({
+  detail,
+  documentId,
+  onChanged,
+  onPublished,
+}: {
+  detail: DocumentDetailContext;
+  documentId: string;
+  onChanged: () => Promise<void>;
+  onPublished: (newDocumentId: string) => void | Promise<void>;
+}) {
+  const { memberLabel } = useMemberLabel();
+  const [error, setError] = useState<string | null>(null);
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const isOrg = detail.row.type === "organisation_document";
+  const audience = isOrg ? pluralize(memberLabel).toLowerCase() : `this ${memberLabel.toLowerCase()}`;
+
+  if (detail.archivedAt) {
+    return (
+      <div className="space-y-2">
+        <p className="flex items-center gap-2 text-base font-semibold">
+          <Archive className="h-4 w-4" /> Archived
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Archived {fmtDateTime(detail.archivedAt)}
+          {detail.archivedByName ? ` by ${detail.archivedByName}` : ""}. It is read-only, hidden from {audience}, and
+          no longer counted or chased. Its file, details, activity and acknowledgements are kept.
+        </p>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={pending}
+          onClick={() => {
+            setError(null);
+            startTransition(async () => {
+              const res = await restoreArchivedDocument(documentId);
+              if (!res.success) { setError(res.error ?? "Restore failed"); return; }
+              await onChanged();
+            });
+          }}
+        >
+          <ArchiveRestore className="mr-1.5 h-4 w-4" />
+          Restore from archive
+        </Button>
+      </div>
+    );
+  }
+
+  const versionable = canVersionType(detail.row.type);
+
+  function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+    const chosen = e.target.files?.[0] ?? null;
+    e.target.value = "";
+    if (!chosen) return;
+    setError(null);
+    const fd = new FormData();
+    fd.set("file", chosen);
+    startTransition(async () => {
+      const res = await publishNewDocumentVersion(documentId, fd);
+      if (!res.success || !res.documentId) { setError(res.error ?? "Publishing failed"); return; }
+      await onPublished(res.documentId);
+    });
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="flex items-center gap-2 text-base font-semibold">
+        <Layers className="h-4 w-4" /> {versionable ? "Versions & archive" : "Archive"}
+      </p>
+
+      {versionable && (
+        <div className="space-y-1.5">
+          <p className="text-sm text-muted-foreground">
+            Publish a new file as version {detail.versionNumber + 1}. It keeps this document&apos;s type
+            {isOrg ? ", subtype and audience" : " and subtype"}; acknowledgements start again. This version is archived
+            and kept read-only.
+          </p>
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt"
+            onChange={handleFileChosen}
+          />
+          <Button size="sm" disabled={pending} onClick={() => fileInputRef.current?.click()}>
+            {pending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <FileUp className="mr-1.5 h-4 w-4" />}
+            Publish new version
+          </Button>
+        </div>
+      )}
+
+      <div className="space-y-1.5">
+        {!confirmArchive ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              {versionable
+                ? "Withdrawing it without a replacement? Archive it instead."
+                : "Superseded or no longer needed? Archive it to keep the record without it being counted."}
+            </p>
+            <Button size="sm" variant="outline" disabled={pending} onClick={() => setConfirmArchive(true)}>
+              <Archive className="mr-1.5 h-4 w-4" />
+              Archive
+            </Button>
+          </>
+        ) : (
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/40">
+            <p className="mb-2">
+              Archive this document? It will be hidden from {audience}, won&apos;t be counted on the dashboard or
+              chased for acknowledgement, and becomes read-only. You can restore it later.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                disabled={pending}
+                onClick={() => {
+                  setError(null);
+                  startTransition(async () => {
+                    const res = await archiveDocument(documentId);
+                    if (!res.success) { setError(res.error ?? "Archive failed"); return; }
+                    setConfirmArchive(false);
+                    await onChanged();
+                  });
+                }}
+              >
+                {pending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+                Archive
+              </Button>
+              <Button size="sm" variant="ghost" disabled={pending} onClick={() => setConfirmArchive(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // AdminAcknowledgementSection — admin pages only (memberView = false).
 //
 // States whether acknowledgement is required and, where available, the
@@ -1437,8 +1651,11 @@ function AcknowledgementSection({
 function AdminAcknowledgementSection({
   status,
   subject,
+  archived = false,
 }: {
   status: DocumentAcknowledgementStatus;
+  /** Archived docs ask nobody — show coverage as history, no "outstanding". */
+  archived?: boolean;
   /** Who acknowledges: the member label in the plural for org docs,
    *  the member's name for a member's document. */
   subject: { plural: boolean; label: string };
@@ -1451,15 +1668,17 @@ function AdminAcknowledgementSection({
         Acknowledgement
       </p>
       <p className="text-sm text-muted-foreground">
-        {subject.label} {verb} {requiresAcknowledgement ? "" : "not "}required to acknowledge reading this document.
+        {archived
+          ? "Archived — nobody is asked to acknowledge it any more."
+          : <>{subject.label} {verb} {requiresAcknowledgement ? "" : "not "}required to acknowledge reading this document.</>}
       </p>
       {requiresAcknowledgement && coverageSummary && (
         <p className="mt-1 text-sm text-muted-foreground">
           <span className="font-medium text-foreground">
             {coverageSummary.totalAcknowledged} of {coverageSummary.totalExpected}
           </span>{" "}
-          acknowledged
-          {coverageSummary.outstanding > 0 && (
+          acknowledged{archived && " before it was archived"}
+          {!archived && coverageSummary.outstanding > 0 && (
             <> · <span className="font-medium text-amber-700 dark:text-amber-400">{coverageSummary.outstanding} outstanding</span></>
           )}
         </p>

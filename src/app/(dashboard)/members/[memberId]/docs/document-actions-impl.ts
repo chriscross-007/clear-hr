@@ -140,7 +140,7 @@ export async function _getDocumentDetail(
     const { data: doc } = await admin
       .from("document")
       .select(
-        "id, organisation_id, owner_scope, owner_id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, verification_notes, audience_mode, audience_team_ids, audience_rights_profile_ids, audience_include_member_ids, document_subtype!subtype_id(name, requires_verification, visible_to_member, review_period_months)",
+        "id, organisation_id, owner_scope, owner_id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, verification_notes, archived_at, archived_by, version_number, supersedes_document_id, audience_mode, audience_team_ids, audience_rights_profile_ids, audience_include_member_ids, document_subtype!subtype_id(name, requires_verification, visible_to_member, review_period_months)",
       )
       .eq("id", documentId)
       .single();
@@ -164,6 +164,10 @@ export async function _getDocumentDetail(
       if (!canViewOrgDocs || !callerCanSeeOrgDoc(caller, doc)) {
         return { success: false, error: "Document not found" };
       }
+      // CLE-233 — archived org documents are for managers only.
+      if (doc.archived_at && !caller.rights.canManageOrganisationDocuments) {
+        return { success: false, error: "Document not found" };
+      }
       target = {
         id: caller.memberId,
         team_id: null,
@@ -177,8 +181,10 @@ export async function _getDocumentDetail(
     const ids = new Set<string>();
     if (doc.uploaded_by) ids.add(doc.uploaded_by as string);
     if (doc.verified_by) ids.add(doc.verified_by as string);
+    if (doc.archived_by) ids.add(doc.archived_by as string);
     let uploaderName: string | null = null;
     let verifierName: string | null = null;
+    let archiverName: string | null = null;
     if (ids.size > 0) {
       const { data: people } = await admin
         .from("members")
@@ -193,6 +199,7 @@ export async function _getDocumentDetail(
       };
       uploaderName = nameOf(doc.uploaded_by as string | null);
       verifierName = nameOf(doc.verified_by as string | null);
+      archiverName = nameOf(doc.archived_by as string | null);
     }
 
     const st = doc.document_subtype as unknown as
@@ -240,6 +247,51 @@ export async function _getDocumentDetail(
       .limit(1)
       .maybeSingle();
 
+    // CLE-233 — version chain (previous = what this replaced; next = what
+    // replaced this).
+    let previousVersion: DocumentDetailContext["previousVersion"] = null;
+    if (doc.supersedes_document_id) {
+      const { data: prev } = await admin
+        .from("document")
+        .select("id, version_number, file_name, archived_at")
+        .eq("id", doc.supersedes_document_id as string)
+        .eq("organisation_id", organisationId)
+        .maybeSingle();
+      if (prev) {
+        previousVersion = {
+          id: prev.id as string,
+          versionNumber: (prev.version_number as number | null) ?? 1,
+          fileName: prev.file_name as string,
+          archivedAt: (prev.archived_at as string | null) ?? null,
+        };
+      }
+    }
+    let nextVersion: DocumentDetailContext["nextVersion"] = null;
+    {
+      const { data: next } = await admin
+        .from("document")
+        .select("id, version_number, file_name, uploaded_at")
+        .eq("supersedes_document_id", doc.id as string)
+        .eq("organisation_id", organisationId)
+        .order("uploaded_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (next) {
+        nextVersion = {
+          id: next.id as string,
+          versionNumber: (next.version_number as number | null) ?? 1,
+          fileName: next.file_name as string,
+          uploadedAt: next.uploaded_at as string,
+        };
+      }
+    }
+    const canManageLifecycle =
+      doc.owner_scope === "organisation"
+        ? caller.rights.canManageOrganisationDocuments === true
+        : caller.rights.tabs.documents?.update === true &&
+          (caller.rights.crossUserAccess === "all" ||
+            (caller.rights.crossUserAccess === "team" && target.team_id !== null && target.team_id === caller.teamId));
+
     return {
       success: true,
       detail: {
@@ -254,6 +306,12 @@ export async function _getDocumentDetail(
         reviewPeriodMonths: stObj?.review_period_months ?? null,
         lastReviewedAt: (lastReview?.created_at as string | undefined) ?? null,
         lastReviewedByName: (lastReview?.actor_name as string | undefined) ?? null,
+        archivedAt: (doc.archived_at as string | null) ?? null,
+        archivedByName: archiverName,
+        versionNumber: (doc.version_number as number | null) ?? 1,
+        previousVersion,
+        nextVersion,
+        canManageLifecycle,
       },
     };
   } catch (e) {
@@ -276,7 +334,7 @@ export async function _getMemberDocumentSignedUrl(
 
     const { data: doc } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, owner_id, storage_path, file_name, file_size, content_type, disposal_date, type, audience_mode, audience_team_ids, audience_rights_profile_ids, audience_include_member_ids, document_subtype!subtype_id(name, visible_to_member)")
+      .select("id, organisation_id, owner_scope, owner_id, storage_path, file_name, file_size, content_type, disposal_date, type, archived_at, audience_mode, audience_team_ids, audience_rights_profile_ids, audience_include_member_ids, document_subtype!subtype_id(name, visible_to_member)")
       .eq("id", documentId)
       .single();
     if (!doc || doc.organisation_id !== organisationId) {
@@ -301,6 +359,10 @@ export async function _getMemberDocumentSignedUrl(
       }
     } else if (doc.owner_scope === "organisation") {
       if (!canViewOrgDocs || !callerCanSeeOrgDoc(caller, doc)) {
+        return { success: false, error: "Document not found" };
+      }
+      // CLE-233 — archived org documents are for managers only.
+      if (doc.archived_at && !caller.rights.canManageOrganisationDocuments) {
         return { success: false, error: "Document not found" };
       }
       target = { id: caller.memberId, team_id: null, first_name: "Organisation", last_name: "" };
@@ -529,7 +591,8 @@ export async function _getMemberRequiredDocumentRows(
       .select("id, subtype_id, file_name, file_size, uploaded_at, expires_on, next_review_on, verified_on, disposal_date")
       .eq("organisation_id", organisationId)
       .eq("owner_scope", "member")
-      .eq("owner_id", memberId);
+      .eq("owner_id", memberId)
+      .is("archived_at", null); // CLE-233
     type Doc = {
       id: string;
       subtype_id: string | null;

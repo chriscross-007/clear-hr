@@ -70,7 +70,7 @@ import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 // so the admin surface stacks the two docs cards on one page.
 import { RequiredDocumentsCard } from "@/app/(dashboard)/members/[memberId]/employment/required-documents-card";
 
-const DOCS_TABS = ["certifications", "employment", "other", "org", "trash"] as const;
+const DOCS_TABS = ["certifications", "employment", "other", "org", "archived", "trash"] as const;
 type DocsTab = (typeof DOCS_TABS)[number];
 function isDocsTab(v: string | null): v is DocsTab {
   return v !== null && (DOCS_TABS as readonly string[]).includes(v);
@@ -144,6 +144,8 @@ export function DocsClient({
   // never shows in both cards at once.
   const [requiredDocIds, setRequiredDocIds] = useState<Set<string>>(new Set());
   const [trashRows, setTrashRows] = useState<TrashedMemberDocumentRow[]>([]);
+  // CLE-233 — archived documents (admins only).
+  const [archivedRows, setArchivedRows] = useState<MemberDocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // CLE-231 — Five tabs: Certifications (what the member supplies:
@@ -156,7 +158,7 @@ export function DocsClient({
   const tipOpts = { self: false, memberLabel };
   const initialTab = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState<DocsTab>(
-    isDocsTab(initialTab) && (initialTab !== "trash" || canManageDeleted) ? initialTab : "certifications",
+    isDocsTab(initialTab) && ((initialTab !== "trash" && initialTab !== "archived") || canManageDeleted) ? initialTab : "certifications",
   );
 
   const [viewerDoc, setViewerDoc] = useState<{
@@ -181,11 +183,13 @@ export function DocsClient({
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const [listRes, trashRes, requiredRes] = await Promise.all([
+    const [listRes, trashRes, requiredRes, archivedRes] = await Promise.all([
       listMemberDocuments(memberId),
       canManageDeleted ? listTrashedMemberDocuments(memberId) : Promise.resolve({ success: true, rows: [] as TrashedMemberDocumentRow[] }),
       getMemberRequiredDocumentRows(memberId),
+      canManageDeleted ? listMemberDocuments(memberId, { archived: true }) : Promise.resolve({ success: true, rows: [] as MemberDocumentRow[] }),
     ]);
+    if (archivedRes.success) setArchivedRows(archivedRes.rows);
     setLoading(false);
     if (!listRes.success) setError(listRes.error ?? "Could not load documents");
     setRows(listRes.rows);
@@ -262,6 +266,11 @@ export function DocsClient({
             <DocTabTrigger tab="other" tooltip={docTabTooltip("other", tipOpts)} />
             <DocTabTrigger tab="org" tooltip={docTabTooltip("org", tipOpts)} />
             {canManageDeleted && (
+              <DocTabTrigger tab="archived" tooltip={docTabTooltip("archived", tipOpts)}>
+                Archived ({archivedRows.length})
+              </DocTabTrigger>
+            )}
+            {canManageDeleted && (
               <DocTabTrigger tab="trash" tooltip={docTabTooltip("trash", tipOpts)}>
                 Trash ({trashRows.length})
               </DocTabTrigger>
@@ -329,6 +338,23 @@ export function DocsClient({
         <TabsContent value="org" className="mt-4">
           <MemberOrgDocumentsList memberId={memberId} memberName={memberName} tone="org" />
         </TabsContent>
+
+        {/* CLE-233 — Archived: replaced / withdrawn Employment docs and
+            archived Certificates / RTW evidence. Read-only; open a row to
+            restore it. */}
+        {canManageDeleted && (
+          <TabsContent value="archived" className="mt-4">
+            <DocListCard
+              tone="archived"
+              title="Archived"
+              description={`Replaced or withdrawn documents, kept read-only with their history and acknowledgements. Hidden from the ${memberLabel}. Open one to restore it.`}
+              loading={loading}
+              canUpdate={false}
+            >
+              <ArchivedList rows={archivedRows} onOpen={(r) => { setDetailsReadOnly(false); setDetailsDocId(r.id); }} />
+            </DocListCard>
+          </TabsContent>
+        )}
 
         {canManageDeleted && (
           <TabsContent value="trash" className="mt-4">
@@ -578,6 +604,54 @@ function DocList({
                   )}
                 </div>
               </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ArchivedList({
+  rows,
+  onOpen,
+}: {
+  rows: MemberDocumentRow[];
+  onOpen: (r: MemberDocumentRow) => void;
+}) {
+  if (rows.length === 0) {
+    return <p className="text-sm text-muted-foreground py-8 text-center">No archived documents.</p>;
+  }
+  return (
+    <div className="mt-4 rounded-md border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+            <th className="px-4 py-2 font-medium">Document</th>
+            <th className="px-4 py-2 font-medium">Version</th>
+            <th className="px-4 py-2 font-medium hidden lg:table-cell">Uploaded</th>
+            <th className="px-4 py-2 font-medium">Archived</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sortDocs(rows, (r) => ({ type: r.type, subtypeName: r.subtypeName, fileName: r.fileName })).map((r) => (
+            <tr
+              key={r.id}
+              className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
+              onClick={() => onOpen(r)}
+            >
+              <td className="px-4 py-2">
+                <p className="font-medium">
+                  {TYPE_LABEL[r.type] ?? r.type}
+                  {r.subtypeName ? <span className="text-muted-foreground"> / {r.subtypeName}</span> : null}
+                </p>
+                <p className="text-xs text-muted-foreground truncate" title={r.fileName}>
+                  {r.fileName} · {fmtFileSize(r.fileSize)}
+                </p>
+              </td>
+              <td className="px-4 py-2 text-muted-foreground">{r.versionNumber ?? 1}</td>
+              <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">{fmtDateTime(r.uploadedAt)}</td>
+              <td className="px-4 py-2 text-muted-foreground">{r.archivedAt ? fmtDateTime(r.archivedAt) : "—"}</td>
             </tr>
           ))}
         </tbody>

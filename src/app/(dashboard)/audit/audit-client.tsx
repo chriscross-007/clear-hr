@@ -75,6 +75,9 @@ const ACTION_LABELS: Record<string, string> = {
   // Historical only — Renew (re-verify) was removed in CLE-234.
   "document.renewed": "Document verified (re-sighting)",
   "document.reviewed": "Document marked as reviewed",
+  "document.archived": "Document archived",
+  "document.unarchived": "Document restored from archive",
+  "document.version_published": "New document version published",
   "document.acknowledged": "Document acknowledged",
   "document.remind_sent": "Reminder sent to outstanding acknowledgers",
   "member.expected_documents_added": "Required certifications added",
@@ -130,6 +133,9 @@ const FILTER_ACTIONS = [
   "document.verified",
   "document.renewed",
   "document.reviewed",
+  "document.archived",
+  "document.unarchived",
+  "document.version_published",
   "document.acknowledged",
   "document.remind_sent",
   "member.expected_documents_added",
@@ -262,6 +268,10 @@ const FIELD_LABELS: Record<string, string> = {
   expires_on: "Expires on",
   next_review_on: "Next review on",
   review_dates_seeded: "Review dates set",
+  // CLE-233 — versions + archive
+  version_number: "Version",
+  previous_file_name: "Previous version",
+  archive_reason: "Reason",
   // CLE-235 — Settings → Organisation → Notifications
   notify_member_doc_acks: "Acknowledgement reminder emails",
   notify_member_doc_expiry: "Certificate expiry emails",

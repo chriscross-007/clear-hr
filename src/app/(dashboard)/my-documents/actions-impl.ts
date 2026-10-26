@@ -87,6 +87,7 @@ async function _getMyMemberDocumentsBucket(
       .eq("organisation_id", organisationId)
       .eq("owner_scope", "member")
       .eq("owner_id", memberId)
+      .is("archived_at", null) // CLE-233 — members never see archived docs
       .order("uploaded_at", { ascending: false });
     if (dErr) return { success: false, error: dErr.message };
 

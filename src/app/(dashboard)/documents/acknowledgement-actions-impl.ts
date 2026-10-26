@@ -123,6 +123,7 @@ export async function _acknowledgeDocument(
       file_size: number;
       storage_path: string;
       subtype_id: string;
+      archived_at: string | null;
       document_subtype:
         | { name?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }
         | { name?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }[]
@@ -131,7 +132,7 @@ export async function _acknowledgeDocument(
     const docQuery = await admin
       .from("document")
       .select(
-        "id, organisation_id, owner_scope, owner_id, file_name, file_size, storage_path, subtype_id, " +
+        "id, organisation_id, owner_scope, owner_id, file_name, file_size, storage_path, subtype_id, archived_at, " +
         AUDIENCE_COLUMNS + ", " +
         "document_subtype!subtype_id(name, requires_acknowledgement, visible_to_member)",
       )
@@ -144,6 +145,10 @@ export async function _acknowledgeDocument(
     // CLE-231 — HR-only Employment docs are invisible to their owner.
     if (isHiddenFromCaller(doc, memberId)) {
       return { success: false, error: "Document not found" };
+    }
+    // CLE-233 — archived documents ask nobody to acknowledge.
+    if (doc.archived_at) {
+      return { success: false, error: "This document has been archived and no longer needs acknowledging." };
     }
     const subtype = doc.document_subtype;
     const subtypeRow = Array.isArray(subtype) ? subtype[0] : subtype;
@@ -303,6 +308,7 @@ export async function _getOutstandingAcknowledgementsForMany(
         "document_subtype!subtype_id(name, type, requires_acknowledgement, visible_to_member)",
       )
       .eq("organisation_id", organisationId)
+      .is("archived_at", null) // CLE-233 — archived docs ask nobody to acknowledge
       .order("uploaded_at", { ascending: false });
     if (docsQuery.error) return { success: false, error: docsQuery.error.message };
     const rows = (docsQuery.data ?? []) as unknown as DocJoin[];
@@ -397,6 +403,7 @@ export async function _getDocumentAcknowledgementStatus(
       owner_scope: "member" | "organisation";
       owner_id: string | null;
       subtype_id: string;
+      archived_at: string | null;
       document_subtype:
         | { requires_acknowledgement?: boolean; visible_to_member?: boolean }
         | { requires_acknowledgement?: boolean; visible_to_member?: boolean }[]
@@ -405,7 +412,7 @@ export async function _getDocumentAcknowledgementStatus(
     const docQuery = await admin
       .from("document")
       .select(
-        "id, organisation_id, owner_scope, owner_id, subtype_id, " +
+        "id, organisation_id, owner_scope, owner_id, subtype_id, archived_at, " +
         AUDIENCE_COLUMNS + ", " +
         "document_subtype!subtype_id(requires_acknowledgement, visible_to_member)",
       )
@@ -437,10 +444,13 @@ export async function _getDocumentAcknowledgementStatus(
 
     const ownerScope = doc.owner_scope as "member" | "organisation";
     const audience = audienceFromRow(doc);
+    // CLE-233 — an archived document asks nobody; its coverage (below)
+    // stays as the historical record.
     const isCallerExpectedToAcknowledge =
-      ownerScope === "member"
+      !doc.archived_at &&
+      (ownerScope === "member"
         ? doc.owner_id === memberId
-        : isExpectedToAcknowledge(audience, callerAsOrgDocMember(caller));
+        : isExpectedToAcknowledge(audience, callerAsOrgDocMember(caller)));
 
     const { data: ownAck } = await admin
       .from("document_acknowledgement")

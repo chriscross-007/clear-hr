@@ -24,6 +24,7 @@ import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
 import { canBeVerified } from "@/app/(dashboard)/settings/documents/subtype-types";
 import { loadMemberInvited } from "@/lib/org-doc-audience";
 import { ACK_LOCKED_REPLACE_ERROR, hasAnyAcknowledgement } from "@/lib/document-ack-lock";
+import { ARCHIVED_READ_ONLY_ERROR, isDocumentArchived } from "@/lib/document-archive";
 import {
   isDocumentHiddenFromCaller,
   subtypeHiddenFromMember,
@@ -148,6 +149,7 @@ function memberDisplay(target: { first_name: string; last_name: string }): strin
 
 export async function listMemberDocuments(
   memberId: string,
+  opts?: { archived?: boolean },
 ): Promise<{ success: boolean; error?: string; rows: MemberDocumentRow[] }> {
   try {
     const caller = await resolveCaller();
@@ -159,6 +161,9 @@ export async function listMemberDocuments(
     if (!caller.canViewTarget({ memberId: target.id, teamId: target.team_id })) {
       return { success: false, error: "Document not found", rows: [] };
     }
+    // CLE-233 — archived documents are for admins only; never their owner.
+    const archivedView = opts?.archived === true;
+    if (archivedView && caller.isSelf(memberId)) return { success: true, rows: [] };
 
     const today = new Date().toISOString().slice(0, 10);
     // Exclude queued rows via NOT EXISTS on disposal_queue.
@@ -168,15 +173,17 @@ export async function listMemberDocuments(
       .eq("organisation_id", caller.organisationId);
     const queuedIds = new Set<string>((queued ?? []).map((r) => r.document_id as string));
 
-    const { data, error } = await admin
+    let docQuery = admin
       .from("document")
       .select(
-        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, document_subtype!subtype_id(name, requires_verification, visible_to_member, requires_acknowledgement), members!uploaded_by(first_name, last_name)",
+        "id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, archived_at, version_number, document_subtype!subtype_id(name, requires_verification, visible_to_member, requires_acknowledgement), members!uploaded_by(first_name, last_name)",
       )
       .eq("organisation_id", caller.organisationId)
       .eq("owner_scope", "member")
-      .eq("owner_id", memberId)
-      .order("uploaded_at", { ascending: false });
+      .eq("owner_id", memberId);
+    // CLE-233 — live tabs hide archived documents; the Archived tab shows only them.
+    docQuery = archivedView ? docQuery.not("archived_at", "is", null) : docQuery.is("archived_at", null);
+    const { data, error } = await docQuery.order(archivedView ? "archived_at" : "uploaded_at", { ascending: false });
     if (error) return { success: false, error: error.message, rows: [] };
 
     type Row = {
@@ -195,6 +202,8 @@ export async function listMemberDocuments(
       verified_by: string | null;
       next_review_on: string | null;
       capture_source: "upload" | "photo";
+      archived_at: string | null;
+      version_number: number | null;
       document_subtype: { name: string; requires_verification: boolean; visible_to_member?: boolean; requires_acknowledgement?: boolean } | { name: string; requires_verification: boolean; visible_to_member?: boolean; requires_acknowledgement?: boolean }[] | null;
       members: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
     };
@@ -265,7 +274,10 @@ export async function listMemberDocuments(
             ownerInvited
             && stObj?.requires_acknowledgement === true
             && !subtypeHiddenFromMember(row.document_subtype)
-            && !ownerAcked.has(row.id),
+            && !ownerAcked.has(row.id)
+            && !row.archived_at,
+          versionNumber: row.version_number ?? 1,
+          archivedAt: row.archived_at,
         };
       });
     return { success: true, rows };
@@ -297,6 +309,18 @@ export interface DocumentDetailContext {
   /** CLE-234 — last "Mark as reviewed" that changed the date. */
   lastReviewedAt: string | null;
   lastReviewedByName: string | null;
+  /** CLE-233 — archive + version chain. */
+  archivedAt: string | null;
+  archivedByName: string | null;
+  versionNumber: number;
+  /** The version this one replaced (archived), if any. */
+  previousVersion: { id: string; versionNumber: number; fileName: string; archivedAt: string | null } | null;
+  /** The version that replaced this one, if any. */
+  nextVersion: { id: string; versionNumber: number; fileName: string; uploadedAt: string } | null;
+  /** Caller may archive / restore / publish a new version of this doc
+   *  (org docs: manage org documents; member docs: Documents update with
+   *  team / all reach over the owner). */
+  canManageLifecycle: boolean;
 }
 
 export async function getDocumentDetail(
@@ -745,6 +769,10 @@ export async function replaceMemberDocument(
     if (await isDocumentHiddenFromCaller(admin, oldDocumentId, caller.memberId)) {
       return { success: false, error: "Document not found" };
     }
+    // CLE-233 — archived documents are read-only.
+    if (await isDocumentArchived(admin, oldDocumentId)) {
+      return { success: false, error: ARCHIVED_READ_ONLY_ERROR };
+    }
 
     // Fetch the old doc — every field we need to inherit onto the
     // replacement plus the guard fields (verified_on, owner scope).
@@ -915,6 +943,10 @@ export async function finalizeDocumentReplace(
     if (await isDocumentHiddenFromCaller(admin, oldDocumentId, caller.memberId)) {
       return { success: false, error: "Document not found" };
     }
+    // CLE-233 — archived documents are read-only.
+    if (await isDocumentArchived(admin, oldDocumentId)) {
+      return { success: false, error: ARCHIVED_READ_ONLY_ERROR };
+    }
 
     const { data: rows } = await admin
       .from("document")
@@ -1037,6 +1069,10 @@ export async function updateMemberDocumentMetadata(
     if (await isDocumentHiddenFromCaller(admin, documentId, caller.memberId)) {
       return { success: false, error: "Document not found" };
     }
+    // CLE-233 — archived documents are read-only.
+    if (await isDocumentArchived(admin, documentId)) {
+      return { success: false, error: ARCHIVED_READ_ONLY_ERROR };
+    }
 
     const { data: doc } = await admin
       .from("document")
@@ -1156,6 +1192,10 @@ export async function softDeleteMemberDocument(
     // CLE-231 — HR-only Employment docs are invisible to their owner.
     if (await isDocumentHiddenFromCaller(admin, documentId, caller.memberId)) {
       return { success: false, error: "Document not found" };
+    }
+    // CLE-233 — archived documents are read-only.
+    if (await isDocumentArchived(admin, documentId)) {
+      return { success: false, error: ARCHIVED_READ_ONLY_ERROR };
     }
     const { data: doc } = await admin
       .from("document")
@@ -1297,6 +1337,10 @@ export async function restoreMemberDocument(
     if (await isDocumentHiddenFromCaller(admin, documentId, caller.memberId)) {
       return { success: false, error: "Document not found" };
     }
+    // CLE-233 — archived documents are read-only.
+    if (await isDocumentArchived(admin, documentId)) {
+      return { success: false, error: ARCHIVED_READ_ONLY_ERROR };
+    }
 
     const { data: queued } = await admin
       .from("disposal_queue")
@@ -1378,6 +1422,10 @@ export async function verifyMemberDocument(
     // CLE-231 — HR-only Employment docs are invisible to their owner.
     if (await isDocumentHiddenFromCaller(admin, documentId, caller.memberId)) {
       return { success: false, error: "Document not found" };
+    }
+    // CLE-233 — archived documents are read-only.
+    if (await isDocumentArchived(admin, documentId)) {
+      return { success: false, error: ARCHIVED_READ_ONLY_ERROR };
     }
     const { data: doc } = await admin
       .from("document")
@@ -1483,6 +1531,10 @@ export async function markMemberDocumentReviewed(
     const admin = getAdmin();
     if (await isDocumentHiddenFromCaller(admin, documentId, caller.memberId)) {
       return { success: false, error: "Document not found" };
+    }
+    // CLE-233 — archived documents are read-only.
+    if (await isDocumentArchived(admin, documentId)) {
+      return { success: false, error: ARCHIVED_READ_ONLY_ERROR };
     }
     const { data: doc } = await admin
       .from("document")

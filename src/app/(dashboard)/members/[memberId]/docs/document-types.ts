@@ -40,6 +40,10 @@ export interface MemberDocumentRow {
    *  acknowledged it yet. Drives the admin "Awaiting Ack" pill. Only
    *  populated by `listMemberDocuments`; absent elsewhere. */
   awaitingAckByOwner?: boolean;
+  /** CLE-233 — version number (1 for the first; Employment docs can
+   *  have later versions) and, for archived rows, when it was archived. */
+  versionNumber?: number;
+  archivedAt?: string | null;
 }
 
 export interface TrashedMemberDocumentRow extends MemberDocumentRow {

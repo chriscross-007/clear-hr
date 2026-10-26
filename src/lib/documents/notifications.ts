@@ -257,6 +257,7 @@ async function notifyOrganisation(
       .from("document")
       .select("id, owner_scope, owner_id, subtype_id, file_name, uploaded_at, expires_on, next_review_on, verified_on, disposal_date")
       .eq("organisation_id", orgId)
+      .is("archived_at", null) // CLE-233
       .order("id")
       .range(a, b),
   );

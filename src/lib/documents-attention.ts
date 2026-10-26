@@ -155,6 +155,7 @@ export async function computeMemberDocAttention(
           .eq("organisation_id", organisationId)
           .eq("owner_scope", "member")
           .in("owner_id", ids)
+          .is("archived_at", null) // CLE-233 — archived docs never need attention
           .order("id")
           .range(a, b),
       )),

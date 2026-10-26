@@ -30,15 +30,16 @@ export function subtypeHiddenFromMember(st: SubtypeEmbed): boolean {
   return obj?.visible_to_member === false;
 }
 
-/** Pure check for rows already in hand. */
+/** Pure check for rows already in hand. CLE-233 — an archived document
+ *  is hidden from its owner too (pass `archived_at` in the row). */
 export function isHiddenFromCaller(
-  doc: { owner_scope?: string | null; owner_id?: string | null; document_subtype?: SubtypeEmbed },
+  doc: { owner_scope?: string | null; owner_id?: string | null; document_subtype?: SubtypeEmbed; archived_at?: string | null },
   callerMemberId: string,
 ): boolean {
   return (
     doc.owner_scope === "member" &&
     doc.owner_id === callerMemberId &&
-    subtypeHiddenFromMember(doc.document_subtype)
+    (subtypeHiddenFromMember(doc.document_subtype) || !!doc.archived_at)
   );
 }
 
@@ -50,7 +51,7 @@ export async function isDocumentHiddenFromCaller(
 ): Promise<boolean> {
   const { data } = await admin
     .from("document")
-    .select("owner_scope, owner_id, document_subtype!subtype_id(visible_to_member)")
+    .select("owner_scope, owner_id, archived_at, document_subtype!subtype_id(visible_to_member)")
     .eq("id", documentId)
     .maybeSingle();
   if (!data) return false;
@@ -58,6 +59,7 @@ export async function isDocumentHiddenFromCaller(
     data as unknown as {
       owner_scope: string | null;
       owner_id: string | null;
+      archived_at: string | null;
       document_subtype: SubtypeEmbed;
     },
     callerMemberId,

@@ -15,13 +15,14 @@ import { TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-export type DocTabKey = "certifications" | "employment" | "other" | "org" | "trash";
+export type DocTabKey = "certifications" | "employment" | "other" | "org" | "archived" | "trash";
 
 export const DOC_TAB_LABEL: Record<DocTabKey, string> = {
   certifications: "Certifications",
   employment: "Employment",
   other: "Other",
   org: "Organisation",
+  archived: "Archived",
   trash: "Trash",
 };
 
@@ -69,6 +70,15 @@ const THEME: Record<DocTabKey, { trigger: string; card: string; header: string }
       "dark:data-[state=active]:bg-yellow-800/60 dark:data-[state=active]:text-yellow-50 dark:data-[state=active]:border-yellow-600",
     card: "border-yellow-200 dark:border-yellow-900",
     header: "bg-yellow-50 border-yellow-200 dark:bg-yellow-950/40 dark:border-yellow-900",
+  },
+  archived: {
+    trigger:
+      "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100 hover:text-slate-900 " +
+      "data-[state=active]:bg-slate-200 data-[state=active]:text-slate-900 data-[state=active]:border-slate-400 " +
+      "dark:bg-slate-900/50 dark:text-slate-300 dark:border-slate-800 dark:hover:bg-slate-800/60 " +
+      "dark:data-[state=active]:bg-slate-700/70 dark:data-[state=active]:text-slate-50 dark:data-[state=active]:border-slate-500",
+    card: "border-slate-200 dark:border-slate-800",
+    header: "bg-slate-50 border-slate-200 dark:bg-slate-900/50 dark:border-slate-800",
   },
   trash: {
     trigger:
@@ -138,6 +148,8 @@ export function docTabTooltip(tab: DocTabKey, opts: { self: boolean; memberLabel
       return `Everything else held on ${whose} record, such as absence evidence.`;
     case "org":
       return "Organisation-wide documents such as policies and handbooks.";
+    case "archived":
+      return `Replaced or withdrawn documents, kept read-only. Hidden from ${who}.`;
     case "trash":
       return "Deleted documents, kept for 30 days before being permanently removed.";
   }

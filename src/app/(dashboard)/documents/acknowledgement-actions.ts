@@ -30,6 +30,7 @@ import { revalidatePath } from "next/cache";
 import { createHash } from "node:crypto";
 import { sendAckReminderEmail } from "@/lib/email";
 import { subtypeHiddenFromMember } from "@/lib/documents-member-visibility";
+import { isDocumentArchived } from "@/lib/document-archive";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { logAudit } from "@/lib/audit";
 import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
@@ -605,6 +606,7 @@ export async function getOrgAcknowledgementCoverage(): Promise<
         "document_subtype!subtype_id(name, type, requires_acknowledgement, visible_to_member)",
       )
       .eq("organisation_id", caller.organisationId)
+      .is("archived_at", null) // CLE-233
       .order("uploaded_at", { ascending: false });
     const docs = (docsQuery.data ?? []) as unknown as DocRow[];
 
@@ -788,6 +790,10 @@ export async function remindOutstanding(
     const subtypeRow = Array.isArray(subtype) ? subtype[0] : subtype;
     if (!subtypeRow?.requires_acknowledgement) {
       return { success: false, error: "This document does not require acknowledgement." };
+    }
+    // CLE-233 — archived documents ask nobody to acknowledge.
+    if (await isDocumentArchived(admin, documentId)) {
+      return { success: false, error: "This document has been archived." };
     }
 
     // 24-hour throttle.

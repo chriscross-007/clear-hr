@@ -24,6 +24,7 @@ import {
   type OrgDocAudience,
 } from "@/lib/org-doc-audience";
 import { ACK_LOCKED_REPLACE_ERROR, hasAnyAcknowledgement } from "@/lib/document-ack-lock";
+import { ARCHIVED_READ_ONLY_ERROR, isDocumentArchived } from "@/lib/document-archive";
 import { deriveDocumentStatuses, nextReviewAfterReview, seedNextReviewOn } from "@/lib/document-status";
 import {
   ALLOWED_DOCUMENT_CONTENT_TYPES as ALLOWED_CONTENT_TYPES,
@@ -95,14 +96,14 @@ async function callerName(admin: ReturnType<typeof getAdmin>, memberId: string):
 // CLE-227 — thin cookies-auth passthrough over `_listOrgDocuments`.
 // Impl body lives in `./org-document-actions-impl` and is shared with
 // the mobile API-route wrapper at /api/mobile/documents/org.
-export async function listOrgDocuments(): Promise<{
+export async function listOrgDocuments(opts?: { archived?: boolean }): Promise<{
   success: boolean;
   error?: string;
   rows: OrgDocumentRow[];
 }> {
   const caller = await buildDocumentsCallerFromCookies();
   if (!caller) return { success: false, error: "Not authenticated", rows: [] };
-  return _listOrgDocuments(caller);
+  return _listOrgDocuments(caller, opts);
 }
 
 // CLE-234 — Org documents needing HR attention (expired / expiring soon
@@ -221,6 +222,7 @@ export async function getOrgDocumentsForMember(
       )
       .eq("organisation_id", c.organisationId)
       .eq("owner_scope", "organisation")
+      .is("archived_at", null) // CLE-233
       .order("uploaded_at", { ascending: false });
     if (error) return { success: false, error: error.message };
 
@@ -299,6 +301,8 @@ export async function getOrgDocumentsForMember(
         isAcknowledgedByTarget,
         audienceMode: audienceFromRow(r).mode,
         audienceCount: null,
+        versionNumber: 1,
+        archivedAt: null,
         viewable: targetMember ? canSeeOrgDoc(audienceFromRow(r), targetMember) : false,
         expectedByTarget: targetMember ? isExpectedToAcknowledge(audienceFromRow(r), targetMember) : false,
       };
@@ -325,17 +329,20 @@ export async function getOrgDocumentSignedUrl(
 
     const { data: docRaw } = await admin
       .from("document")
-      .select("id, organisation_id, owner_scope, storage_path, file_name, file_size, content_type, type, " + AUDIENCE_COLUMNS + ", document_subtype!subtype_id(name)")
+      .select("id, organisation_id, owner_scope, storage_path, file_name, file_size, content_type, type, archived_at, " + AUDIENCE_COLUMNS + ", document_subtype!subtype_id(name)")
       .eq("id", documentId)
       .single();
     const doc = docRaw as unknown as (AudienceDbRow & {
       id: string; organisation_id: string; owner_scope: string; storage_path: string;
       file_name: string; file_size: number; content_type: string; type: string;
+      archived_at: string | null;
       document_subtype: unknown;
     }) | null;
     if (!doc || doc.organisation_id !== c.organisationId || doc.owner_scope !== "organisation") {
       return { success: false, error: "Document not found" };
     }
+    // CLE-233 — archived org documents are for managers only.
+    if (doc.archived_at && !c.canEdit) return { success: false, error: "Document not found" };
     // CLE-230 — outside the doc's audience → not found (never leak existence).
     if (!canSeeOrgDoc(audienceFromRow(doc), {
       id: c.memberId, teamId: c.teamId, rightsProfileId: c.rightsProfileId,
@@ -503,6 +510,8 @@ export async function replaceOrgDocument(
     if (!c) return { success: false, error: "Not authenticated" };
     if (!c.canEdit) return { success: false, error: "You don't have permission to change organisation documents." };
     const admin = getAdmin();
+    // CLE-233 — archived documents are read-only.
+    if (await isDocumentArchived(admin, oldDocumentId)) return { success: false, error: ARCHIVED_READ_ONLY_ERROR };
 
     const { data: oldDoc } = await admin
       .from("document")
@@ -647,6 +656,8 @@ export async function updateOrgDocumentMetadata(
     if (!c) return { success: false, error: "Not authenticated" };
     if (!c.canEdit) return { success: false, error: "You don't have permission to change organisation documents." };
     const admin = getAdmin();
+    // CLE-233 — archived documents are read-only.
+    if (await isDocumentArchived(admin, documentId)) return { success: false, error: ARCHIVED_READ_ONLY_ERROR };
 
     const { data: doc } = await admin
       .from("document")
@@ -744,6 +755,8 @@ export async function markOrgDocumentReviewed(
     if (!c) return { success: false, error: "Not authenticated" };
     if (!c.canEdit) return { success: false, error: "You don't have permission to change organisation documents." };
     const admin = getAdmin();
+    // CLE-233 — archived documents are read-only.
+    if (await isDocumentArchived(admin, documentId)) return { success: false, error: ARCHIVED_READ_ONLY_ERROR };
 
     const { data: doc } = await admin
       .from("document")
@@ -798,6 +811,8 @@ export async function softDeleteOrgDocument(
     if (!c) return { success: false, error: "Not authenticated" };
     if (!c.canEdit) return { success: false, error: "You don't have permission to delete organisation documents." };
     const admin = getAdmin();
+    // CLE-233 — archived documents are read-only.
+    if (await isDocumentArchived(admin, documentId)) return { success: false, error: ARCHIVED_READ_ONLY_ERROR };
 
     const { data: doc } = await admin
       .from("document")
@@ -934,6 +949,8 @@ export async function setOrgDocumentAudience(
     if (!c) return { success: false, error: "Not authenticated" };
     if (!c.canEdit) return { success: false, error: "You don't have permission to change organisation documents." };
     const admin = getAdmin();
+    // CLE-233 — archived documents are read-only.
+    if (await isDocumentArchived(admin, documentId)) return { success: false, error: ARCHIVED_READ_ONLY_ERROR };
 
     const { data: doc } = await admin
       .from("document")

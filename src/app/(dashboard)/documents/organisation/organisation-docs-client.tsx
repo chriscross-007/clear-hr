@@ -4,9 +4,9 @@
 // read view lives at /documents/organisation and reuses the read +
 // download actions without the mutation surface.
 
-import { useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, Loader2, Plus, Trash2 } from "lucide-react";
+import { Archive, FileText, Loader2, Plus, Trash2 } from "lucide-react";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   getOrgUploadSubtypes,
+  listOrgDocuments,
   softDeleteOrgDocument,
   uploadOrgDocument,
 } from "@/app/(dashboard)/documents/organisation/org-document-actions";
@@ -80,25 +81,54 @@ export function OrganisationDocsClient({
   const [deleting, setDeleting] = useState<OrgDocumentRow | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // CLE-233 — Current / Archived views (Archived is managers only).
+  const [view, setView] = useState<"current" | "archived">("current");
+  const [archivedRows, setArchivedRows] = useState<OrgDocumentRow[] | null>(null);
+  const loadArchived = useCallback(async () => {
+    const res = await listOrgDocuments({ archived: true });
+    setArchivedRows(res.success ? res.rows : []);
+  }, []);
+
   async function reload() {
     router.refresh();
+    if (canEdit) await loadArchived();
   }
   // Keep local rows in sync when props change (after router.refresh).
   useEffect(() => { setRows(initialRows); }, [initialRows]);
+  useEffect(() => { if (canEdit) void loadArchived(); }, [canEdit, loadArchived]);
 
   return (
     <div className="space-y-4">
       {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
 
       {canEdit && (
-        <div className="flex justify-end">
-          <Button size="sm" onClick={() => setUploadOpen(true)}>
-            <Plus className="mr-1.5 h-4 w-4" /> Upload
-          </Button>
+        <div className="flex items-center justify-between gap-3">
+          <div className="inline-flex rounded-md border p-0.5 text-sm">
+            {(["current", "archived"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                className={cn(
+                  "rounded px-3 py-1 transition-colors",
+                  view === v ? "bg-accent font-medium" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {v === "current" ? "Current" : `Archived${archivedRows ? ` (${archivedRows.length})` : ""}`}
+              </button>
+            ))}
+          </div>
+          {view === "current" && (
+            <Button size="sm" onClick={() => setUploadOpen(true)}>
+              <Plus className="mr-1.5 h-4 w-4" /> Upload
+            </Button>
+          )}
         </div>
       )}
 
-      {rows.length === 0 ? (
+      {view === "archived" ? (
+        <ArchivedOrgDocs rows={archivedRows} onOpen={(id) => setDetailsDocId(id)} />
+      ) : rows.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">
           No organisation documents yet.
         </p>
@@ -319,3 +349,58 @@ function UploadDialog({ onClose, onUploaded }: { onClose: () => void; onUploaded
   );
 }
 
+// CLE-233 — Archived organisation documents (managers only). Read-only;
+// open one to see its history or restore it.
+function ArchivedOrgDocs({
+  rows,
+  onOpen,
+}: {
+  rows: OrgDocumentRow[] | null;
+  onOpen: (id: string) => void;
+}) {
+  if (rows === null) {
+    return (
+      <div className="flex justify-center py-8">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+  if (rows.length === 0) {
+    return <p className="py-8 text-center text-sm text-muted-foreground">No archived organisation documents.</p>;
+  }
+  return (
+    <div className="rounded-md border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+            <th className="px-4 py-2 font-medium">Document</th>
+            <th className="px-4 py-2 font-medium">Version</th>
+            <th className="px-4 py-2 font-medium hidden lg:table-cell">Uploaded</th>
+            <th className="px-4 py-2 font-medium">Archived</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id} className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30" onClick={() => onOpen(r.id)}>
+              <td className="px-4 py-2">
+                <div className="flex items-start gap-2 min-w-0">
+                  <Archive className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0">
+                    <p className="font-medium">{r.subtypeName ?? <span className="text-muted-foreground">—</span>}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {r.fileName}
+                      <span className="ml-1 text-muted-foreground/70">({fmtSize(r.fileSize)})</span>
+                    </p>
+                  </div>
+                </div>
+              </td>
+              <td className="px-4 py-2 text-muted-foreground">{r.versionNumber}</td>
+              <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">{fmtDateTime(r.uploadedAt)}</td>
+              <td className="px-4 py-2 text-muted-foreground">{r.archivedAt ? fmtDateTime(r.archivedAt) : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

@@ -129,7 +129,8 @@ export async function runDocumentsSweep(
       .select(
         "id, organisation_id, file_name, file_size, type, owner_scope, owner_id, expires_on, document_subtype!subtype_id(name, requires_verification)",
       )
-      .lte("expires_on", today);
+      .lte("expires_on", today)
+      .is("archived_at", null); // CLE-233 — archived docs don't expire
     if (opts?.organisationId) q = q.eq("organisation_id", opts.organisationId);
     const { data, error } = await q;
     if (error) {
@@ -180,7 +181,8 @@ export async function runDocumentsSweep(
       .select(
         "id, organisation_id, file_name, file_size, type, owner_scope, owner_id, expires_on, document_subtype!subtype_id(name, requires_verification)",
       )
-      .lte("next_review_on", today);
+      .lte("next_review_on", today)
+      .is("archived_at", null); // CLE-233
     if (opts?.organisationId) q = q.eq("organisation_id", opts.organisationId);
     const { data, error } = await q;
     if (error) {
