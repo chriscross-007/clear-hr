@@ -347,7 +347,7 @@ export function DocsClient({
             <DocListCard
               tone="archived"
               title="Archived"
-              description={`Replaced or withdrawn documents, kept read-only with their history and acknowledgements. Hidden from the ${memberLabel}. Open one to restore it.`}
+              description={`Replaced or withdrawn documents, kept read-only with their history and acknowledgements. Hidden from ${memberName}. Open one to restore it.`}
               loading={loading}
               canUpdate={false}
             >
