@@ -7,6 +7,7 @@
 // documents.update for writes; can_force_delete_documents for the
 // retention override; documents.update for per-member trash).
 
+import { memberCanReplaceOwnDocument, SELF_REPLACE_NOT_ALLOWED_ERROR } from "@/lib/document-self-replace";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
@@ -306,6 +307,10 @@ export interface DocumentDetailContext {
   hasAcknowledgements: boolean;
   /** CLE-234 — the subtype's review interval (months); null = None (ad hoc). */
   reviewPeriodMonths: number | null;
+  /** The caller is the owner and may replace this file themselves: they
+   *  uploaded it, the subtype allows member upload, and it is not yet
+   *  verified, acknowledged or archived (memberCanReplaceOwnDocument). */
+  memberCanReplace: boolean;
   /** The subtype requires an expiry date (a new version must bring one). */
   expiryRequired: boolean;
   /** CLE-234 — last "Mark as reviewed" that changed the date. */
@@ -781,7 +786,7 @@ export async function replaceMemberDocument(
     const { data: oldDoc } = await admin
       .from("document")
       .select(
-        "id, organisation_id, owner_scope, owner_id, file_name, file_size, type, subtype_id, expires_on, retention_class, next_review_on, verified_on, document_subtype!subtype_id(name)",
+        "id, organisation_id, owner_scope, owner_id, file_name, file_size, type, subtype_id, expires_on, retention_class, next_review_on, verified_on, uploaded_by, document_subtype!subtype_id(name, employee_can_upload)",
       )
       .eq("id", oldDocumentId)
       .single();
@@ -821,7 +826,23 @@ export async function replaceMemberDocument(
     const memberId = oldDoc.owner_id as string;
     const target = await getTarget(admin, memberId, caller.organisationId);
     if (!target) return { success: false, error: "Document not found" };
-    if (!caller.canUpdateTarget({ memberId: target.id, teamId: target.team_id })) {
+    // A self-scope member replacing a file on their own record: only a file
+    // they uploaded, of a kind they may upload, before verification
+    // (memberCanReplaceOwnDocument). Everyone else needs documents.update.
+    if (caller.isSelf(target.id) && caller.crossUserAccess === "self") {
+      const st = oldDoc.document_subtype as unknown as { employee_can_upload?: boolean } | { employee_can_upload?: boolean }[] | null;
+      const stOne = Array.isArray(st) ? (st[0] ?? null) : st;
+      const ok = memberCanReplaceOwnDocument({
+        callerMemberId: caller.memberId,
+        ownerId: oldDoc.owner_id as string,
+        uploadedBy: (oldDoc.uploaded_by as string | null) ?? null,
+        verifiedOn: (oldDoc.verified_on as string | null) ?? null,
+        archivedAt: null,
+        hasAcknowledgements: false,
+        employeeCanUpload: stOne?.employee_can_upload === true,
+      });
+      if (!ok) return { success: false, error: SELF_REPLACE_NOT_ALLOWED_ERROR };
+    } else if (!caller.canUpdateTarget({ memberId: target.id, teamId: target.team_id })) {
       return { success: false, error: "You don't have permission to replace this document." };
     }
 

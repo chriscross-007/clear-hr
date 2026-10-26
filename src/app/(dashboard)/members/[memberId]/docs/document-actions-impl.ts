@@ -17,6 +17,7 @@
 // verify/replace, trash, restore, acks-related helpers) stay in the
 // action file — they aren't wrapped by mobile Tier 1.
 
+import { memberCanReplaceOwnDocument } from "@/lib/document-self-replace";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
 import { deriveDocumentStatuses, seedNextReviewOnUpload, type DocumentStatus } from "@/lib/document-status";
@@ -140,7 +141,7 @@ export async function _getDocumentDetail(
     const { data: doc } = await admin
       .from("document")
       .select(
-        "id, organisation_id, owner_scope, owner_id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, verification_notes, archived_at, archived_by, version_number, supersedes_document_id, audience_mode, audience_team_ids, audience_rights_profile_ids, audience_include_member_ids, document_subtype!subtype_id(name, requires_verification, visible_to_member, review_period_months, expiry_required)",
+        "id, organisation_id, owner_scope, owner_id, file_name, file_size, content_type, type, subtype_id, expires_on, retention_class, disposal_date, uploaded_by, uploaded_at, verified_on, verified_by, next_review_on, capture_source, verification_notes, archived_at, archived_by, version_number, supersedes_document_id, audience_mode, audience_team_ids, audience_rights_profile_ids, audience_include_member_ids, document_subtype!subtype_id(name, requires_verification, visible_to_member, review_period_months, expiry_required, employee_can_upload)",
       )
       .eq("id", documentId)
       .single();
@@ -203,8 +204,8 @@ export async function _getDocumentDetail(
     }
 
     const st = doc.document_subtype as unknown as
-      | { name?: string; requires_verification?: boolean; visible_to_member?: boolean; review_period_months?: number | null; expiry_required?: boolean | null }
-      | { name?: string; requires_verification?: boolean; visible_to_member?: boolean; review_period_months?: number | null; expiry_required?: boolean | null }[]
+      | { name?: string; requires_verification?: boolean; visible_to_member?: boolean; review_period_months?: number | null; expiry_required?: boolean | null; employee_can_upload?: boolean | null }
+      | { name?: string; requires_verification?: boolean; visible_to_member?: boolean; review_period_months?: number | null; expiry_required?: boolean | null; employee_can_upload?: boolean | null }[]
       | null;
     const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
     const requiresVerification = stObj?.requires_verification === true;
@@ -292,6 +293,19 @@ export async function _getDocumentDetail(
           (caller.rights.crossUserAccess === "all" ||
             (caller.rights.crossUserAccess === "team" && target.team_id !== null && target.team_id === caller.teamId));
 
+    const hasAcks = await hasAnyAcknowledgement(admin, doc.id as string);
+    const memberCanReplace =
+      doc.owner_scope === "member" &&
+      memberCanReplaceOwnDocument({
+        callerMemberId: caller.memberId,
+        ownerId: (doc.owner_id as string | null) ?? null,
+        uploadedBy: (doc.uploaded_by as string | null) ?? null,
+        verifiedOn: (doc.verified_on as string | null) ?? null,
+        archivedAt: (doc.archived_at as string | null) ?? null,
+        hasAcknowledgements: hasAcks,
+        employeeCanUpload: stObj?.employee_can_upload === true,
+      });
+
     return {
       success: true,
       detail: {
@@ -302,9 +316,10 @@ export async function _getDocumentDetail(
         verifiedByName: verifierName,
         verificationNotes: (doc.verification_notes as string | null) ?? null,
         isSelf: isSelf(caller, target.id),
-        hasAcknowledgements: await hasAnyAcknowledgement(admin, doc.id as string),
+        hasAcknowledgements: hasAcks,
         reviewPeriodMonths: stObj?.review_period_months ?? null,
         expiryRequired: stObj?.expiry_required === true,
+        memberCanReplace,
         lastReviewedAt: (lastReview?.created_at as string | undefined) ?? null,
         lastReviewedByName: (lastReview?.actor_name as string | undefined) ?? null,
         archivedAt: (doc.archived_at as string | null) ?? null,

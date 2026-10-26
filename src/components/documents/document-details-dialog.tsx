@@ -658,6 +658,24 @@ export function DocumentDetailsDialog({
                     click "I have read and understood".
                     CLE-234 — Verify (member-supplied kinds only) and
                     Review are separate sections again. */}
+                {/* A member replacing their own upload before it is verified
+                    (wrong file picked). Upload only — remote photo capture is
+                    an HR flow. Gate: DocumentDetailContext.memberCanReplace
+                    (memberCanReplaceOwnDocument; re-checked server-side). */}
+                {employeeStripped && !readOnly && detail.memberCanReplace && (
+                  <div className="border-b p-4">
+                    <ReplaceSection
+                      documentId={currentDocumentId}
+                      targetMemberId={detail.targetMemberId}
+                      targetMemberName={detail.targetMemberName}
+                      subtypeId={detail.row.subtypeId}
+                      subtypeName={detail.row.subtypeName}
+                      isOrgDocument={false}
+                      selfService
+                      onReplaced={pivotToReplacement}
+                    />
+                  </div>
+                )}
                 {!hideHrMetadata && (
                   <>
                     {/* CLE-230 — Visible to (org docs, managers only).
@@ -1770,6 +1788,7 @@ function ReplaceSection({
   subtypeId,
   subtypeName,
   isOrgDocument,
+  selfService = false,
   onReplaced,
 }: {
   documentId: string;
@@ -1780,6 +1799,8 @@ function ReplaceSection({
   /** Org documents replace via `replaceOrgDocument` and have no photo
    *  capture (that flow belongs to a member). */
   isOrgDocument: boolean;
+  /** The member replacing their own upload: upload only, member wording. */
+  selfService?: boolean;
   onReplaced: (newDocumentId: string) => void | Promise<void>;
 }) {
   const [mode, setMode] = useState<"idle" | "waiting">("idle");
@@ -1940,7 +1961,9 @@ function ReplaceSection({
         Replace file
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
-        Files that have not been Verified or Acknowledged can be replaced.
+        {selfService
+          ? "Uploaded the wrong file? You can replace it until it has been verified."
+          : "Files that have not been Verified or Acknowledged can be replaced."}
       </p>
       {error && (
         <div className="mt-2 rounded-md bg-destructive/10 p-2 text-xs text-destructive">{error}</div>
@@ -1972,7 +1995,7 @@ function ReplaceSection({
           >
             <FileUp className="h-4 w-4" /> Upload replacement
           </Button>
-          {!isOrgDocument && (
+          {!isOrgDocument && !selfService && (
             <Button
               type="button"
               size="sm"
