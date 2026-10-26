@@ -29,6 +29,7 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createHash } from "node:crypto";
 import { sendAckReminderEmail } from "@/lib/email";
+import { subtypeHiddenFromMember } from "@/lib/documents-member-visibility";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { logAudit } from "@/lib/audit";
 import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
@@ -43,6 +44,7 @@ import {
   AUDIENCE_COLUMNS,
   audienceFromRow,
   expectedAcknowledgerIds,
+  loadMemberInvited,
   loadOrgDocMember,
   loadOrgDocMembers,
   type AudienceDbRow,
@@ -418,8 +420,8 @@ export async function getDocumentCoverage(
       file_name: string;
       subtype_id: string;
       document_subtype:
-        | { name?: string; requires_acknowledgement?: boolean }
-        | { name?: string; requires_acknowledgement?: boolean }[]
+        | { name?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }
+        | { name?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }[]
         | null;
     };
     const docQuery = await admin
@@ -427,7 +429,7 @@ export async function getDocumentCoverage(
       .select(
         "id, organisation_id, owner_scope, owner_id, file_name, subtype_id, " +
         AUDIENCE_COLUMNS + ", " +
-        "document_subtype!subtype_id(name, requires_acknowledgement)",
+        "document_subtype!subtype_id(name, requires_acknowledgement, visible_to_member)",
       )
       .eq("id", documentId)
       .single();
@@ -445,7 +447,14 @@ export async function getDocumentCoverage(
     // Denominator: expected-to-ack member set.
     let expectedIds: string[] = [];
     if (ownerScope === "member") {
-      expectedIds = doc.owner_id ? [doc.owner_id as string] : [];
+      // Same rule as the outstanding-ack core (dashboard + emails): the
+      // owner is expected only when invited and the doc isn't HR-only.
+      expectedIds =
+        doc.owner_id &&
+        !subtypeHiddenFromMember(doc.document_subtype) &&
+        (await loadMemberInvited(admin, caller.organisationId, doc.owner_id))
+          ? [doc.owner_id as string]
+          : [];
     } else {
       // CLE-230 — signed-in members in the doc's audience.
       expectedIds = expectedAcknowledgerIds(
@@ -584,8 +593,8 @@ export async function getOrgAcknowledgementCoverage(): Promise<
       reminders_last_sent_at: string | null;
       disposal_date: string | null;
       document_subtype:
-        | { name?: string; type?: string; requires_acknowledgement?: boolean }
-        | Array<{ name?: string; type?: string; requires_acknowledgement?: boolean }>
+        | { name?: string; type?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }
+        | Array<{ name?: string; type?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }>
         | null;
     };
     const docsQuery = await admin
@@ -593,7 +602,7 @@ export async function getOrgAcknowledgementCoverage(): Promise<
       .select(
         "id, file_name, subtype_id, owner_scope, owner_id, uploaded_at, reminders_last_sent_at, disposal_date, " +
         AUDIENCE_COLUMNS + ", " +
-        "document_subtype!subtype_id(name, type, requires_acknowledgement)",
+        "document_subtype!subtype_id(name, type, requires_acknowledgement, visible_to_member)",
       )
       .eq("organisation_id", caller.organisationId)
       .order("uploaded_at", { ascending: false });
@@ -621,9 +630,23 @@ export async function getOrgAcknowledgementCoverage(): Promise<
     //
     // NOTE — see the twin comment on `getDocumentCoverage`: when the
     // Member Lifecycle capability ships, exclude non-live members.
-    let orgMembers: OrgDocMember[] = [];
-    if (relevant.some((d) => d.owner_scope === "organisation")) {
-      orgMembers = await loadOrgDocMembers(admin, caller.organisationId);
+    // Also used for member-scope docs: the owner only counts when invited.
+    const orgMembers: OrgDocMember[] = await loadOrgDocMembers(admin, caller.organisationId);
+    const invitedIds = new Set(orgMembers.filter((m) => m.invited).map((m) => m.id));
+
+    // 2026-10-26 — expected set per doc, same rule as the outstanding-ack
+    // core behind the admin dashboard and emails: org docs → audience;
+    // member docs → the owner, only when invited and not HR-only.
+    const expectedByDoc = new Map<string, string[]>();
+    for (const d of relevant) {
+      expectedByDoc.set(
+        d.id,
+        d.owner_scope === "member"
+          ? d.owner_id && invitedIds.has(d.owner_id) && !subtypeHiddenFromMember(d.document_subtype)
+            ? [d.owner_id]
+            : []
+          : expectedAcknowledgerIds(audienceFromRow(d), orgMembers),
+      );
     }
 
     // Batch-load ack rows for every relevant doc. One query, group in
@@ -631,12 +654,14 @@ export async function getOrgAcknowledgementCoverage(): Promise<
     const docIds = relevant.map((d) => d.id);
     const { data: acks } = await admin
       .from("document_acknowledgement")
-      .select("document_id")
+      .select("document_id, member_id")
       .in("document_id", docIds)
       .is("superseded_by_replace_at", null);
-    const ackedByDoc = new Map<string, number>();
-    for (const r of ((acks ?? []) as { document_id: string }[])) {
-      ackedByDoc.set(r.document_id, (ackedByDoc.get(r.document_id) ?? 0) + 1);
+    const ackedByDoc = new Map<string, Set<string>>();
+    for (const r of ((acks ?? []) as { document_id: string; member_id: string }[])) {
+      const set = ackedByDoc.get(r.document_id) ?? new Set<string>();
+      set.add(r.member_id);
+      ackedByDoc.set(r.document_id, set);
     }
 
     // Owner-name hydration for member-scope docs.
@@ -659,15 +684,15 @@ export async function getOrgAcknowledgementCoverage(): Promise<
       }
     }
 
-    const rows: AcknowledgementCoverageRow[] = relevant.map((d) => {
+    // A member doc nobody is expected to acknowledge (owner not invited,
+    // or HR-only) isn't listed.
+    const listed = relevant.filter((d) => d.owner_scope !== "member" || (expectedByDoc.get(d.id) ?? []).length > 0);
+    const rows: AcknowledgementCoverageRow[] = listed.map((d) => {
       const st = Array.isArray(d.document_subtype) ? d.document_subtype[0] : d.document_subtype;
-      // CLE-230 — per-doc denominator from the doc's audience.
-      // Member-scope docs are unaffected (always 1).
-      const totalExpected =
-        d.owner_scope === "member"
-          ? (d.owner_id ? 1 : 0)
-          : expectedAcknowledgerIds(audienceFromRow(d), orgMembers).length;
-      const totalAcknowledged = ackedByDoc.get(d.id) ?? 0;
+      const expected = expectedByDoc.get(d.id) ?? [];
+      const acked = ackedByDoc.get(d.id) ?? new Set<string>();
+      const totalExpected = expected.length;
+      const totalAcknowledged = expected.filter((id) => acked.has(id)).length;
       return {
         documentId: d.id,
         fileName: d.file_name,
@@ -742,8 +767,8 @@ export async function remindOutstanding(
       owner_id: string | null;
       reminders_last_sent_at: string | null;
       document_subtype:
-        | { name?: string; requires_acknowledgement?: boolean }
-        | Array<{ name?: string; requires_acknowledgement?: boolean }>
+        | { name?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }
+        | Array<{ name?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }>
         | null;
     };
     const docQuery = await admin
@@ -751,7 +776,7 @@ export async function remindOutstanding(
       .select(
         "id, organisation_id, file_name, file_size, owner_scope, owner_id, reminders_last_sent_at, " +
         AUDIENCE_COLUMNS + ", " +
-        "document_subtype!subtype_id(name, requires_acknowledgement)",
+        "document_subtype!subtype_id(name, requires_acknowledgement, visible_to_member)",
       )
       .eq("id", documentId)
       .single();
@@ -784,7 +809,13 @@ export async function remindOutstanding(
     // hydrate teams here.
     let expectedIds: string[] = [];
     if (doc.owner_scope === "member") {
-      expectedIds = doc.owner_id ? [doc.owner_id] : [];
+      // Same rule as the dashboard: owner only when invited, never HR-only.
+      expectedIds =
+        doc.owner_id &&
+        !subtypeHiddenFromMember(doc.document_subtype) &&
+        (await loadMemberInvited(admin, caller.organisationId, doc.owner_id))
+          ? [doc.owner_id]
+          : [];
     } else {
       // CLE-230 — only remind members in the doc's audience.
       expectedIds = expectedAcknowledgerIds(
