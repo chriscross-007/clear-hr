@@ -6,7 +6,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ExternalLink, FileText, Loader2, Plus, Trash2 } from "lucide-react";
+import { FileText, Loader2, Plus, Trash2 } from "lucide-react";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +37,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  getOrgDocumentSignedUrl,
   getOrgUploadSubtypes,
   softDeleteOrgDocument,
   uploadOrgDocument,
@@ -86,18 +85,6 @@ export function OrganisationDocsClient({
   }
   // Keep local rows in sync when props change (after router.refresh).
   useEffect(() => { setRows(initialRows); }, [initialRows]);
-
-  async function handleDownload(r: OrgDocumentRow) {
-    const res = await getOrgDocumentSignedUrl(r.id, "download");
-    if (!res.success || !res.url) return;
-    const a = document.createElement("a");
-    a.href = res.url;
-    a.download = res.fileName ?? r.fileName;
-    a.rel = "noopener noreferrer";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }
 
   return (
     <div className="space-y-4">
@@ -184,11 +171,8 @@ export function OrganisationDocsClient({
                   <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">{fmtDateTime(r.uploadedAt)}</td>
                   <td className="px-4 py-2 text-right">
                     <div className="flex items-center justify-end gap-0.5">
-                      <Button variant="ghost" size="icon" aria-label="Download" onClick={(e) => { e.stopPropagation(); void handleDownload(r); }}>
-                        <ExternalLink className="h-4 w-4" />
-                      </Button>
                       {canEdit && (
-                        <Button variant="ghost" size="icon" aria-label="Delete" onClick={(e) => { e.stopPropagation(); setDeleting(r); }}>
+                        <Button variant="ghost" size="icon" aria-label="Move to Trash" title="Move to Trash" onClick={(e) => { e.stopPropagation(); setDeleting(r); }}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       )}

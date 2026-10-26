@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
-import { AlertCircle, ChevronLeft, ChevronRight, ExternalLink, Loader2, XCircle } from "lucide-react";
+import { AlertCircle, ChevronLeft, ChevronRight, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
@@ -259,7 +259,6 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
                 <th className="px-4 py-2 font-medium hidden md:table-cell">Expires</th>
                 <th className="px-4 py-2 font-medium hidden md:table-cell">Next review</th>
                 <th className="px-4 py-2 font-medium hidden lg:table-cell">File</th>
-                <th className="px-4 py-2 text-right" />
               </tr>
             </thead>
             <tbody>
@@ -307,17 +306,6 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
                         Not uploaded
                       </span>
                     )}
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Link
-                        href={`/members/${r.memberId}/docs`}
-                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs hover:bg-accent"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        Open <ExternalLink className="h-3 w-3" />
-                      </Link>
-                    </div>
                   </td>
                 </tr>
               ))}
