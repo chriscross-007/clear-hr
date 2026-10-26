@@ -2,9 +2,9 @@
 
 // CLE-207 — Compliance dashboard client. Filters + row list.
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
-import { AlertCircle, ChevronLeft, ChevronRight, ExternalLink, Filter, XCircle } from "lucide-react";
+import { AlertCircle, ChevronLeft, ChevronRight, ExternalLink, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
@@ -99,13 +99,24 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
     setRows(res.rows);
   }
 
-  const applyFilters = () => {
+  // Filters apply as soon as they change — no Apply button. The first
+  // render uses the server-provided rows; a request counter drops any
+  // response that's been overtaken by a newer filter change.
+  const firstFilterRun = useRef(true);
+  const filterRequest = useRef(0);
+  useEffect(() => {
+    if (firstFilterRun.current) {
+      firstFilterRun.current = false;
+      return;
+    }
+    const req = ++filterRequest.current;
     startTransition(async () => {
       const res = await getComplianceRows({
         subtypeId: subtypeFilter || undefined,
         status: statusFilter.size > 0 ? Array.from(statusFilter) : undefined,
         includeAllStatuses: statusFilter.size > 0,
       });
+      if (req !== filterRequest.current) return;
       if (!res.success) {
         setError(res.error ?? "Failed to reload");
         return;
@@ -113,7 +124,7 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
       setError(null);
       setRows(res.rows);
     });
-  };
+  }, [subtypeFilter, statusFilter]);
 
   function toggleStatus(s: DocumentStatus | "not_uploaded") {
     setStatusFilter((prev) => {
@@ -204,36 +215,20 @@ export function ComplianceClient({ initialRows, initialError, subtypes, crossUse
           className="w-56"
         />
 
-        <Button variant="outline" size="sm" onClick={applyFilters} disabled={pending}>
-          <Filter className="mr-1.5 h-4 w-4" />
-          Apply
-        </Button>
-
         <Button
           variant="ghost"
           size="sm"
-          disabled={
-            pending ||
-            (!subtypeFilter && statusFilter.size === 0 && !memberQuery)
-          }
+          disabled={!subtypeFilter && statusFilter.size === 0 && !memberQuery}
           onClick={() => {
             setSubtypeFilter("");
             setStatusFilter(new Set());
             setMemberQuery("");
-            startTransition(async () => {
-              const res = await getComplianceRows();
-              if (!res.success) {
-                setError(res.error ?? "Failed to reload");
-                return;
-              }
-              setError(null);
-              setRows(res.rows);
-            });
           }}
         >
           <XCircle className="mr-1.5 h-4 w-4" />
           Clear filters
         </Button>
+        {pending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-label="Updating" />}
       </div>
 
       {error && (
