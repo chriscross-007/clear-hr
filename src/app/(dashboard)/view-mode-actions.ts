@@ -83,7 +83,7 @@ export async function setViewMode(
     if (resolved.rights.crossUserAccess === "self" && mode === "self") {
       return {
         success: false,
-        error: "Only administrators can switch to Employee view",
+        error: "Only administrators can switch view",
       };
     }
 

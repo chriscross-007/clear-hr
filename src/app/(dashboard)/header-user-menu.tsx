@@ -74,12 +74,12 @@ export function HeaderUserMenu({
   const [loadError, setLoadError] = useState<string | null>(null);
   const { theme, setTheme } = useTheme();
 
-  // Chip label — in self mode force "Employee" (the profile shown to
-  // real employees), otherwise render the caller's real profile name
+  // Chip label — in self mode show the org's member label (e.g.
+  // "Colleague"), never a hard-coded "Employee"; otherwise render the caller's real profile name
   // with the same fallbacks as before.
   const chipLabel =
     viewMode === "self"
-      ? "Employee"
+      ? capitalize(memberLabel)
       : (realProfileName ??
           profileName ??
           (rank === "employee"
@@ -103,7 +103,7 @@ export function HeaderUserMenu({
       // page. Preserves any existing query string.
       const message =
         target === "self"
-          ? "Now viewing as Employee — you'll only see your own data"
+          ? `Now viewing as ${capitalize(memberLabel)} — you'll only see your own data`
           : "Back in Admin View — full access restored";
       const sep = dest.includes("?") ? "&" : "?";
       const destWithFlash = `${dest}${sep}flash=${encodeURIComponent(message)}&flashTone=info`;
@@ -147,7 +147,7 @@ export function HeaderUserMenu({
             {/* CLE-198 follow-up + CLE-218 — Show the profile name
                 (what the user actually sees in Settings → User
                 Rights). In "self" view mode the chip flips to
-                "Employee". */}
+                member label (e.g. "Colleague"). */}
             ({chipLabel})
           </span>
         </span>
@@ -161,7 +161,7 @@ export function HeaderUserMenu({
             title={
               viewMode === "self"
                 ? "Return to Admin View"
-                : "View the app as an Employee"
+                : `View the app as ${/^[aeiou]/i.test(memberLabel) ? "an" : "a"} ${capitalize(memberLabel)}`
             }
             aria-label="Switch view"
           >
