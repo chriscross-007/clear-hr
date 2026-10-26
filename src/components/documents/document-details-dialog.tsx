@@ -737,7 +737,9 @@ export function DocumentDetailsDialog({
                                 ? canVersionType(detail.row.type)
                                   ? "This document has been acknowledged, so its file can't be replaced. Publish a new version instead (below)."
                                   : "This document has been acknowledged, so its file can't be replaced. Add the new file as a new document instead."
-                                : "This document has been verified and cannot be reloaded. If the wrong document is showing, please Delete and Reload."}
+                                : canVersionType(detail.row.type)
+                                  ? "This document has been verified and cannot be reloaded. If it has been renewed, upload the new version below; if the wrong document is showing, Delete and Reload."
+                                  : "This document has been verified and cannot be reloaded. If the wrong document is showing, please Delete and Reload."}
                             </p>
                           </div>
                         )}
@@ -1493,8 +1495,8 @@ function AcknowledgementSection({
 
 // ---------------------------------------------------------------------------
 // CLE-233 — LifecycleSection: publish a new version / archive / restore.
-// Admin-only (detail.canManageLifecycle). New version for organisation +
-// Employment documents; Archive for those plus Certificates / RTW evidence.
+// Admin-only (detail.canManageLifecycle). New version + Archive for
+// organisation, Employment, Certificate and RTW evidence documents.
 // ---------------------------------------------------------------------------
 
 function LifecycleSection({
@@ -1513,6 +1515,8 @@ function LifecycleSection({
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [pending, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [staged, setStaged] = useState<File | null>(null);
+  const [stagedExpiry, setStagedExpiry] = useState("");
   const isOrg = detail.row.type === "organisation_document";
   const audience = isOrg ? pluralize(memberLabel).toLowerCase() : `this ${memberLabel.toLowerCase()}`;
 
@@ -1549,17 +1553,32 @@ function LifecycleSection({
   }
 
   const versionable = canVersionType(detail.row.type);
+  // Certificates / RTW evidence the member supplies: a renewal (e.g. a new
+  // driving licence) with its own expiry date.
+  const isRenewal = detail.row.type === "certificate" || detail.row.type === "evidence";
+  const takesExpiry = !isOrg;
+  const expiryNeeded = takesExpiry && detail.expiryRequired;
+  const nextVersion = detail.versionNumber + 1;
 
   function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
     const chosen = e.target.files?.[0] ?? null;
     e.target.value = "";
     if (!chosen) return;
     setError(null);
+    setStaged(chosen);
+    setStagedExpiry("");
+  }
+
+  function publishStaged() {
+    if (!staged) return;
+    setError(null);
     const fd = new FormData();
-    fd.set("file", chosen);
+    fd.set("file", staged);
+    if (takesExpiry && stagedExpiry) fd.set("expiresOn", stagedExpiry);
     startTransition(async () => {
       const res = await publishNewDocumentVersion(documentId, fd);
       if (!res.success || !res.documentId) { setError(res.error ?? "Publishing failed"); return; }
+      setStaged(null);
       await onPublished(res.documentId);
     });
   }
@@ -1573,9 +1592,19 @@ function LifecycleSection({
       {versionable && (
         <div className="space-y-1.5">
           <p className="text-sm text-muted-foreground">
-            Publish a new file as version {detail.versionNumber + 1}. It keeps this document&apos;s type
-            {isOrg ? ", subtype and audience" : " and subtype"}; acknowledgements start again. This version is archived
-            and kept read-only.
+            {isRenewal ? (
+              <>
+                Renewed or replaced? Upload the new one as version {nextVersion}. It keeps this document&apos;s type
+                and subtype{detail.row.requiresVerification ? " and needs verifying" : ""}. This version is archived and
+                kept read-only, so it stops counting as expiring.
+              </>
+            ) : (
+              <>
+                Publish a new file as version {nextVersion}. It keeps this document&apos;s type
+                {isOrg ? ", subtype and audience" : " and subtype"}; acknowledgements start again. This version is
+                archived and kept read-only.
+              </>
+            )}
           </p>
           <input
             ref={fileInputRef}
@@ -1584,10 +1613,38 @@ function LifecycleSection({
             accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt"
             onChange={handleFileChosen}
           />
-          <Button size="sm" disabled={pending} onClick={() => fileInputRef.current?.click()}>
-            {pending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <FileUp className="mr-1.5 h-4 w-4" />}
-            Publish new version
-          </Button>
+          {!staged ? (
+            <Button size="sm" disabled={pending} onClick={() => fileInputRef.current?.click()}>
+              <FileUp className="mr-1.5 h-4 w-4" />
+              {isRenewal ? "Upload new version" : "Publish new version"}
+            </Button>
+          ) : (
+            <div className="space-y-2 rounded-md border p-3 text-sm">
+              <p>
+                Version {nextVersion}: <span className="font-medium">{staged.name}</span>
+              </p>
+              {takesExpiry && (
+                <label className="flex flex-wrap items-center gap-2">
+                  <span>Expires{expiryNeeded ? "" : " (optional)"}</span>
+                  <input
+                    type="date"
+                    value={stagedExpiry}
+                    onChange={(e) => setStagedExpiry(e.target.value)}
+                    className="rounded-md border bg-background px-2 py-1 text-sm"
+                  />
+                </label>
+              )}
+              <div className="flex gap-2">
+                <Button size="sm" disabled={pending || (expiryNeeded && !stagedExpiry)} onClick={publishStaged}>
+                  {pending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <FileUp className="mr-1.5 h-4 w-4" />}
+                  Publish version {nextVersion}
+                </Button>
+                <Button size="sm" variant="ghost" disabled={pending} onClick={() => { setStaged(null); setError(null); }}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

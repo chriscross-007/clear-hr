@@ -306,6 +306,8 @@ export interface DocumentDetailContext {
   hasAcknowledgements: boolean;
   /** CLE-234 — the subtype's review interval (months); null = None (ad hoc). */
   reviewPeriodMonths: number | null;
+  /** The subtype requires an expiry date (a new version must bring one). */
+  expiryRequired: boolean;
   /** CLE-234 — last "Mark as reviewed" that changed the date. */
   lastReviewedAt: string | null;
   lastReviewedByName: string | null;

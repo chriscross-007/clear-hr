@@ -15,8 +15,15 @@ export const ARCHIVABLE_TYPES: ReadonlySet<string> = new Set([
   "evidence",
 ]);
 
-/** Kinds that support "Publish new version" (the old one is archived). */
-export const VERSIONABLE_TYPES: ReadonlySet<string> = new Set(["organisation_document", "contract"]);
+/** Kinds that support "Publish new version" (the old one is archived).
+ *  Certificates + RTW evidence: e.g. a renewed driving licence or passport
+ *  supersedes the expiring one. */
+export const VERSIONABLE_TYPES: ReadonlySet<string> = new Set([
+  "organisation_document",
+  "contract",
+  "certificate",
+  "evidence",
+]);
 
 export function canArchiveType(type: string | null | undefined): boolean {
   return !!type && ARCHIVABLE_TYPES.has(type);

@@ -5,9 +5,10 @@
 //   archiveDocument(id)            — organisation, Employment, Certificate
 //                                    and RTW evidence documents.
 //   restoreArchivedDocument(id)    — undo an archive.
-//   publishNewDocumentVersion(id)  — organisation + Employment documents:
-//                                    upload a new file as a new document
-//                                    (version + 1, no acknowledgements) and
+//   publishNewDocumentVersion(id)  — organisation, Employment, Certificate
+//                                    and RTW evidence documents: upload a
+//                                    new file as a new document (version + 1,
+//                                    no acknowledgements, unverified) and
 //                                    archive the old one, linked both ways.
 //
 // Permissions: organisation documents need can_manage_organisation_documents;
@@ -25,7 +26,7 @@ import {
   MEMBER_DOCUMENTS_BUCKET as MEMBER_BUCKET,
   ORG_DOCUMENTS_BUCKET,
 } from "@/lib/document-limits";
-import { seedNextReviewOn } from "@/lib/document-status";
+import { seedNextReviewOn, seedNextReviewOnUpload } from "@/lib/document-status";
 
 const TYPE_DISPLAY: Record<string, string> = {
   contract: "Employment",
@@ -35,7 +36,12 @@ const TYPE_DISPLAY: Record<string, string> = {
   organisation_document: "Organisation document",
 };
 
-type SubtypeEmbed = { name?: string; review_period_months?: number | null };
+type SubtypeEmbed = {
+  name?: string;
+  review_period_months?: number | null;
+  requires_verification?: boolean | null;
+  expiry_required?: boolean | null;
+};
 
 type LifecycleDoc = AudienceDbRow & {
   id: string;
@@ -70,7 +76,7 @@ async function loadDoc(caller: DocumentsCaller, documentId: string): Promise<Lif
     .select(
       "id, organisation_id, owner_scope, owner_id, type, subtype_id, file_name, file_size, retention_class, archived_at, version_number, " +
         AUDIENCE_COLUMNS +
-        ", document_subtype!subtype_id(name, review_period_months)",
+        ", document_subtype!subtype_id(name, review_period_months, requires_verification, expiry_required)",
     )
     .eq("id", documentId)
     .maybeSingle();
@@ -237,7 +243,7 @@ export async function publishNewDocumentVersion(oldDocumentId: string, formData:
     const p = await prepare(oldDocumentId);
     if (!p.ok) return { success: false, error: p.error };
     const { caller, doc: old, owner } = p;
-    if (!canVersionType(old.type)) return { success: false, error: "New versions are only for organisation and Employment documents." };
+    if (!canVersionType(old.type)) return { success: false, error: "This kind of document doesn't have versions — move it to Trash instead." };
     if (old.archived_at) return { success: false, error: "This version is archived. Publish from the current version instead." };
     if (await inTrash(caller, oldDocumentId)) return { success: false, error: "This document is in Trash." };
 
@@ -246,6 +252,16 @@ export async function publishNewDocumentVersion(oldDocumentId: string, formData:
     if (file.size > MAX_DOCUMENT_SIZE) return { success: false, error: "This file is too large. The limit is 10 MB." };
     if (!ALLOWED_DOCUMENT_CONTENT_TYPES.includes(file.type as (typeof ALLOWED_DOCUMENT_CONTENT_TYPES)[number])) {
       return { success: false, error: "This file type is not accepted." };
+    }
+
+    // Certificates / RTW evidence: a renewed document brings its own
+    // expiry date. Required when the subtype requires expiry.
+    const subtype = subtypeOf(old);
+    const rawExpiry = formData.get("expiresOn");
+    const expiresOn = typeof rawExpiry === "string" && rawExpiry.trim() ? rawExpiry.trim() : null;
+    if (expiresOn && !/^\d{4}-\d{2}-\d{2}$/.test(expiresOn)) return { success: false, error: "Enter a valid expiry date." };
+    if (!expiresOn && subtype?.expiry_required === true && old.owner_scope === "member") {
+      return { success: false, error: "Enter the new document's expiry date." };
     }
 
     const bucket = old.owner_scope === "organisation" ? ORG_DOCUMENTS_BUCKET : MEMBER_BUCKET;
@@ -260,7 +276,9 @@ export async function publishNewDocumentVersion(oldDocumentId: string, formData:
     const versionNumber = (old.version_number ?? 1) + 1;
     const now = new Date().toISOString();
     // Same type, subtype, retention and (org docs) audience. Expiry is not
-    // carried over — a new file has its own; the review clock starts now.
+    // carried over — a new file has its own (entered with the upload, or
+    // set afterwards); the review clock starts now (member docs that need
+    // verification start it on Verify instead). Never verified.
     const { data: inserted, error: insertError } = await caller.admin
       .from("document")
       .insert({
@@ -274,8 +292,15 @@ export async function publishNewDocumentVersion(oldDocumentId: string, formData:
         type: old.type,
         subtype_id: old.subtype_id,
         retention_class: old.retention_class,
-        expires_on: null,
-        next_review_on: seedNextReviewOn(subtypeOf(old)?.review_period_months ?? null),
+        expires_on: expiresOn,
+        next_review_on:
+          old.owner_scope === "member"
+            ? seedNextReviewOnUpload({
+                type: old.type,
+                requires_verification: subtype?.requires_verification ?? null,
+                review_period_months: subtype?.review_period_months ?? null,
+              })
+            : seedNextReviewOn(subtype?.review_period_months ?? null),
         uploaded_by: caller.memberId,
         version_number: versionNumber,
         supersedes_document_id: old.id,
