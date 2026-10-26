@@ -36,8 +36,8 @@ import {
 } from "@/lib/email";
 import { _getOutstandingAcknowledgementsForMany } from "@/app/(dashboard)/documents/acknowledgement-actions-impl";
 import type { OrgDocMember } from "@/lib/org-doc-audience";
-import { isRtwSubtype } from "@/lib/documents-rtw";
-import { canBeVerified, DOCUMENT_TYPE_LABEL } from "@/app/(dashboard)/settings/documents/subtype-types";
+import { DOCUMENT_TYPE_LABEL } from "@/app/(dashboard)/settings/documents/subtype-types";
+import { computeMemberDocAttention } from "@/lib/documents-attention";
 
 export interface NotifyResult {
   skipped?: string;
@@ -292,27 +292,10 @@ async function notifyOrganisation(
   const hasLog = (kind: LogKind, recipient: string | null, documentId: string | null, cycle: string) =>
     logged.has(`${kind}|${dedupeKey(recipient, documentId, cycle)}`);
 
-  // A member document is superseded when the same member has a newer
-  // document of the same subtype that expires later (or never) — i.e.
-  // it has been renewed, so its own expiry / review no longer matters.
-  const memberDocsByKey = new Map<string, DocRow[]>();
-  for (const d of docs) {
-    if (d.owner_scope !== "member" || !d.owner_id || !d.subtype_id) continue;
-    const k = `${d.owner_id}:${d.subtype_id}`;
-    const list = memberDocsByKey.get(k) ?? [];
-    list.push(d);
-    memberDocsByKey.set(k, list);
-  }
-  const isSuperseded = (d: DocRow) => {
-    if (d.owner_scope !== "member" || !d.owner_id || !d.subtype_id) return false;
-    const siblings = memberDocsByKey.get(`${d.owner_id}:${d.subtype_id}`) ?? [];
-    return siblings.some(
-      (o) =>
-        o.id !== d.id &&
-        o.uploaded_at > d.uploaded_at &&
-        (o.expires_on === null || (d.expires_on !== null && o.expires_on > d.expires_on)),
-    );
-  };
+  // Member-document attention items — the shared rule used by the admin
+  // dashboard and the Compliance page, so the summary always agrees
+  // with them (src/lib/documents-attention.ts).
+  const attention = await computeMemberDocAttention(admin, orgId, members, { today });
 
   const soon = addDaysIso(today, 30);
   const signedIn = members.filter((m) => m.user_id !== null && !!m.email);
@@ -379,45 +362,44 @@ async function notifyOrganisation(
 
   // ---- Member part: own certificates expiring ------------------------------
   if (org.notify_member_doc_expiry) {
-    const signedInIds = new Set(signedIn.map((m) => m.id));
-    for (const d of docs) {
-      if (d.owner_scope !== "member" || !d.owner_id || !signedInIds.has(d.owner_id)) continue;
-      if (!d.expires_on || d.expires_on <= today || d.expires_on > soon) continue;
-      const st = d.subtype_id ? subtypeById.get(d.subtype_id) : undefined;
-      if (!st || (st.type !== "certificate" && st.type !== "evidence")) continue;
-      if (st.visible_to_member === false) continue;
-      if (isRtwSubtype(st) && memberById.get(d.owner_id)?.rtw_not_required) continue;
-      if (isSuperseded(d)) continue;
-      const daysLeft = daysBetween(today, d.expires_on);
-      const stage = daysLeft <= 3 ? "3" : daysLeft <= 14 ? "14" : "30";
-      const cycle = `${d.expires_on}:${stage}`;
-      if (hasLog("member_expiry", d.owner_id, d.id, cycle)) continue;
-      const entry = expiryByMember.get(d.owner_id) ?? { items: [], logs: [] };
-      entry.items.push({ fileName: d.file_name, subtypeName: st.name, expiresOn: d.expires_on, daysLeft });
-      entry.logs.push({
-        organisation_id: orgId,
-        kind: "member_expiry",
-        recipient_member_id: d.owner_id,
-        document_id: d.id,
-        cycle_key: cycle,
-        dedupe_key: dedupeKey(d.owner_id, d.id, cycle),
-      });
-      expiryByMember.set(d.owner_id, entry);
+    for (const m of signedIn) {
+      for (const it of attention.get(m.id) ?? []) {
+        // Only the member's own Certifications / RTW evidence — they can
+        // renew those. Employment documents are HR's business.
+        if (!it.documentId || !it.expiresOn || !it.statuses.includes("expiring_soon")) continue;
+        if (it.subtypeType !== "certificate" && it.subtypeType !== "evidence") continue;
+        if (it.hiddenFromOwner) continue;
+        if (it.subtypeType === "evidence" && m.rtw_not_required) continue;
+        const daysLeft = daysBetween(today, it.expiresOn);
+        const stage = daysLeft <= 3 ? "3" : daysLeft <= 14 ? "14" : "30";
+        const cycle = `${it.expiresOn}:${stage}`;
+        if (hasLog("member_expiry", m.id, it.documentId, cycle)) continue;
+        const entry = expiryByMember.get(m.id) ?? { items: [], logs: [] };
+        entry.items.push({ fileName: it.fileName ?? "", subtypeName: it.subtypeName, expiresOn: it.expiresOn, daysLeft });
+        entry.logs.push({
+          organisation_id: orgId,
+          kind: "member_expiry",
+          recipient_member_id: m.id,
+          document_id: it.documentId,
+          cycle_key: cycle,
+          dedupe_key: dedupeKey(m.id, it.documentId, cycle),
+        });
+        expiryByMember.set(m.id, entry);
+      }
     }
   }
 
   // ---- Admin daily summary --------------------------------------------------
   if (org.notify_admin_doc_digest) {
     const items: DigestItem[] = [];
-    const memberDocPath = (d: DocRow, st: SubtypeRow | undefined) =>
-      `/members/${d.owner_id}/docs?tab=${memberDocsTab(st?.type ?? "attachment")}`;
-
+    // Organisation documents (counted once each, not per audience member).
     for (const d of docs) {
+      if (d.owner_scope !== "organisation") continue;
       const st = d.subtype_id ? subtypeById.get(d.subtype_id) : undefined;
       const subtypeName = st?.name ?? (st ? DOCUMENT_TYPE_LABEL[st.type as keyof typeof DOCUMENT_TYPE_LABEL] : null) ?? "Document";
       const expired = d.expires_on !== null && d.expires_on <= today;
 
-      if (d.owner_scope === "organisation") {
+      {
         let cycle: string | null = null;
         let detail = "";
         let urgent = false;
@@ -439,71 +421,54 @@ async function notifyOrganisation(
             cycleKey: cycle, text: d.file_name, detail, path: "/documents/organisation", urgent,
           });
         }
-        continue;
-      }
-
-      if (!d.owner_id || !memberById.has(d.owner_id)) continue;
-      const who = nameOf(d.owner_id);
-      const base = { scope: "member" as const, memberId: d.owner_id, documentId: d.id, path: memberDocPath(d, st), urgent: false };
-
-      if (!isSuperseded(d)) {
-        if (expired) {
-          const cycle = `expired:${d.expires_on}`;
-          if (!hasLog("admin_item", null, d.id, cycle)) {
-            items.push({ ...base, section: "expired", cycleKey: cycle, text: `${who} — ${subtypeName}`, detail: `${d.file_name} · expired ${fmt(d.expires_on!)}` });
-          }
-        } else if (d.next_review_on !== null && d.next_review_on <= today) {
-          const cycle = `review:${d.next_review_on}`;
-          if (!hasLog("admin_item", null, d.id, cycle)) {
-            items.push({ ...base, section: "review", cycleKey: cycle, text: `${who} — ${subtypeName}`, detail: `${d.file_name} · review was due ${fmt(d.next_review_on)}` });
-          }
-        } else if (d.expires_on !== null && d.expires_on <= soon) {
-          const cycle = `expiring:${d.expires_on}`;
-          if (!hasLog("admin_item", null, d.id, cycle)) {
-            items.push({ ...base, section: "expiring", cycleKey: cycle, text: `${who} — ${subtypeName}`, detail: `${d.file_name} · expires ${fmt(d.expires_on)}` });
-          }
-        }
-      }
-
-      if (st && canBeVerified(st.type) && st.requires_verification && d.verified_on === null) {
-        if (!hasLog("admin_item", null, d.id, "verification")) {
-          items.push({ ...base, section: "verification", cycleKey: "verification", text: `${who} — ${subtypeName}`, detail: `${d.file_name} · uploaded ${fmt(d.uploaded_at)}` });
-        }
       }
     }
 
-    // Missing required certificates + RTW evidence (same rules as the
-    // traffic light). Logged per member × subtype; the log row is cleared
-    // once the gap closes so a later gap is reported again.
-    const { data: expectedRows } = await admin
-      .from("member_expected_document")
-      .select("member_id, subtype_id")
-      .eq("organisation_id", orgId);
+    // Member documents — from the shared attention items. Each item
+    // appears in one summary per state (logged by cycle key); missing
+    // items are logged per member × subtype and cleared when the gap
+    // closes so a later gap is reported again.
     const currentMissing = new Set<string>();
-    const rtwSubtypes = subtypes.filter((s) => isRtwSubtype(s));
-    const missingItem = (memberId: string, key: string, label: string) => {
-      const cycle = `missing:${memberId}:${key}`;
-      currentMissing.add(cycle);
-      if (hasLog("admin_item", null, null, cycle)) return;
-      items.push({
-        section: "missing", scope: "member", memberId, documentId: null, cycleKey: cycle,
-        text: `${nameOf(memberId)} — ${label}`, detail: null,
-        path: `/members/${memberId}/docs#required-documents`, urgent: false,
-      });
-    };
-    for (const r of (expectedRows ?? []) as Array<{ member_id: string; subtype_id: string }>) {
-      const st = subtypeById.get(r.subtype_id);
-      if (!st || isRtwSubtype(st) || !memberById.has(r.member_id)) continue;
-      const has = (memberDocsByKey.get(`${r.member_id}:${r.subtype_id}`) ?? []).length > 0;
-      if (!has) missingItem(r.member_id, r.subtype_id, st.name);
-    }
-    if (rtwSubtypes.length > 0) {
-      for (const m of members) {
-        if (m.rtw_not_required) continue;
-        const valid = rtwSubtypes.some((s) =>
-          (memberDocsByKey.get(`${m.id}:${s.id}`) ?? []).some((d) => d.expires_on === null || d.expires_on > today),
-        );
-        if (!valid) missingItem(m.id, "rtw", "Right to Work evidence");
+    for (const m of members) {
+      const who = nameOf(m.id);
+      for (const it of attention.get(m.id) ?? []) {
+        const base = {
+          scope: "member" as const,
+          memberId: m.id,
+          documentId: it.documentId,
+          path: `/members/${m.id}/docs?tab=${memberDocsTab(it.subtypeType)}`,
+          urgent: false,
+          text: `${who} — ${it.subtypeName}`,
+        };
+        const s = it.statuses;
+        if (s.includes("not_uploaded")) {
+          const cycle = it.key.startsWith("rtw:") ? `missing:${m.id}:rtw` : `missing:${m.id}:${it.subtypeId}`;
+          currentMissing.add(cycle);
+          if (!hasLog("admin_item", null, null, cycle)) {
+            items.push({ ...base, section: "missing", documentId: null, cycleKey: cycle, detail: null, path: `/members/${m.id}/docs#required-documents` });
+          }
+          continue;
+        }
+        if (!it.documentId) continue;
+        if (s.includes("expired") && it.expiresOn) {
+          const cycle = `expired:${it.expiresOn}`;
+          if (!hasLog("admin_item", null, it.documentId, cycle)) {
+            items.push({ ...base, section: "expired", cycleKey: cycle, detail: `${it.fileName} · expired ${fmt(it.expiresOn)}` });
+          }
+        } else if (s.includes("overdue_review") && it.nextReviewOn) {
+          const cycle = `review:${it.nextReviewOn}`;
+          if (!hasLog("admin_item", null, it.documentId, cycle)) {
+            items.push({ ...base, section: "review", cycleKey: cycle, detail: `${it.fileName} · review was due ${fmt(it.nextReviewOn)}` });
+          }
+        } else if (s.includes("expiring_soon") && it.expiresOn) {
+          const cycle = `expiring:${it.expiresOn}`;
+          if (!hasLog("admin_item", null, it.documentId, cycle)) {
+            items.push({ ...base, section: "expiring", cycleKey: cycle, detail: `${it.fileName} · expires ${fmt(it.expiresOn)}` });
+          }
+        }
+        if (s.includes("pending_verification") && !hasLog("admin_item", null, it.documentId, "verification")) {
+          items.push({ ...base, section: "verification", cycleKey: "verification", detail: `${it.fileName} · uploaded ${fmt(it.uploadedAt ?? today)}` });
+        }
       }
     }
     const staleMissing = logs.filter(

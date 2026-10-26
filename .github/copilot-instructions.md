@@ -40,6 +40,7 @@ The canonical project guide is [`../CLAUDE.md`](../CLAUDE.md) at the repo root. 
 - `holiday_bookings` has two FKs to `members` (`member_id` and `approver1_id`). Always disambiguate: `employee:members!holiday_bookings_member_id_fkey(first_name, last_name, ...)`. Never the bare `members(...)` — Supabase silently returns empty.
 - Cross-user reads (other members' rows) need `getAdminClient()`. The caller's session client returns 0 rows due to RLS without erroring — bugs ship silently.
 - Normalise emails to lowercase (`email.trim().toLowerCase()`) before any insert/lookup. Supabase auth normalises; mismatches break the `link_user_to_org_member` trigger.
+- Member-document attention counts (expired, missing, pending verification, review) come only from `computeMemberDocAttention` in `src/lib/documents-attention.ts` — never re-derive them inline.
 - Outbound email templates live in `src/lib/email.ts`. Escape every user-supplied value (file names, subtype names, org names) with `escapeHtml` before interpolating into HTML. Document emails go out only from the nightly job (`src/lib/documents/notifications.ts`, one email per person per night) — don't send document emails per event from actions.
 
 ## Storage

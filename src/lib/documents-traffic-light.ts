@@ -13,8 +13,7 @@
 // them from here.
 
 import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
-import { deriveDocumentStatuses } from "@/lib/document-status";
-import { isRtwSubtype } from "@/lib/documents-rtw";
+import { computeMemberDocAttention } from "@/lib/documents-attention";
 
 export interface TrafficLightCounts {
   missing: number;
@@ -64,146 +63,43 @@ function getAdmin(): SupabaseClient {
 }
 
 /**
- * Compute traffic-light aggregates for a set of members using a
- * single batch of queries. Returns a Map keyed by member id. Members
- * with no required docs (e.g. RTW-opted-out with nothing else
- * expected) are still included but with `colour: null`.
+ * Compute traffic-light aggregates for a set of members. Built on the
+ * shared attention rule (`computeMemberDocAttention`, 2026-10-25) so the
+ * admin dashboard, Employees Directory column, member badge and the
+ * member's own card count exactly what the Compliance page lists and
+ * the nightly email reports.
+ *
+ * Per item, the worst status wins: missing (`not_uploaded`) → expired →
+ * pending verification → overdue review → expiring soon → review due
+ * soon. Required items with nothing outstanding count as `verified`
+ * (green). Members with no items get `colour: null`.
+ *
+ * `excludeHiddenFromOwner` — the member's own view: HR-only Employment
+ * documents don't count (they can't see them).
  */
 export async function computeTrafficLightsForMembers(
   organisationId: string,
   members: Array<{ id: string; rtw_not_required: boolean }>,
+  opts?: { excludeHiddenFromOwner?: boolean },
 ): Promise<Map<string, TrafficLight>> {
-  const admin = getAdmin();
-  const memberIds = members.map((m) => m.id);
   const map = new Map<string, TrafficLight>();
   for (const m of members) map.set(m.id, { colour: null, counts: { ...EMPTY_COUNTS } });
-  if (memberIds.length === 0) return map;
+  if (members.length === 0) return map;
 
-  const today = new Date().toISOString().slice(0, 10);
-  const soonIso = (() => {
-    const d = new Date(today + "T00:00:00Z");
-    d.setUTCDate(d.getUTCDate() + 30);
-    return d.toISOString().slice(0, 10);
-  })();
-
-  const { data: subtypeRows } = await admin
-    .from("document_subtype")
-    .select("id, type, name, retention_class, requires_verification")
-    .eq("organisation_id", organisationId);
-  type Sub = {
-    id: string; type: string; name: string;
-    retention_class: string; requires_verification: boolean;
-  };
-  const subtypes = ((subtypeRows ?? []) as unknown as Sub[]);
-  const subtypeById = new Map(subtypes.map((s) => [s.id, s]));
-
-  const { data: expectedRows } = await admin
-    .from("member_expected_document")
-    .select("member_id, subtype_id")
-    .eq("organisation_id", organisationId)
-    .in("member_id", memberIds);
-  const perMemberExpected = new Map<string, Set<string>>();
-  for (const r of (expectedRows ?? []) as Array<{ member_id: string; subtype_id: string }>) {
-    let s = perMemberExpected.get(r.member_id);
-    if (!s) { s = new Set(); perMemberExpected.set(r.member_id, s); }
-    s.add(r.subtype_id);
-  }
-
-  const { data: docRows } = await admin
-    .from("document")
-    .select("id, owner_id, subtype_id, expires_on, next_review_on, verified_on, disposal_date")
-    .eq("organisation_id", organisationId)
-    .eq("owner_scope", "member")
-    .in("owner_id", memberIds);
-  type Doc = {
-    id: string; owner_id: string; subtype_id: string | null;
-    expires_on: string | null; next_review_on: string | null;
-    verified_on: string | null; disposal_date: string | null;
-  };
-  const docs = ((docRows ?? []) as unknown as Doc[]);
-  const { data: queuedRows } = await admin
-    .from("disposal_queue")
-    .select("document_id")
-    .eq("organisation_id", organisationId);
-  const queued = new Set<string>(((queuedRows ?? []) as { document_id: string }[]).map((r) => r.document_id));
-  const active = docs
-    .filter((d) => !queued.has(d.id))
-    .filter((d) => d.disposal_date === null || d.disposal_date > today);
-
-  const bucket = new Map<string, Doc[]>();
-  for (const d of active) {
-    if (!d.subtype_id) continue;
-    const key = `${d.owner_id}:${d.subtype_id}`;
-    const list = bucket.get(key) ?? [];
-    list.push(d);
-    bucket.set(key, list);
-  }
-  for (const list of bucket.values()) {
-    list.sort((a, b) => {
-      const av = a.verified_on ?? "";
-      const bv = b.verified_on ?? "";
-      if (av !== bv) return av < bv ? 1 : -1;
-      return a.id < b.id ? 1 : -1;
-    });
-  }
-
-  const rtwSubtypeIds = subtypes
-    .filter((s) => isRtwSubtype(s))
-    .map((s) => s.id);
-
+  const itemsByMember = await computeMemberDocAttention(getAdmin(), organisationId, members);
   for (const m of members) {
     const counts: TrafficLightCounts = { ...EMPTY_COUNTS };
-
-    if (!m.rtw_not_required && rtwSubtypeIds.length > 0) {
-      let anyValid = false;
-      let anyPending = false;
-      let anyExpiringSoon = false;
-      for (const sid of rtwSubtypeIds) {
-        const list = bucket.get(`${m.id}:${sid}`);
-        if (!list || list.length === 0) continue;
-        const newest = list[0];
-        if (newest.expires_on !== null && newest.expires_on <= today) continue;
-        anyValid = true;
-        const s = subtypeById.get(sid);
-        const requiresV = s?.requires_verification === true;
-        if (requiresV && !newest.verified_on) anyPending = true;
-        if (newest.expires_on !== null && newest.expires_on <= soonIso) anyExpiringSoon = true;
-      }
-      if (!anyValid) {
-        counts.missing += 1;
-      } else if (anyPending) {
-        counts.pendingVerification += 1;
-      } else if (anyExpiringSoon) {
-        counts.expiringSoon += 1;
-      } else {
-        counts.verified += 1;
-      }
+    for (const it of itemsByMember.get(m.id) ?? []) {
+      if (opts?.excludeHiddenFromOwner && it.hiddenFromOwner) continue;
+      const s = it.statuses;
+      if (s.includes("not_uploaded")) counts.missing += 1;
+      else if (s.includes("expired")) counts.expired += 1;
+      else if (s.includes("pending_verification")) counts.pendingVerification += 1;
+      else if (s.includes("overdue_review")) counts.overdueReview += 1;
+      else if (s.includes("expiring_soon")) counts.expiringSoon += 1;
+      else if (s.includes("review_due_soon")) counts.reviewDueSoon += 1;
+      else if (it.required) counts.verified += 1;
     }
-
-    const expected = perMemberExpected.get(m.id);
-    if (expected) {
-      for (const sid of expected) {
-        const s = subtypeById.get(sid);
-        if (!s) continue;
-        if (isRtwSubtype(s)) continue;
-        const list = bucket.get(`${m.id}:${sid}`);
-        const newest = list?.[0] ?? null;
-        if (!newest) { counts.missing += 1; continue; }
-        const statuses = deriveDocumentStatuses({
-          requiresVerification: s.requires_verification === true,
-          verifiedOn: newest.verified_on,
-          expiresOn: newest.expires_on,
-          nextReviewOn: newest.next_review_on,
-        });
-        if (statuses.includes("expired")) counts.expired += 1;
-        else if (statuses.includes("pending_verification")) counts.pendingVerification += 1;
-        else if (statuses.includes("overdue_review")) counts.overdueReview += 1;
-        else if (statuses.includes("expiring_soon")) counts.expiringSoon += 1;
-        else if (statuses.includes("review_due_soon")) counts.reviewDueSoon += 1;
-        else counts.verified += 1;
-      }
-    }
-
     map.set(m.id, { colour: colourFromCounts(counts), counts });
   }
   return map;

@@ -15,12 +15,11 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
 import { logAudit } from "@/lib/audit";
-import { deriveDocumentStatuses, type DocumentStatus } from "@/lib/document-status";
+import type { DocumentStatus } from "@/lib/document-status";
 import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
-import { isRtwSubtype } from "@/lib/documents-rtw";
+import { ATTENTION_STATUSES, computeMemberDocAttention } from "@/lib/documents-attention";
 import {
   EMPTY_COUNTS,
-  colourFromCounts,
   computeTrafficLightsForMembers,
 } from "@/lib/documents-traffic-light";
 import { _getMyDocumentsTrafficLight } from "./compliance-actions-impl";
@@ -31,7 +30,7 @@ import { _getMyDocumentsTrafficLight } from "./compliance-actions-impl";
 // because it tries to wire the export as a Server Action.
 // Consumers must import the types from `@/lib/documents-traffic-light`
 // directly.
-import type { TrafficLight, TrafficLightCounts } from "@/lib/documents-traffic-light";
+import type { TrafficLight } from "@/lib/documents-traffic-light";
 
 function getAdmin() {
   return createAdminClient(
@@ -60,14 +59,6 @@ export interface ComplianceRow {
   nextReviewOn: string | null;
 }
 
-const ATTENTION_STATUSES: (DocumentStatus | "not_uploaded")[] = [
-  "not_uploaded",
-  "pending_verification",
-  "expired",
-  "expiring_soon",
-  "overdue_review",
-  "review_due_soon",
-];
 
 /**
  * Fetch the compliance dashboard rows. Filters applied server-side.
@@ -114,213 +105,34 @@ export async function getComplianceRows(filters?: {
     if (memberErr) return { success: false, error: memberErr.message, rows: [] };
     type MemberRow = { id: string; first_name: string; last_name: string; team_id: string | null; rtw_not_required: boolean };
     const members = (memberRows ?? []) as unknown as MemberRow[];
-    const memberById = new Map(members.map((m) => [m.id, m]));
 
-    // Subtype config for the tenant.
-    // CLE-215 — `expected_for_every_member` dropped; per-member
-    // expectations now come solely from `member_expected_document`,
-    // and RTW-class subtypes are aggregated into a single per-member
-    // "Right to Work evidence" row (below).
-    const { data: subtypeRows } = await admin
-      .from("document_subtype")
-      .select("id, type, name, retention_class, requires_verification")
-      .eq("organisation_id", ctx.organisationId);
-    type SubtypeRow = {
-      id: string;
-      type: string;
-      name: string;
-      retention_class: string;
-      requires_verification: boolean;
-    };
-    const subtypes = (subtypeRows ?? []) as unknown as SubtypeRow[];
-    const subtypeById = new Map(subtypes.map((s) => [s.id, s]));
-
-    // Active documents for those members.
-    const memberIds = members.map((m) => m.id);
-    let docs: Array<{
-      id: string;
-      owner_id: string;
-      subtype_id: string | null;
-      file_name: string;
-      type: string;
-      expires_on: string | null;
-      next_review_on: string | null;
-      verified_on: string | null;
-      disposal_date: string | null;
-    }> = [];
-    if (memberIds.length > 0) {
-      const { data: docRows } = await admin
-        .from("document")
-        .select("id, owner_id, subtype_id, file_name, type, expires_on, next_review_on, verified_on, disposal_date")
-        .eq("organisation_id", ctx.organisationId)
-        .eq("owner_scope", "member")
-        .in("owner_id", memberIds);
-      docs = (docRows ?? []) as unknown as typeof docs;
-    }
-
-    // Exclude queued rows.
-    const { data: queuedRows } = await admin
-      .from("disposal_queue")
-      .select("document_id")
-      .eq("organisation_id", ctx.organisationId);
-    const queued = new Set<string>((queuedRows ?? []).map((r) => r.document_id as string));
-
-    const today = new Date().toISOString().slice(0, 10);
-    const activeDocs = docs.filter((d) => !queued.has(d.id))
-      .filter((d) => d.disposal_date === null || d.disposal_date > today);
-
+    // 2026-10-25 — rows come from the shared attention rule so this page,
+    // the admin dashboard and the nightly email always agree. One row per
+    // live document (RTW documents individually, superseded copies
+    // included), plus missing rows for required certificates and the
+    // per-member "Right to Work evidence" placeholder.
+    const itemsByMember = await computeMemberDocAttention(admin, ctx.organisationId, members);
     const rows: ComplianceRow[] = [];
-
-    // Real doc rows.
-    //
-    // CLE-215 — RTW-class docs are hidden from the per-doc listing.
-    // They're rolled up into one aggregate "Right to Work evidence"
-    // row per member (below) so a member with Passport + Visa
-    // appears as a single RTW row, not two separate rows.
-    for (const d of activeDocs) {
-      const member = memberById.get(d.owner_id);
-      if (!member) continue;
-      const subtype = d.subtype_id ? subtypeById.get(d.subtype_id) : null;
-      if (subtype && isRtwSubtype(subtype)) continue;
-      const statuses = deriveDocumentStatuses({
-        requiresVerification: subtype?.requires_verification === true,
-        verifiedOn: d.verified_on,
-        expiresOn: d.expires_on,
-        nextReviewOn: d.next_review_on,
-      }) as (DocumentStatus | "not_uploaded")[];
-      rows.push({
-        key: `doc:${d.id}`,
-        memberId: member.id,
-        memberName: `${member.first_name} ${member.last_name}`.trim() || "—",
-        memberTeamId: member.team_id,
-        subtypeId: d.subtype_id,
-        subtypeName: subtype?.name ?? "—",
-        subtypeType: d.type,
-        retentionClass: subtype?.retention_class ?? "other",
-        statuses,
-        documentId: d.id,
-        fileName: d.file_name,
-        verifiedOn: d.verified_on,
-        expiresOn: d.expires_on,
-        nextReviewOn: d.next_review_on,
-      });
-    }
-
-    // Synthetic not_uploaded rows.
-    //
-    // CLE-215 — expectations now come solely from
-    // `member_expected_document` (org-wide `expected_for_every_member`
-    // was dropped in the same migration; if anyone relied on it,
-    // per-member rows were backfilled). RTW-class subtypes are
-    // filtered out here — they surface via the RTW aggregate row.
-    const perMemberExpected: Map<string, Set<string>> = new Map();
-    if (memberIds.length > 0) {
-      const { data: expectedRows } = await admin
-        .from("member_expected_document")
-        .select("member_id, subtype_id")
-        .eq("organisation_id", ctx.organisationId)
-        .in("member_id", memberIds);
-      for (const r of (expectedRows ?? []) as Array<{ member_id: string; subtype_id: string }>) {
-        let set = perMemberExpected.get(r.member_id);
-        if (!set) { set = new Set(); perMemberExpected.set(r.member_id, set); }
-        set.add(r.subtype_id);
-      }
-    }
-
     for (const m of members) {
-      const expectedIds = perMemberExpected.get(m.id);
-      if (!expectedIds || expectedIds.size === 0) continue;
-
-      for (const subtypeId of expectedIds) {
-        const s = subtypeById.get(subtypeId);
-        if (!s) continue;
-        // RTW-class subtypes are aggregated via the RTW row below.
-        if (isRtwSubtype(s)) continue;
-        // Does this member have any active doc of this subtype?
-        const has = activeDocs.some((d) => d.owner_id === m.id && d.subtype_id === s.id);
-        if (has) continue;
+      const memberName = `${m.first_name} ${m.last_name}`.trim() || "—";
+      for (const it of itemsByMember.get(m.id) ?? []) {
         rows.push({
-          key: `missing:${m.id}:${s.id}`,
+          key: it.key,
           memberId: m.id,
-          memberName: `${m.first_name} ${m.last_name}`.trim() || "—",
+          memberName,
           memberTeamId: m.team_id,
-          subtypeId: s.id,
-          subtypeName: s.name,
-          subtypeType: s.type,
-          retentionClass: s.retention_class,
-          statuses: ["not_uploaded"],
-          documentId: null,
-          fileName: null,
-          verifiedOn: null,
-          expiresOn: null,
-          nextReviewOn: null,
+          subtypeId: it.subtypeId,
+          subtypeName: it.subtypeName,
+          subtypeType: it.subtypeType,
+          retentionClass: it.retentionClass,
+          statuses: it.statuses,
+          documentId: it.documentId,
+          fileName: it.fileName,
+          verifiedOn: it.verifiedOn,
+          expiresOn: it.expiresOn,
+          nextReviewOn: it.nextReviewOn,
         });
       }
-    }
-
-    // CLE-215 — RTW aggregate rows.
-    //
-    // One per non-opted-out member. Status derivation matches
-    // getMemberRequiredDocumentRows: `not_uploaded` when no non-
-    // expired RTW-class doc exists; otherwise `pending_verification`
-    // if any newest qualifying doc is unverified, `expiring_soon` if
-    // any expires within 30 days, `verified` when all are clean.
-    const rtwSubtypeIdSet = new Set(
-      subtypes.filter((s) => isRtwSubtype(s)).map((s) => s.id),
-    );
-    const soonIso = (() => {
-      const d = new Date(today + "T00:00:00Z");
-      d.setUTCDate(d.getUTCDate() + 30);
-      return d.toISOString().slice(0, 10);
-    })();
-    for (const m of members) {
-      if (m.rtw_not_required) continue;
-      // Newest non-expired doc per RTW-class subtype for this member.
-      const perSubtypeNewest: Map<string, typeof activeDocs[number]> = new Map();
-      for (const d of activeDocs) {
-        if (d.owner_id !== m.id) continue;
-        if (!d.subtype_id || !rtwSubtypeIdSet.has(d.subtype_id)) continue;
-        if (d.expires_on !== null && d.expires_on <= today) continue;
-        const prior = perSubtypeNewest.get(d.subtype_id);
-        // activeDocs isn't ordered by upload time here; pick the row
-        // with the newest verified_on || expires_on || any ordering
-        // proxy. Simpler and stable: pick the largest doc id
-        // lexicographically, which is close enough for the aggregate.
-        // Compliance rows are read-only; the Required Documents card
-        // is where users actually click through.
-        if (!prior || (prior.id < d.id)) perSubtypeNewest.set(d.subtype_id, d);
-      }
-      let anyPending = false;
-      let anyExpiring = false;
-      for (const d of perSubtypeNewest.values()) {
-        if (!d.verified_on) anyPending = true;
-        if (d.expires_on !== null && d.expires_on <= soonIso) anyExpiring = true;
-      }
-      const rtwStatuses: (DocumentStatus | "not_uploaded")[] = [];
-      if (perSubtypeNewest.size === 0) {
-        rtwStatuses.push("not_uploaded");
-      } else {
-        if (anyPending) rtwStatuses.push("pending_verification");
-        if (anyExpiring) rtwStatuses.push("expiring_soon");
-        if (!anyPending && !anyExpiring) rtwStatuses.push("verified");
-      }
-      rows.push({
-        key: `rtw:${m.id}`,
-        memberId: m.id,
-        memberName: `${m.first_name} ${m.last_name}`.trim() || "—",
-        memberTeamId: m.team_id,
-        // No individual subtype — this is the RTW aggregate.
-        subtypeId: null,
-        subtypeName: "Right to Work evidence",
-        subtypeType: "evidence",
-        retentionClass: "right_to_work",
-        statuses: rtwStatuses,
-        documentId: null,
-        fileName: null,
-        verifiedOn: null,
-        expiresOn: null,
-        nextReviewOn: null,
-      });
     }
 
     // Apply filters.

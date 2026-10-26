@@ -33,6 +33,8 @@ export async function _getMyDocumentsTrafficLight(
         id: memberRow.id as string,
         rtw_not_required: (memberRow as { rtw_not_required?: boolean }).rtw_not_required === true,
       }],
+      // The member's own view — HR-only Employment docs don't count.
+      { excludeHiddenFromOwner: true },
     );
     const light = map.get(memberId) ?? { colour: null, counts: { ...EMPTY_COUNTS } };
     return { success: true, memberId, light };

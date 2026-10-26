@@ -462,7 +462,7 @@ export function AdminDashboardClient() {
           subtitle={
             missingHolidayPeriod.length > 0 ? (
               <span className="text-sm text-muted-foreground">
-                {missingHolidayPeriod.length === 1 ? "employee" : "employees"} need their first period
+                {missingHolidayPeriod.length === 1 ? `${memberLabel.toLowerCase()} needs` : `${pluralize(memberLabel).toLowerCase()} need`} their first period
               </span>
             ) : undefined
           }
