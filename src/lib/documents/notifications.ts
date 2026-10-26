@@ -13,30 +13,41 @@
 //         30 / 14 / 3 days before expiry. Skipped when a newer document
 //         of the same subtype supersedes it. (notify_member_doc_expiry.)
 //
-//   • The admin daily summary (notify_admin_doc_digest) — items NEW since
-//     the last summary: expired, overdue for review, entering the 30-day
-//     expiry window, awaiting verification, missing required
-//     certificates / RTW evidence, plus organisation documents.
-//       - Member-document items go to signed-in members whose profile has
-//         Documents-tab update and team/all scope (team = own team).
-//       - Organisation-document items go to members who can manage
-//         organisation documents.
+//   • The admin documents summary (notify_admin_doc_digest, 2026-10-26) —
+//     a snapshot of the recipient's admin dashboard Documents card: every
+//     member whose documents need attention (traffic light red / amber,
+//     with the dashboard's description), organisation documents needing
+//     attention, and the outstanding-acknowledgement count. Members / org
+//     docs not in the previous summary are tagged "New". Sent whenever
+//     there is something to show, so no email means the dashboard is clear.
+//       - Members: signed-in recipients whose profile has Documents-tab
+//         view and team / all scope (team = own team), same as the
+//         dashboard. Org docs: can_manage_organisation_documents.
 //
-// `document_email_log` records every touch / reported item, so a re-run
-// on the same night sends nothing and items appear in one summary only.
+// Weekdays only (Mon–Fri, UK time) — Monday covers the weekend. Member
+// touches due at the weekend go out on Monday.
+//
+// `document_email_log` records every member touch, so a re-run on the same
+// night sends nothing; `organisations.doc_digest_snapshot` holds the
+// previous summary (for "New" tags and the same-day re-run guard).
 // Sends are not audited. If RESEND_API_KEY is missing the whole run is
 // skipped (nothing logged), so nothing is lost before email is set up.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  docSummaryHasContent,
   sendNightlyDocumentsEmail,
-  type AdminDigestSection,
+  type DocSummary,
+  type DocSummaryLine,
   type MemberAckItem,
   type MemberExpiryItem,
 } from "@/lib/email";
+import { trafficLightFromItems } from "@/lib/documents-traffic-light";
+import { trafficLightTooltipText } from "@/lib/traffic-light-format";
+import { deriveDocumentStatuses, STATUS_LABEL } from "@/lib/document-status";
+import { pluralize } from "@/lib/label-utils";
 import { _getOutstandingAcknowledgementsForMany } from "@/app/(dashboard)/documents/acknowledgement-actions-impl";
-import type { OrgDocMember } from "@/lib/org-doc-audience";
-import { DOCUMENT_TYPE_LABEL } from "@/app/(dashboard)/settings/documents/subtype-types";
+import { loadOrgDocMembers, type OrgDocMember } from "@/lib/org-doc-audience";
 import { computeMemberDocAttention } from "@/lib/documents-attention";
 
 export interface NotifyResult {
@@ -46,7 +57,7 @@ export interface NotifyResult {
   errors: string[];
 }
 
-type LogKind = "member_ack" | "member_expiry" | "admin_item";
+type LogKind = "member_ack" | "member_expiry";
 
 interface LogRow {
   kind: LogKind;
@@ -70,25 +81,10 @@ function dedupeKey(recipient: string | null, documentId: string | null, cycle: s
   return `${recipient ?? "-"}:${documentId ?? "-"}:${cycle}`;
 }
 
-function addDaysIso(iso: string, days: number): string {
-  const d = new Date(iso + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
 function daysBetween(fromIso: string, toIso: string): number {
   const a = Date.UTC(+fromIso.slice(0, 4), +fromIso.slice(5, 7) - 1, +fromIso.slice(8, 10));
   const b = Date.UTC(+toIso.slice(0, 4), +toIso.slice(5, 7) - 1, +toIso.slice(8, 10));
   return Math.round((b - a) / 86_400_000);
-}
-
-function fmt(iso: string): string {
-  return new Date(iso.slice(0, 10) + "T00:00:00Z").toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  });
 }
 
 /** Page through a select — PostgREST caps a response at 1000 rows. */
@@ -124,6 +120,14 @@ interface OrgRow {
   notify_member_doc_acks: boolean;
   notify_member_doc_expiry: boolean;
   notify_admin_doc_digest: boolean;
+  member_label: string | null;
+  doc_digest_snapshot: DigestSnapshot | null;
+}
+
+interface DigestSnapshot {
+  sentOn: string;
+  memberIds: string[];
+  orgDocIds: string[];
 }
 
 interface MemberRow {
@@ -168,21 +172,6 @@ interface DocRow {
   disposal_date: string | null;
 }
 
-/** One summary line plus where it goes and how it's logged. */
-interface DigestItem {
-  section: "expired" | "review" | "missing" | "verification" | "expiring" | "org";
-  scope: "member" | "organisation";
-  /** Member the item is about (member-scope only) — drives team scoping. */
-  memberId: string | null;
-  documentId: string | null;
-  cycleKey: string;
-  text: string;
-  detail: string | null;
-  path: string;
-  /** Org items: red when expired / overdue, amber when expiring. */
-  urgent: boolean;
-}
-
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -198,9 +187,16 @@ export async function runDocumentNotifications(
   }
   const today = opts.today ?? new Date().toISOString().slice(0, 10);
 
+  // Weekdays only (UK time). Monday's run covers the weekend.
+  const weekday = new Date(today + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", timeZone: "Europe/London" });
+  if (weekday === "Sat" || weekday === "Sun") {
+    result.skipped = "Weekend — document emails go out Monday to Friday";
+    return result;
+  }
+
   const { data: orgs, error } = await admin
     .from("organisations")
-    .select("id, name, notify_member_doc_acks, notify_member_doc_expiry, notify_admin_doc_digest");
+    .select("id, name, member_label, doc_digest_snapshot, notify_member_doc_acks, notify_member_doc_expiry, notify_admin_doc_digest");
   if (error) {
     result.errors.push(`organisations: ${error.message}`);
     return result;
@@ -242,11 +238,6 @@ async function notifyOrganisation(
   );
   if (members.length === 0) return 0;
   const memberById = new Map(members.map((m) => [m.id, m]));
-  const nameOf = (id: string | null) => {
-    const m = id ? memberById.get(id) : undefined;
-    if (!m) return "Unknown";
-    return `${m.known_as?.trim() || m.first_name || ""} ${m.last_name ?? ""}`.trim() || "Unknown";
-  };
 
   const { data: profileRows } = await admin
     .from("rights_profiles")
@@ -297,14 +288,12 @@ async function notifyOrganisation(
   // with them (src/lib/documents-attention.ts).
   const attention = await computeMemberDocAttention(admin, orgId, members, { today });
 
-  const soon = addDaysIso(today, 30);
   const signedIn = members.filter((m) => m.user_id !== null && !!m.email);
 
   // Per-recipient email parts.
   const ackByMember = new Map<string, { items: MemberAckItem[]; path: string; logs: NewLog[] }>();
   const expiryByMember = new Map<string, { items: MemberExpiryItem[]; logs: NewLog[] }>();
-  const digestByMember = new Map<string, AdminDigestSection[]>();
-  const itemLogs: NewLog[] = [];
+  const summaryByMember = new Map<string, DocSummary>();
 
   // ---- Member part: documents to acknowledge -------------------------------
   if (org.notify_member_doc_acks && signedIn.length > 0) {
@@ -389,152 +378,117 @@ async function notifyOrganisation(
     }
   }
 
-  // ---- Admin daily summary --------------------------------------------------
-  if (org.notify_admin_doc_digest) {
-    const items: DigestItem[] = [];
-    // Organisation documents (counted once each, not per audience member).
-    for (const d of docs) {
-      if (d.owner_scope !== "organisation") continue;
-      const st = d.subtype_id ? subtypeById.get(d.subtype_id) : undefined;
-      const subtypeName = st?.name ?? (st ? DOCUMENT_TYPE_LABEL[st.type as keyof typeof DOCUMENT_TYPE_LABEL] : null) ?? "Document";
-      const expired = d.expires_on !== null && d.expires_on <= today;
+  // ---- Admin documents summary (snapshot of the dashboard) -----------------
+  // Skipped when today's summary has already gone out (same-night re-run).
+  const prev = org.doc_digest_snapshot;
+  let snapshot: DigestSnapshot | null = null;
+  if (org.notify_admin_doc_digest && prev?.sentOn !== today) {
+    const label = (org.member_label?.trim() || "member").toLowerCase();
+    const memberPlural = pluralize(label).toLowerCase();
+    const showNew = !!prev;
+    const prevMembers = new Set(prev?.memberIds ?? []);
+    const prevOrgDocs = new Set(prev?.orgDocIds ?? []);
 
-      {
-        let cycle: string | null = null;
-        let detail = "";
-        let urgent = false;
-        if (expired) {
-          cycle = `expired:${d.expires_on}`;
-          detail = `${subtypeName} · expired ${fmt(d.expires_on!)}`;
-          urgent = true;
-        } else if (d.next_review_on !== null && d.next_review_on <= today) {
-          cycle = `review:${d.next_review_on}`;
-          detail = `${subtypeName} · review was due ${fmt(d.next_review_on)}`;
-          urgent = true;
-        } else if (d.expires_on !== null && d.expires_on <= soon) {
-          cycle = `expiring:${d.expires_on}`;
-          detail = `${subtypeName} · expires ${fmt(d.expires_on)}`;
-        }
-        if (cycle && !hasLog("admin_item", null, d.id, cycle)) {
-          items.push({
-            section: "org", scope: "organisation", memberId: null, documentId: d.id,
-            cycleKey: cycle, text: d.file_name, detail, path: "/documents/organisation", urgent,
-          });
-        }
-      }
-    }
-
-    // Member documents — from the shared attention items. Each item
-    // appears in one summary per state (logged by cycle key); missing
-    // items are logged per member × subtype and cleared when the gap
-    // closes so a later gap is reported again.
-    const currentMissing = new Set<string>();
+    // Members needing attention — the dashboard's traffic light rule.
+    const dashName = (m: MemberRow) => `${m.first_name ?? ""} ${m.last_name ?? ""}`.trim() || "—";
+    const memberLines = new Map<string, DocSummaryLine & { teamId: string | null; rank: number }>();
     for (const m of members) {
-      const who = nameOf(m.id);
-      for (const it of attention.get(m.id) ?? []) {
-        const base = {
-          scope: "member" as const,
-          memberId: m.id,
-          documentId: it.documentId,
-          path: `/members/${m.id}/docs?tab=${memberDocsTab(it.subtypeType)}`,
-          urgent: false,
-          text: `${who} — ${it.subtypeName}`,
-        };
-        const s = it.statuses;
-        if (s.includes("not_uploaded")) {
-          const cycle = it.key.startsWith("rtw:") ? `missing:${m.id}:rtw` : `missing:${m.id}:${it.subtypeId}`;
-          currentMissing.add(cycle);
-          if (!hasLog("admin_item", null, null, cycle)) {
-            items.push({ ...base, section: "missing", documentId: null, cycleKey: cycle, detail: null, path: `/members/${m.id}/docs#required-documents` });
-          }
-          continue;
-        }
-        if (!it.documentId) continue;
-        if (s.includes("expired") && it.expiresOn) {
-          const cycle = `expired:${it.expiresOn}`;
-          if (!hasLog("admin_item", null, it.documentId, cycle)) {
-            items.push({ ...base, section: "expired", cycleKey: cycle, detail: `${it.fileName} · expired ${fmt(it.expiresOn)}` });
-          }
-        } else if (s.includes("overdue_review") && it.nextReviewOn) {
-          const cycle = `review:${it.nextReviewOn}`;
-          if (!hasLog("admin_item", null, it.documentId, cycle)) {
-            items.push({ ...base, section: "review", cycleKey: cycle, detail: `${it.fileName} · review was due ${fmt(it.nextReviewOn)}` });
-          }
-        } else if (s.includes("expiring_soon") && it.expiresOn) {
-          const cycle = `expiring:${it.expiresOn}`;
-          if (!hasLog("admin_item", null, it.documentId, cycle)) {
-            items.push({ ...base, section: "expiring", cycleKey: cycle, detail: `${it.fileName} · expires ${fmt(it.expiresOn)}` });
-          }
-        }
-        if (s.includes("pending_verification") && !hasLog("admin_item", null, it.documentId, "verification")) {
-          items.push({ ...base, section: "verification", cycleKey: "verification", detail: `${it.fileName} · uploaded ${fmt(it.uploadedAt ?? today)}` });
-        }
-      }
-    }
-    const staleMissing = logs.filter(
-      (l) => l.kind === "admin_item" && l.cycle_key.startsWith("missing:") && !currentMissing.has(l.cycle_key),
-    );
-    if (staleMissing.length > 0) {
-      const { error: delErr } = await admin
-        .from("document_email_log")
-        .delete()
-        .eq("organisation_id", orgId)
-        .eq("kind", "admin_item")
-        .in("dedupe_key", staleMissing.map((l) => l.dedupe_key));
-      if (delErr) errors.push(`org ${orgId} missing cleanup: ${delErr.message}`);
-    }
-
-    // Who sees what.
-    const SECTION_META: Record<DigestItem["section"], { title: string; tone: "red" | "amber" }> = {
-      expired: { title: "Expired", tone: "red" },
-      review: { title: "Overdue for review", tone: "red" },
-      missing: { title: "Missing required documents", tone: "red" },
-      verification: { title: "Awaiting verification", tone: "red" },
-      expiring: { title: "Expiring within 30 days", tone: "amber" },
-      org: { title: "Organisation documents", tone: "amber" },
-    };
-    const ORDER: DigestItem["section"][] = ["expired", "review", "missing", "verification", "expiring", "org"];
-
-    for (const m of signedIn) {
-      const p = m.rights_profile_id ? profileById.get(m.rights_profile_id) : undefined;
-      if (!p) continue;
-      const docsUpdate = p.tab_matrix?.documents?.update === true;
-      const scope = p.cross_user_access;
-      const seesMember = (it: DigestItem) => {
-        if (!docsUpdate || scope === "self") return false;
-        if (scope === "all") return true;
-        const owner = it.memberId ? memberById.get(it.memberId) : undefined;
-        return !!owner && owner.team_id !== null && owner.team_id === m.team_id;
-      };
-      const mine = items.filter((it) =>
-        it.scope === "organisation" ? p.can_manage_organisation_documents === true : seesMember(it),
-      );
-      if (mine.length === 0) continue;
-      const sections: AdminDigestSection[] = ORDER.map((key) => {
-        const lines = mine.filter((it) => it.section === key);
-        const meta = SECTION_META[key];
-        const tone = key === "org" && lines.some((l) => l.urgent) ? "red" : meta.tone;
-        return { title: meta.title, tone, lines: lines.map((l) => ({ text: l.text, detail: l.detail, path: l.path })) };
-      }).filter((s) => s.lines.length > 0);
-      digestByMember.set(m.id, sections);
-    }
-
-    for (const it of items) {
-      itemLogs.push({
-        organisation_id: orgId,
-        kind: "admin_item",
-        recipient_member_id: null,
-        document_id: it.documentId,
-        cycle_key: it.cycleKey,
-        dedupe_key: dedupeKey(null, it.documentId, it.cycleKey),
+      const light = trafficLightFromItems(attention.get(m.id) ?? []);
+      if (light.colour !== "red" && light.colour !== "amber") continue;
+      memberLines.set(m.id, {
+        text: dashName(m),
+        detail: trafficLightTooltipText(light),
+        path: `/members/${m.id}/docs#required-documents`,
+        tone: light.colour,
+        isNew: !prevMembers.has(m.id),
+        teamId: m.team_id,
+        rank: light.colour === "red" ? 0 : 1,
       });
     }
+
+    // Organisation documents needing attention — counted once each.
+    const rankOf = (st: string[]) =>
+      st.includes("expired") ? 0 : st.includes("overdue_review") ? 1 : st.includes("expiring_soon") ? 2 : 3;
+    const orgDocLines: Array<DocSummaryLine & { id: string; rank: number }> = [];
+    for (const d of docs) {
+      if (d.owner_scope !== "organisation") continue;
+      const statuses = deriveDocumentStatuses({
+        requiresVerification: false,
+        verifiedOn: null,
+        expiresOn: d.expires_on,
+        nextReviewOn: d.next_review_on,
+        today,
+      });
+      if (statuses.length === 0) continue;
+      const st = d.subtype_id ? subtypeById.get(d.subtype_id) : undefined;
+      const urgent = statuses.includes("expired") || statuses.includes("overdue_review");
+      orgDocLines.push({
+        id: d.id,
+        text: st?.name ?? d.file_name,
+        detail: `${d.file_name} · ${statuses.map((x) => STATUS_LABEL[x]).join(" · ")}`,
+        path: "/documents/organisation",
+        tone: urgent ? "red" : "amber",
+        isNew: !prevOrgDocs.has(d.id),
+        rank: rankOf(statuses),
+      });
+    }
+    orgDocLines.sort((x, y) => x.rank - y.rank || x.text.localeCompare(y.text));
+
+    // Outstanding acknowledgements per member (count only in the email).
+    const ackCountByMember = new Map<string, number>();
+    const ackRes = await _getOutstandingAcknowledgementsForMany(admin, orgId, await loadOrgDocMembers(admin, orgId));
+    if (ackRes.success) {
+      for (const [id, rows] of ackRes.byMember) ackCountByMember.set(id, rows.length);
+    } else {
+      errors.push(`org ${orgId} summary acks: ${ackRes.error}`);
+    }
+
+    for (const r of signedIn) {
+      const p = r.rights_profile_id ? profileById.get(r.rights_profile_id) : undefined;
+      if (!p) continue;
+      const docsView = p.tab_matrix?.documents?.view === true;
+      const scope = p.cross_user_access;
+      const reachesMembers = docsView && scope !== "self";
+      const inScope = (memberId: string, teamId: string | null) =>
+        scope === "all" || (scope === "team" && (r.team_id === null ? memberId === r.id : teamId === r.team_id));
+
+      const memberList = reachesMembers
+        ? [...memberLines.entries()]
+            .filter(([id, l]) => inScope(id, l.teamId))
+            .map(([, l]) => l)
+            .sort((x, y) => x.rank - y.rank || x.text.localeCompare(y.text))
+        : [];
+      const orgList = p.can_manage_organisation_documents ? orgDocLines : [];
+      let acks: DocSummary["acks"] = null;
+      if (reachesMembers) {
+        let outstanding = 0;
+        let who = 0;
+        for (const m of members) {
+          const n = ackCountByMember.get(m.id) ?? 0;
+          if (n === 0 || !(m.id === r.id || inScope(m.id, m.team_id))) continue;
+          outstanding += n;
+          who++;
+        }
+        acks = outstanding > 0 ? { outstanding, members: who } : null;
+      }
+      const summary: DocSummary = {
+        memberSingular: label,
+        memberPlural,
+        members: memberList,
+        orgDocs: orgList,
+        acks,
+        showNew,
+      };
+      if (docSummaryHasContent(summary)) summaryByMember.set(r.id, summary);
+    }
+
+    snapshot = { sentOn: today, memberIds: [...memberLines.keys()], orgDocIds: orgDocLines.map((d) => d.id) };
   }
 
   // ---- Send: one email per person ------------------------------------------
   let sent = 0;
   const memberLogs: NewLog[] = [];
-  const recipients = new Set<string>([...ackByMember.keys(), ...expiryByMember.keys(), ...digestByMember.keys()]);
+  const recipients = new Set<string>([...ackByMember.keys(), ...expiryByMember.keys(), ...summaryByMember.keys()]);
   for (const id of recipients) {
     const m = memberById.get(id);
     if (!m?.email || !m.user_id) continue;
@@ -548,7 +502,7 @@ async function notifyOrganisation(
       ackPath: ack?.path ?? "/my-documents",
       expiryItems: exp?.items ?? [],
       expiryPath: "/my-documents?tab=certifications",
-      digestSections: digestByMember.get(id) ?? [],
+      summary: summaryByMember.get(id) ?? null,
       baseUrl,
     });
     if (!ok) continue;
@@ -558,14 +512,19 @@ async function notifyOrganisation(
   }
 
   // Member touches are logged only when their email went out (retried
-  // tomorrow otherwise). Summary items are logged regardless — they were
-  // either sent to every admin in scope or there was nobody to send to.
-  const toLog = [...memberLogs, ...itemLogs];
+  // next run otherwise).
+  const toLog = memberLogs;
   for (let i = 0; i < toLog.length; i += 500) {
     const { error: logErr } = await admin
       .from("document_email_log")
       .upsert(toLog.slice(i, i + 500), { onConflict: "organisation_id,kind,dedupe_key", ignoreDuplicates: true });
     if (logErr) errors.push(`org ${orgId} log: ${logErr.message}`);
+  }
+
+  // Remember this summary for tomorrow's "New" tags and the re-run guard.
+  if (snapshot) {
+    const { error: snapErr } = await admin.from("organisations").update({ doc_digest_snapshot: snapshot }).eq("id", orgId);
+    if (snapErr) errors.push(`org ${orgId} summary snapshot: ${snapErr.message}`);
   }
 
   return sent;

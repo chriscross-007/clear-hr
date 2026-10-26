@@ -13,7 +13,7 @@
 // them from here.
 
 import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
-import { computeMemberDocAttention } from "@/lib/documents-attention";
+import { computeMemberDocAttention, type MemberDocAttentionItem } from "@/lib/documents-attention";
 
 export interface TrafficLightCounts {
   missing: number;
@@ -88,19 +88,29 @@ export async function computeTrafficLightsForMembers(
 
   const itemsByMember = await computeMemberDocAttention(getAdmin(), organisationId, members);
   for (const m of members) {
-    const counts: TrafficLightCounts = { ...EMPTY_COUNTS };
-    for (const it of itemsByMember.get(m.id) ?? []) {
-      if (opts?.excludeHiddenFromOwner && it.hiddenFromOwner) continue;
-      const s = it.statuses;
-      if (s.includes("not_uploaded")) counts.missing += 1;
-      else if (s.includes("expired")) counts.expired += 1;
-      else if (s.includes("pending_verification")) counts.pendingVerification += 1;
-      else if (s.includes("overdue_review")) counts.overdueReview += 1;
-      else if (s.includes("expiring_soon")) counts.expiringSoon += 1;
-      else if (s.includes("review_due_soon")) counts.reviewDueSoon += 1;
-      else if (it.required) counts.verified += 1;
-    }
-    map.set(m.id, { colour: colourFromCounts(counts), counts });
+    map.set(m.id, trafficLightFromItems(itemsByMember.get(m.id) ?? [], opts));
   }
   return map;
+}
+
+/** Pure roll-up of one member's attention items into a traffic light.
+ *  Shared by `computeTrafficLightsForMembers` and the nightly summary
+ *  email so both count identically. */
+export function trafficLightFromItems(
+  items: MemberDocAttentionItem[],
+  opts?: { excludeHiddenFromOwner?: boolean },
+): TrafficLight {
+  const counts: TrafficLightCounts = { ...EMPTY_COUNTS };
+  for (const it of items) {
+    if (opts?.excludeHiddenFromOwner && it.hiddenFromOwner) continue;
+    const s = it.statuses;
+    if (s.includes("not_uploaded")) counts.missing += 1;
+    else if (s.includes("expired")) counts.expired += 1;
+    else if (s.includes("pending_verification")) counts.pendingVerification += 1;
+    else if (s.includes("overdue_review")) counts.overdueReview += 1;
+    else if (s.includes("expiring_soon")) counts.expiringSoon += 1;
+    else if (s.includes("review_due_soon")) counts.reviewDueSoon += 1;
+    else if (it.required) counts.verified += 1;
+  }
+  return { colour: colourFromCounts(counts), counts };
 }

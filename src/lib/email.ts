@@ -378,29 +378,63 @@ export interface MemberExpiryItem {
   daysLeft: number;
 }
 
-export interface AdminDigestLine {
+/** One line of the admin documents summary (a member or an org doc). */
+export interface DocSummaryLine {
   text: string;
-  detail?: string | null;
-  /** App path (no host), e.g. `/members/{id}/docs?tab=certifications`. */
+  detail: string;
+  /** App path (no host), e.g. `/members/{id}/docs#required-documents`. */
   path: string;
-}
-
-export interface AdminDigestSection {
-  title: string;
   tone: "red" | "amber";
-  lines: AdminDigestLine[];
+  /** Not in the previous summary. */
+  isNew: boolean;
 }
 
-const DIGEST_SECTION_CAP = 25;
+/** The admin documents summary — a snapshot of the recipient's admin
+ *  dashboard Documents card (2026-10-26). */
+export interface DocSummary {
+  /** Lower-case member label, singular and plural ("colleague"/"colleagues"). */
+  memberSingular: string;
+  memberPlural: string;
+  members: DocSummaryLine[];
+  orgDocs: DocSummaryLine[];
+  /** Outstanding acknowledgements across the members in scope (count only). */
+  acks: { outstanding: number; members: number } | null;
+  /** Show "New" tags — false on the very first summary. */
+  showNew: boolean;
+}
+
+const SUMMARY_LINE_CAP = 100;
 
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+/** True when the summary has anything to report. */
+export function docSummaryHasContent(s: DocSummary | null | undefined): s is DocSummary {
+  return !!s && (s.members.length > 0 || s.orgDocs.length > 0 || (s.acks?.outstanding ?? 0) > 0);
+}
+
+function summaryLines(lines: DocSummaryLine[], showNew: boolean, baseUrl: string): string {
+  const shown = lines.slice(0, SUMMARY_LINE_CAP);
+  const more = lines.length - shown.length;
+  const items = shown
+    .map((l) => {
+      const dot = l.tone === "red" ? "#dc2626" : "#d97706";
+      const badge = showNew && l.isNew
+        ? ` <span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:9999px;background:#dbeafe;color:#1e40af;font-size:11px;font-weight:600">New</span>`
+        : "";
+      return `<li style="margin:0 0 8px;list-style:none"><span style="display:inline-block;width:8px;height:8px;border-radius:9999px;background:${dot};margin-right:8px"></span><a href="${appLink(baseUrl, l.path)}" style="color:#18181b">${escapeHtml(l.text)}</a>${badge}<div style="margin-left:16px;color:#6b7280;font-size:12px">${escapeHtml(l.detail)}</div></li>`;
+    })
+    .join("");
+  return `<ul style="margin:0;padding-left:0;font-size:14px">${items}</ul>${
+    more > 0 ? `<p style="margin:4px 0 0;color:#6b7280;font-size:12px">…and ${more} more on the dashboard.</p>` : ""
+  }`;
+}
+
 /**
  * The nightly documents email — one per person per night. Carries the
  * person's own part (documents to acknowledge, their certificates about
- * to expire) and/or, for admins, the daily summary sections. Sent only
+ * to expire) and/or, for admins, the documents summary. Sent only
  * when at least one part has content.
  */
 export async function sendNightlyDocumentsEmail(data: {
@@ -413,21 +447,30 @@ export async function sendNightlyDocumentsEmail(data: {
   expiryItems: MemberExpiryItem[];
   /** Path for the expiry button, e.g. `/my-documents?tab=certifications`. */
   expiryPath: string;
-  digestSections: AdminDigestSection[];
+  summary: DocSummary | null;
   baseUrl: string;
 }): Promise<boolean> {
   const { ackItems, expiryItems } = data;
-  const sections = data.digestSections.filter((s) => s.lines.length > 0);
+  const summary = docSummaryHasContent(data.summary) ? data.summary : null;
   const hasOwn = ackItems.length > 0 || expiryItems.length > 0;
-  if (!hasOwn && sections.length === 0) return false;
-  const digestTotal = sections.reduce((n, s) => n + s.lines.length, 0);
+  if (!hasOwn && !summary) return false;
   const org = escapeHtml(data.orgName);
 
   // Subject — the summary wins when present; otherwise describe the
   // member's own part.
   let subject: string;
-  if (sections.length > 0) {
-    subject = `Documents summary — ${plural(digestTotal, "item needs", "items need")} attention`;
+  if (summary) {
+    const bits: string[] = [];
+    const newMembers = summary.showNew ? summary.members.filter((m) => m.isNew).length : 0;
+    if (summary.members.length > 0) {
+      bits.push(
+        `${plural(summary.members.length, summary.memberSingular, summary.memberPlural)} need${summary.members.length === 1 ? "s" : ""} attention` +
+          (newMembers > 0 ? ` (${newMembers} new)` : ""),
+      );
+    }
+    if (summary.orgDocs.length > 0) bits.push(plural(summary.orgDocs.length, "organisation document", "organisation documents"));
+    if (summary.acks && summary.acks.outstanding > 0) bits.push(`${summary.acks.outstanding} awaiting acknowledgement`);
+    subject = `Documents: ${bits.join(" · ")}`;
   } else if (ackItems.length > 0 && expiryItems.length > 0) {
     subject = "Your documents need attention";
   } else if (ackItems.length > 0) {
@@ -471,29 +514,36 @@ export async function sendNightlyDocumentsEmail(data: {
     `);
   }
 
-  if (sections.length > 0) {
+  if (summary) {
+    const newMembers = summary.showNew ? summary.members.filter((m) => m.isNew).length : 0;
     parts.push(`
       <h3 style="margin:${hasOwn ? "32px" : "24px"} 0 4px;color:#18181b;font-size:15px">Documents summary</h3>
-      <p style="margin:0">New since the last summary for ${org}:</p>
+      <p style="margin:0 0 4px">This is what your admin dashboard shows for ${org} today.</p>
     `);
-    for (const s of sections) {
-      const colour = s.tone === "red" ? "#dc2626" : "#d97706";
-      const shown = s.lines.slice(0, DIGEST_SECTION_CAP);
-      const more = s.lines.length - shown.length;
+    if (summary.members.length > 0) {
       parts.push(`
-        <h4 style="margin:20px 0 8px;color:${colour};font-size:14px">${escapeHtml(s.title)} (${s.lines.length})</h4>
-        <ul style="margin:0;padding-left:20px;font-size:14px">
-          ${shown
-            .map((l) => {
-              const d = l.detail ? `<div style="color:#6b7280;font-size:12px">${escapeHtml(l.detail)}</div>` : "";
-              return `<li style="margin:0 0 8px"><a href="${appLink(data.baseUrl, l.path)}" style="color:#18181b">${escapeHtml(l.text)}</a>${d}</li>`;
-            })
-            .join("")}
-        </ul>
-        ${more > 0 ? `<p style="margin:4px 0 0;color:#6b7280;font-size:12px">…and ${more} more.</p>` : ""}
+        <h4 style="margin:20px 0 8px;color:#18181b;font-size:14px">${escapeHtml(
+          `${plural(summary.members.length, summary.memberSingular, summary.memberPlural)} need${summary.members.length === 1 ? "s" : ""} attention`,
+        )}${newMembers > 0 ? ` <span style="color:#1e40af;font-weight:normal">· ${newMembers} new since the last summary</span>` : ""}</h4>
+        ${summaryLines(summary.members, summary.showNew, data.baseUrl)}
       `);
     }
-    parts.push(cta("Open Compliance", appLink(data.baseUrl, "/documents/compliance")));
+    if (summary.orgDocs.length > 0) {
+      parts.push(`
+        <h4 style="margin:20px 0 8px;color:#18181b;font-size:14px">${escapeHtml(
+          `${plural(summary.orgDocs.length, "organisation document needs", "organisation documents need")} attention`,
+        )}</h4>
+        ${summaryLines(summary.orgDocs, summary.showNew, data.baseUrl)}
+      `);
+    }
+    if (summary.acks && summary.acks.outstanding > 0) {
+      parts.push(`
+        <p style="margin:20px 0 0;font-size:14px"><a href="${appLink(data.baseUrl, "/documents/compliance?tab=acknowledgements")}" style="color:#18181b"><strong>${summary.acks.outstanding}</strong> awaiting acknowledgement</a> · ${escapeHtml(
+          plural(summary.acks.members, summary.memberSingular, summary.memberPlural),
+        )}</p>
+      `);
+    }
+    parts.push(cta("Open dashboard", appLink(data.baseUrl, "/admin-dashboard")));
   }
 
   return sendDocEmail(

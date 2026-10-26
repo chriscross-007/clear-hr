@@ -43,7 +43,7 @@ export function NotificationsCard({ initial }: { initial: DocumentNotificationSe
     {
       key: "adminDigest",
       label: "Daily documents summary for admins",
-      help: `Admins get one email each morning listing what is new: expired, overdue for review, expiring, awaiting verification and missing documents. Only the ${membersLower} they can manage are included. Nothing is sent on days with nothing new.`,
+      help: `Each weekday morning, admins get the same list their dashboard shows: every ${memberLabel.toLowerCase()} whose documents need attention (new ones marked), organisation documents, and the number awaiting acknowledgement. Only the ${membersLower} they can manage are included. Nothing is sent when the dashboard is clear.`,
     },
   ];
 
@@ -67,7 +67,7 @@ export function NotificationsCard({ initial }: { initial: DocumentNotificationSe
         <h2 className="text-sm font-semibold">Notifications</h2>
       </div>
       <p className="text-xs text-muted-foreground">
-        Document emails are sent overnight, combined into one email per person.
+        Document emails are sent early on weekday mornings (Monday to Friday), combined into one email per person.
       </p>
       <div className="space-y-4">
         {rows.map((r) => (
