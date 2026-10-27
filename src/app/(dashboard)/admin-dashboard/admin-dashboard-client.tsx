@@ -98,7 +98,7 @@ function SummaryCard({
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <div className="flex items-center gap-2">
           {icon}
-          <CardTitle className="text-sm font-medium">{title}</CardTitle>
+          <CardTitle className="text-base font-semibold">{title}</CardTitle>
         </div>
         {hasContent && href === undefined && onToggle !== undefined && (
           <div className="text-muted-foreground">
@@ -475,7 +475,7 @@ export function AdminDashboardClient() {
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <div className="flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-amber-500" />
-              <CardTitle className="text-sm font-medium">
+              <CardTitle className="text-base font-semibold">
                 Sick Bookings Needing Attention
                 <span className="ml-1.5 text-muted-foreground">({sickBookings.length})</span>
               </CardTitle>
@@ -517,7 +517,7 @@ export function AdminDashboardClient() {
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
               <UserX className="h-4 w-4 text-red-500" />
-              <CardTitle className="text-sm font-medium">
+              <CardTitle className="text-base font-semibold">
                 Absent Today
                 <span className="ml-1.5 text-muted-foreground">({absentToday.length})</span>
               </CardTitle>
@@ -560,7 +560,7 @@ export function AdminDashboardClient() {
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
               <Palmtree className="h-4 w-4 text-green-500" />
-              <CardTitle className="text-sm font-medium">
+              <CardTitle className="text-base font-semibold">
                 On Holiday Today
                 <span className="ml-1.5 text-muted-foreground">({onHolidayToday.length})</span>
               </CardTitle>
@@ -606,7 +606,7 @@ export function AdminDashboardClient() {
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
               <FileText className="h-4 w-4 text-amber-500" />
-              <CardTitle className="text-sm font-medium">
+              <CardTitle className="text-base font-semibold">
                 Documents
                 <span className="ml-1.5 text-muted-foreground">({docsAttention.length})</span>
               </CardTitle>
@@ -693,7 +693,7 @@ export function AdminDashboardClient() {
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
               <CalendarPlus className="h-4 w-4 text-amber-500" />
-              <CardTitle className="text-sm font-medium">
+              <CardTitle className="text-base font-semibold">
                 Holiday Periods needed
                 <span className="ml-1.5 text-muted-foreground">({missingHolidayPeriod.length})</span>
               </CardTitle>
@@ -724,7 +724,7 @@ export function AdminDashboardClient() {
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
               <Cake className="h-4 w-4 text-pink-500" />
-              <CardTitle className="text-sm font-medium">
+              <CardTitle className="text-base font-semibold">
                 Birthdays Today
                 <span className="ml-1.5 text-muted-foreground">({birthdaysToday.length})</span>
               </CardTitle>

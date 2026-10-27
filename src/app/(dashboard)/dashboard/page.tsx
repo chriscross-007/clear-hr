@@ -76,13 +76,13 @@ export default async function DashboardPage() {
     docsIconClass = "text-green-500";
   } else if (docsColour === "red") {
     docsBigText = trafficLightTooltipText(docsLight!);
-    docsSubtext = "See your documents";
-    docsTextClass = "text-red-600";
+    docsSubtext = "";
+    docsTextClass = "text-foreground";
     docsIconClass = "text-red-500";
   } else if (docsColour === "amber") {
     docsBigText = trafficLightTooltipText(docsLight!);
-    docsSubtext = "See your documents";
-    docsTextClass = "text-amber-600";
+    docsSubtext = "";
+    docsTextClass = "text-foreground";
     docsIconClass = "text-amber-500";
   } else {
     docsBigText = "No certifications required";
@@ -134,23 +134,23 @@ export default async function DashboardPage() {
       {docsHref ? (
         <Link href={docsHref} className="block transition-colors hover:bg-muted/50">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">My documents</CardTitle>
+            <CardTitle className="text-base font-semibold">My documents</CardTitle>
             <FileText className={`h-4 w-4 ${docsIconClass}`} />
           </CardHeader>
           <CardContent>
-            <p className={`text-2xl font-bold ${docsTextClass}`}>{docsBigText}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{docsSubtext}</p>
+            <p className={`text-sm ${docsTextClass}`}>{docsBigText}</p>
+            {docsSubtext && <p className="mt-1 text-xs text-muted-foreground">{docsSubtext}</p>}
           </CardContent>
         </Link>
       ) : (
         <>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">My documents</CardTitle>
+            <CardTitle className="text-base font-semibold">My documents</CardTitle>
             <FileText className={`h-4 w-4 ${docsIconClass}`} />
           </CardHeader>
           <CardContent>
-            <p className={`text-2xl font-bold ${docsTextClass}`}>{docsBigText}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{docsSubtext}</p>
+            <p className={`text-sm ${docsTextClass}`}>{docsBigText}</p>
+            {docsSubtext && <p className="mt-1 text-xs text-muted-foreground">{docsSubtext}</p>}
           </CardContent>
         </>
       )}
@@ -192,7 +192,7 @@ export default async function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Holiday Allowance</CardTitle>
+            <CardTitle className="text-base font-semibold">Holiday Allowance</CardTitle>
             <Sun className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -203,7 +203,7 @@ export default async function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Upcoming Leave</CardTitle>
+            <CardTitle className="text-base font-semibold">Upcoming Leave</CardTitle>
             <Calendar className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -214,7 +214,7 @@ export default async function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Hours This Week</CardTitle>
+            <CardTitle className="text-base font-semibold">Hours This Week</CardTitle>
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -225,7 +225,7 @@ export default async function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Activity</CardTitle>
+            <CardTitle className="text-base font-semibold">Activity</CardTitle>
             <BarChart2 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>

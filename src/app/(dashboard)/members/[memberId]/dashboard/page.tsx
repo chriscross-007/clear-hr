@@ -120,7 +120,7 @@ export default async function EmployeeDashboardPage({
   const docsHeader = (
     <>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="text-sm font-medium">Documents</CardTitle>
+        <CardTitle className="text-base font-semibold">Documents</CardTitle>
         <FileText className={`h-4 w-4 ${docsIconClass}`} />
       </CardHeader>
       <CardContent>
@@ -176,7 +176,7 @@ export default async function EmployeeDashboardPage({
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Holiday Allowance</CardTitle>
+            <CardTitle className="text-base font-semibold">Holiday Allowance</CardTitle>
             <Sun className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -187,7 +187,7 @@ export default async function EmployeeDashboardPage({
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Upcoming Leave</CardTitle>
+            <CardTitle className="text-base font-semibold">Upcoming Leave</CardTitle>
             <Calendar className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -198,7 +198,7 @@ export default async function EmployeeDashboardPage({
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Hours This Week</CardTitle>
+            <CardTitle className="text-base font-semibold">Hours This Week</CardTitle>
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -209,7 +209,7 @@ export default async function EmployeeDashboardPage({
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Activity</CardTitle>
+            <CardTitle className="text-base font-semibold">Activity</CardTitle>
             <BarChart2 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
