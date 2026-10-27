@@ -7,6 +7,7 @@
 // documents.update for writes; can_force_delete_documents for the
 // retention override; documents.update for per-member trash).
 
+import { loadMemberLastViewed } from "@/lib/document-member-views";
 import { memberCanReplaceOwnDocument, SELF_REPLACE_NOT_ALLOWED_ERROR } from "@/lib/document-self-replace";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
@@ -237,6 +238,9 @@ export async function listMemberDocuments(
       for (const a of (acks ?? []) as { document_id: string; acknowledged_at: string }[]) ownerAcked.set(a.document_id, a.acknowledged_at);
     }
 
+    // "{Member} viewed" — the owner's last open of each doc (audit trail).
+    const lastViewed = await loadMemberLastViewed(admin, caller.organisationId, memberId, liveRows.map((r) => r.id));
+
     const rows: MemberDocumentRow[] = liveRows
       .map((row) => {
         const st = row.document_subtype;
@@ -281,6 +285,7 @@ export async function listMemberDocuments(
           archivedAt: row.archived_at,
           requiresAcknowledgement: stObj?.requires_acknowledgement === true,
           ownerAcknowledgedAt: ownerAcked.get(row.id) ?? null,
+          memberViewedAt: lastViewed.get(row.id) ?? null,
         };
       });
     return { success: true, rows };
@@ -1904,6 +1909,8 @@ export interface RequiredDocumentRow {
   fileSize: number | null;
   /** When the row's document was uploaded; null on not-uploaded / aggregate rows. */
   uploadedAt: string | null;
+  /** When the member last opened this row's document (audit trail); null = never. */
+  memberViewedAt?: string | null;
   verifiedOn: string | null;
   expiresOn: string | null;
   nextReviewOn: string | null;

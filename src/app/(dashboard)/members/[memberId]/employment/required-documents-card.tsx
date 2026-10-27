@@ -83,6 +83,13 @@ function fmtUploaded(iso: string | null): string {
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+function fmtViewed(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-GB", {
+    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+  });
+}
+
 export function RequiredDocumentsCard({
   tone,
   memberId,
@@ -219,6 +226,7 @@ export function RequiredDocumentsCard({
                       <th className="px-3 py-2 font-medium">Document</th>
                       <th className="px-3 py-2 font-medium">Status</th>
                       <th className="px-3 py-2 font-medium hidden md:table-cell">Uploaded</th>
+                      <th className="px-3 py-2 font-medium hidden md:table-cell">{capitalize(memberLabel)} viewed</th>
                       <th className="px-3 py-2 font-medium hidden md:table-cell">Verified</th>
                       <th className="px-3 py-2 font-medium hidden md:table-cell">Expires</th>
                       <th className="px-3 py-2 font-medium hidden md:table-cell">Next review</th>
@@ -303,6 +311,7 @@ export function RequiredDocumentsCard({
                             </td>
                             <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">—</td>
                             <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">—</td>
+                            <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">—</td>
                             <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
                               {fmtDate(earliestExpiry)}
                             </td>
@@ -385,6 +394,9 @@ export function RequiredDocumentsCard({
                           </td>
                           <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
                             {fmtUploaded(r.uploadedAt)}
+                          </td>
+                          <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
+                            {fmtViewed(r.memberViewedAt)}
                           </td>
                           <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
                             {fmtDate(r.verifiedOn)}

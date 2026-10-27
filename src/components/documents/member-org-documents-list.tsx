@@ -16,6 +16,8 @@
 //   * No SSR pre-load; fetch on mount (same pattern as
 //     <MyDocumentsCard>).
 
+import { useMemberLabel } from "@/contexts/member-label-context";
+import { capitalize } from "@/lib/label-utils";
 import { sortDocs } from "@/lib/document-sort";
 import { docTabCard, type DocTabKey } from "@/components/documents/doc-tab-theme";
 import { useCallback, useEffect, useState } from "react";
@@ -58,6 +60,7 @@ export function MemberOrgDocumentsList({
   memberName: string;
 }) {
   const toneCls = docTabCard(tone);
+  const { memberLabel } = useMemberLabel();
   const [rows, setRows] = useState<OrgDocumentRowForMember[]>([]);
   // CLE-225 follow-up — initial vs. background refresh. The spinner
   // shows only for the very first mount; subsequent refreshes (event
@@ -110,6 +113,7 @@ export function MemberOrgDocumentsList({
                   <th className="px-3 py-2 font-medium">Document</th>
                   <th className="px-3 py-2 font-medium hidden lg:table-cell">Expires</th>
                   <th className="px-3 py-2 font-medium hidden lg:table-cell">Uploaded</th>
+                  <th className="px-3 py-2 font-medium hidden lg:table-cell">{capitalize(memberLabel)} viewed</th>
                 </tr>
               </thead>
               <tbody>
@@ -149,6 +153,9 @@ export function MemberOrgDocumentsList({
                     </td>
                     <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell">{fmtDate(r.expiresOn)}</td>
                     <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell">{fmtDateTime(r.uploadedAt)}</td>
+                    <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell">
+                      {r.memberViewedAt ? fmtDateTime(r.memberViewedAt) : "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>

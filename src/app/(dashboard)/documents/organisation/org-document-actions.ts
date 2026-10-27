@@ -6,6 +6,7 @@
 // bucket. Writes gated on can_edit_org_settings; reads gated on
 // can_view_organisation_documents.
 
+import { loadMemberLastViewed } from "@/lib/document-member-views";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
@@ -156,6 +157,8 @@ export interface OrgDocumentRowForMember extends OrgDocumentRow {
   /** CLE-230 — true when the target is in the doc's audience and so is
    *  expected to acknowledge it. Drives the "Awaiting Ack" pill. */
   expectedByTarget: boolean;
+  /** When the target member last opened this doc (audit trail); null = never. */
+  memberViewedAt: string | null;
 }
 
 /**
@@ -267,6 +270,9 @@ export async function getOrgDocumentsForMember(
     // CLE-230 — evaluate each doc's audience against the target.
     const targetMember = await loadOrgDocMember(admin, c.organisationId, memberId);
 
+    // "{Member} viewed" — the target's last open of each doc (audit trail).
+    const lastViewed = await loadMemberLastViewed(admin, c.organisationId, memberId, visibleRows.map((r) => r.id));
+
     const rows: OrgDocumentRowForMember[] = visibleRows.map((r) => {
       const st = r.document_subtype;
       const stObj = Array.isArray(st) ? (st[0] ?? null) : st;
@@ -305,6 +311,7 @@ export async function getOrgDocumentsForMember(
         archivedAt: null,
         viewable: targetMember ? canSeeOrgDoc(audienceFromRow(r), targetMember) : false,
         expectedByTarget: targetMember ? isExpectedToAcknowledge(audienceFromRow(r), targetMember) : false,
+        memberViewedAt: lastViewed.get(r.id) ?? null,
       };
     });
     return { success: true, rows };

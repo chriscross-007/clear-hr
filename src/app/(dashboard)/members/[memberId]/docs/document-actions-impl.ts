@@ -17,6 +17,7 @@
 // verify/replace, trash, restore, acks-related helpers) stay in the
 // action file — they aren't wrapped by mobile Tier 1.
 
+import { loadMemberLastViewed } from "@/lib/document-member-views";
 import { memberCanReplaceOwnDocument } from "@/lib/document-self-replace";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
@@ -795,6 +796,12 @@ export async function _getMemberRequiredDocumentRows(
     for (const r of rows) {
       r.awaitingAckByOwner =
         ownerInvited && r.requiresAcknowledgement && r.documentId !== null && !r.isAcknowledged;
+    }
+    // "{Member} viewed" — admin view only (the member's own card doesn't show it).
+    if (!isSelf(caller, memberId)) {
+      const docIds = rows.map((r) => r.documentId).filter((id): id is string => !!id);
+      const lastViewed = await loadMemberLastViewed(admin, organisationId, memberId, docIds);
+      for (const r of rows) r.memberViewedAt = r.documentId ? (lastViewed.get(r.documentId) ?? null) : null;
     }
     return { success: true, rows };
   } catch (e) {

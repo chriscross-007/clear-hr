@@ -50,6 +50,10 @@ export interface MemberDocumentRow {
    *  Acknowledged column. */
   requiresAcknowledgement?: boolean;
   ownerAcknowledgedAt?: string | null;
+  /** When the owner last opened the document (latest `document.viewed` /
+   *  `document.downloaded` audit row by them); null = never. Populated by
+   *  `listMemberDocuments`. */
+  memberViewedAt?: string | null;
 }
 
 export interface TrashedMemberDocumentRow extends MemberDocumentRow {

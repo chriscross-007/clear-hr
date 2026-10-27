@@ -5,6 +5,7 @@
 // docs-client, but the underlying storage bucket + row now live on
 // the new `document` table.
 
+import { capitalize } from "@/lib/label-utils";
 import { sortDocs } from "@/lib/document-sort";
 import { PdfViewer } from "@/components/documents/pdf-viewer";
 import { useCallback, useEffect, useState, useTransition } from "react";
@@ -98,6 +99,13 @@ function fmtDate(iso: string | null): string {
 function fmtUploaded(iso: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function fmtViewed(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-GB", {
+    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+  });
 }
 
 function fmtDateTime(iso: string): string {
@@ -527,6 +535,7 @@ function DocList({
   onOpen: (r: MemberDocumentRow) => void;
   onDelete: (r: MemberDocumentRow) => void;
 }) {
+  const { memberLabel } = useMemberLabel();
   if (rows.length === 0) {
     return <p className="text-sm text-muted-foreground py-8 text-center">No documents yet.</p>;
   }
@@ -538,6 +547,7 @@ function DocList({
             <th className="px-4 py-2 font-medium">Document</th>
             <th className="px-4 py-2 font-medium">Status</th>
             <th className="px-4 py-2 font-medium hidden lg:table-cell">Uploaded</th>
+            <th className="px-4 py-2 font-medium hidden lg:table-cell">{capitalize(memberLabel)} viewed</th>
             <th className="px-4 py-2 font-medium hidden lg:table-cell">
               {variant === "employment" ? "Acknowledged" : "Verified"}
             </th>
@@ -595,6 +605,9 @@ function DocList({
               </td>
               <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">
                 {fmtUploaded(r.uploadedAt)}
+              </td>
+              <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">
+                {fmtViewed(r.memberViewedAt)}
               </td>
               <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">
                 {variant === "employment"
