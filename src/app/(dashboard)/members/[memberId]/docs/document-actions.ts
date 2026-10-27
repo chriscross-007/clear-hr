@@ -224,17 +224,17 @@ export async function listMemberDocuments(
         return st?.requires_acknowledgement === true;
       })
       .map((r) => r.id);
-    const ownerAcked = new Set<string>();
+    const ownerAcked = new Map<string, string>();
     // Never-invited members can't acknowledge, so nothing is "awaited".
     const ownerInvited = await loadMemberInvited(admin, caller.organisationId, memberId);
     if (ownerInvited && ackRequiredIds.length > 0) {
       const { data: acks } = await admin
         .from("document_acknowledgement")
-        .select("document_id")
+        .select("document_id, acknowledged_at")
         .eq("member_id", memberId)
         .is("superseded_by_replace_at", null)
         .in("document_id", ackRequiredIds);
-      for (const a of (acks ?? []) as { document_id: string }[]) ownerAcked.add(a.document_id);
+      for (const a of (acks ?? []) as { document_id: string; acknowledged_at: string }[]) ownerAcked.set(a.document_id, a.acknowledged_at);
     }
 
     const rows: MemberDocumentRow[] = liveRows
@@ -279,6 +279,8 @@ export async function listMemberDocuments(
             && !row.archived_at,
           versionNumber: row.version_number ?? 1,
           archivedAt: row.archived_at,
+          requiresAcknowledgement: stObj?.requires_acknowledgement === true,
+          ownerAcknowledgedAt: ownerAcked.get(row.id) ?? null,
         };
       });
     return { success: true, rows };
@@ -1900,6 +1902,8 @@ export interface RequiredDocumentRow {
    *  Subtype cell of My Documents / My other documents / Org Docs
    *  so the three cards read consistently. */
   fileSize: number | null;
+  /** When the row's document was uploaded; null on not-uploaded / aggregate rows. */
+  uploadedAt: string | null;
   verifiedOn: string | null;
   expiresOn: string | null;
   nextReviewOn: string | null;

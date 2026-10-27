@@ -1735,17 +1735,25 @@ function AdminAcknowledgementSection({
    *  the member's name for a member's document. */
   subject: { plural: boolean; label: string };
 }) {
-  const { requiresAcknowledgement, coverageSummary } = status;
+  const { requiresAcknowledgement, coverageSummary, ownerAcknowledgement } = status;
   const verb = subject.plural ? "are" : "is";
+  // A member's own document they have acknowledged: say when.
+  const ownerAckedAt = !subject.plural && requiresAcknowledgement && ownerAcknowledgement
+    ? new Date(ownerAcknowledgement.acknowledgedAt).toLocaleDateString("en-GB", {
+        day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+      })
+    : null;
   return (
     <div>
       <p className="mb-1 flex items-center gap-2 text-base font-semibold">
         Acknowledgement
       </p>
       <p className="text-sm text-muted-foreground">
-        {archived
-          ? "Archived — nobody is asked to acknowledge it any more."
-          : <>{subject.label} {verb} {requiresAcknowledgement ? "" : "not "}required to acknowledge reading this document.</>}
+        {ownerAckedAt
+          ? <>{subject.label} acknowledged reading this document on {ownerAckedAt}.</>
+          : archived
+            ? "Archived — nobody is asked to acknowledge it any more."
+            : <>{subject.label} {verb} {requiresAcknowledgement ? "" : "not "}required to acknowledge reading this document.</>}
       </p>
       {requiresAcknowledgement && coverageSummary && (
         <p className="mt-1 text-sm text-muted-foreground">

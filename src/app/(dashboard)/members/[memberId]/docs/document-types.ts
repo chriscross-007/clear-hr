@@ -44,6 +44,12 @@ export interface MemberDocumentRow {
    *  have later versions) and, for archived rows, when it was archived. */
   versionNumber?: number;
   archivedAt?: string | null;
+  /** The subtype requires acknowledgement, and when the owner
+   *  acknowledged it (null = not yet). Only populated by
+   *  `listMemberDocuments`; drives the admin Employment tab's
+   *  Acknowledged column. */
+  requiresAcknowledgement?: boolean;
+  ownerAcknowledgedAt?: string | null;
 }
 
 export interface TrashedMemberDocumentRow extends MemberDocumentRow {

@@ -143,7 +143,6 @@ export function MyOtherDocumentsCard({
                     key={r.documentId}
                     className="border-b last:border-b-0 cursor-pointer hover:bg-muted/30"
                     onClick={() => setDetailsDocId(r.documentId)}
-                    title="Open document details"
                   >
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2 flex-wrap">

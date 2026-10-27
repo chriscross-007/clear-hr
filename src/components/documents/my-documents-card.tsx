@@ -222,7 +222,7 @@ export function MyDocumentsCard({
                       }}
                       title={
                         hasDoc
-                          ? "Open document details"
+                          ? undefined
                           : canOpenNew
                             ? "Upload this document"
                             : "HR will upload this for you"

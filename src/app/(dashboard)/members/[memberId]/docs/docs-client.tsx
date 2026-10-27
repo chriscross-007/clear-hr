@@ -95,6 +95,11 @@ function fmtDate(iso: string | null): string {
   });
 }
 
+function fmtUploaded(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
 function fmtDateTime(iso: string): string {
   return new Date(iso).toLocaleDateString("en-GB", {
     day: "2-digit",
@@ -306,6 +311,7 @@ export function DocsClient({
             <DocList
               rows={rows.filter((r) => r.type === "contract")}
               canUpdate={canUpdate}
+              variant="employment"
               showHrOnly
               onOpen={(r) => { setDetailsReadOnly(false); setDetailsDocId(r.id); }}
               onDelete={(r) => setDeleting(r)}
@@ -327,6 +333,7 @@ export function DocsClient({
             <DocList
               rows={rows.filter((r) => r.type !== "contract" && !requiredDocIds.has(r.id))}
               canUpdate={canUpdate}
+              variant="other"
               onOpen={(r) => { setDetailsReadOnly(false); setDetailsDocId(r.id); }}
               onDelete={(r) => setDeleting(r)}
             />
@@ -504,12 +511,15 @@ function DocListCard({
 function DocList({
   rows,
   canUpdate,
+  variant,
   showHrOnly = false,
   onOpen,
   onDelete,
 }: {
   rows: MemberDocumentRow[];
   canUpdate: boolean;
+  /** Employment shows an Acknowledged column; Other shows Verified. */
+  variant: "employment" | "other";
   /** CLE-231 — mark rows whose subtype is hidden from the member. */
   showHrOnly?: boolean;
 
@@ -527,9 +537,12 @@ function DocList({
           <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
             <th className="px-4 py-2 font-medium">Document</th>
             <th className="px-4 py-2 font-medium">Status</th>
+            <th className="px-4 py-2 font-medium hidden lg:table-cell">Uploaded</th>
+            <th className="px-4 py-2 font-medium hidden lg:table-cell">
+              {variant === "employment" ? "Acknowledged" : "Verified"}
+            </th>
             <th className="px-4 py-2 font-medium hidden lg:table-cell">Expires</th>
             <th className="px-4 py-2 font-medium hidden lg:table-cell">Next review</th>
-            <th className="px-4 py-2 font-medium hidden xl:table-cell">Uploaded</th>
             <th className="px-4 py-2 font-medium text-right" />
           </tr>
         </thead>
@@ -539,7 +552,6 @@ function DocList({
               key={r.id}
               className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
               onClick={() => onOpen(r)}
-              title="Open document details"
             >
               <td className="px-4 py-2">
                 <div className="min-w-0">
@@ -582,13 +594,20 @@ function DocList({
                 )}
               </td>
               <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">
+                {fmtUploaded(r.uploadedAt)}
+              </td>
+              <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">
+                {variant === "employment"
+                  ? r.ownerAcknowledgedAt
+                    ? fmtUploaded(r.ownerAcknowledgedAt)
+                    : "—"
+                  : fmtDate(r.verifiedOn)}
+              </td>
+              <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">
                 {fmtDate(r.expiresOn)}
               </td>
               <td className="px-4 py-2 text-muted-foreground hidden lg:table-cell">
                 {fmtDate(r.nextReviewOn)}
-              </td>
-              <td className="px-4 py-2 text-muted-foreground hidden xl:table-cell">
-                {fmtDateTime(r.uploadedAt)}
               </td>
               <td className="px-4 py-2 text-right">
                 <div className="flex items-center justify-end gap-0.5">

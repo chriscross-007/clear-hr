@@ -25,7 +25,7 @@ import { sortDocs } from "@/lib/document-sort";
 import { docTabCard, type DocTabKey } from "@/components/documents/doc-tab-theme";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useState, useTransition } from "react";
-import { Loader2, Minus, Plus } from "lucide-react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -76,6 +76,11 @@ function fmtDate(iso: string | null): string {
   return new Date(iso + "T00:00:00Z").toLocaleDateString("en-GB", {
     day: "2-digit", month: "short", year: "numeric", timeZone: "UTC",
   });
+}
+
+function fmtUploaded(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 export function RequiredDocumentsCard({
@@ -213,9 +218,10 @@ export function RequiredDocumentsCard({
                     <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
                       <th className="px-3 py-2 font-medium">Document</th>
                       <th className="px-3 py-2 font-medium">Status</th>
+                      <th className="px-3 py-2 font-medium hidden md:table-cell">Uploaded</th>
                       <th className="px-3 py-2 font-medium hidden md:table-cell">Verified</th>
                       <th className="px-3 py-2 font-medium hidden md:table-cell">Expires</th>
-                      <th className="px-3 py-2 font-medium hidden md:table-cell">To be reviewed by</th>
+                      <th className="px-3 py-2 font-medium hidden md:table-cell">Next review</th>
                       {canEdit && <th className="w-8 px-2 py-2" aria-label="Actions" />}
                     </tr>
                   </thead>
@@ -296,6 +302,7 @@ export function RequiredDocumentsCard({
                               </div>
                             </td>
                             <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">—</td>
+                            <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">—</td>
                             <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
                               {fmtDate(earliestExpiry)}
                             </td>
@@ -336,7 +343,7 @@ export function RequiredDocumentsCard({
                           }}
                           title={
                             hasDoc
-                              ? "Open document details"
+                              ? undefined
                               : canOpenNew
                                 ? "Upload the required document"
                                 : "No document uploaded yet"
@@ -377,6 +384,9 @@ export function RequiredDocumentsCard({
                             </div>
                           </td>
                           <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
+                            {fmtUploaded(r.uploadedAt)}
+                          </td>
+                          <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
                             {fmtDate(r.verifiedOn)}
                           </td>
                           <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
@@ -387,23 +397,24 @@ export function RequiredDocumentsCard({
                           </td>
                           {canEdit && (
                             <td className="px-2 py-2 text-right">
-                              {/* CLE-231 — required certificates are
-                                  added/removed on the Employment page,
-                                  not here. */}
-                              {r.isRtwEvidence && r.documentId && (
-                                <button
-                                  type="button"
+                              {/* Same bin as the Employment / Other tabs. Whether a
+                                  certificate is *required* is still set on the
+                                  Employment page; this only trashes the file (the
+                                  row then shows Not uploaded again). */}
+                              {r.documentId && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setRtwDeleting(r);
                                   }}
                                   disabled={pending}
-                                  className="inline-flex h-6 w-6 items-center justify-center rounded text-destructive hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
-                                  aria-label={`Delete ${subtypeLabel(r.subtypeType, r.subtypeName)}`}
-                                  title="Delete this document (moves it to Trash)"
+                                  aria-label="Move to Trash"
+                                  title="Move to Trash"
                                 >
-                                  <Minus className="h-3.5 w-3.5" />
-                                </button>
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
                               )}
                             </td>
                           )}
@@ -546,12 +557,13 @@ function RtwDeleteDialog({
     <Dialog open onOpenChange={(o) => { if (!o && !pending) onClose(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Delete Right to Work evidence</DialogTitle>
+          <DialogTitle>Move to Trash?</DialogTitle>
           <DialogDescription>
             <span className="font-medium">{subtypeLabel(row.subtypeType, row.subtypeName)}</span> will move to Trash
-            for 30 days, then be permanently deleted. Right-to-Work evidence
-            is retention-protected while the {memberLabel} is active, so please
-            record why you&apos;re removing it.
+            for 30 days, then be permanently deleted.{" "}
+            {row.isRtwEvidence
+              ? <>Right-to-Work evidence is retention-protected while the {memberLabel} is active, so please record why you&apos;re removing it.</>
+              : <>Enter a reason for the audit trail.</>}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
@@ -573,7 +585,7 @@ function RtwDeleteDialog({
             disabled={pending || !reason.trim()}
           >
             {pending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
-            Delete
+            Move to Trash
           </Button>
         </DialogFooter>
       </DialogContent>

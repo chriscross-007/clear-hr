@@ -160,7 +160,6 @@ export function OrganisationDocsClient({
                   key={r.id}
                   className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
                   onClick={() => setDetailsDocId(r.id)}
-                  title="Open document details"
                 >
                   <td className="px-4 py-2">
                     <div className="flex items-start gap-2 min-w-0">

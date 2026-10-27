@@ -69,6 +69,10 @@ export interface DocumentAcknowledgementStatus {
     totalAcknowledged: number;
     outstanding: number;
   } | null;
+  /** Member-scope docs: the owner's acknowledgement (for the admin view of
+   *  the dialog — "{Name} acknowledged reading this document on …").
+   *  Null for org docs or when the owner hasn't acknowledged. */
+  ownerAcknowledgement: { acknowledgedAt: string } | null;
 }
 
 async function callerNameFrom(admin: DocumentsCaller["admin"], memberId: string): Promise<string> {
@@ -438,6 +442,7 @@ export async function _getDocumentAcknowledgementStatus(
           isCallerExpectedToAcknowledge: false,
           callerAcknowledgement: null,
           coverageSummary: null,
+          ownerAcknowledgement: null,
         },
       };
     }
@@ -466,6 +471,24 @@ export async function _getDocumentAcknowledgementStatus(
         }
       : null;
 
+    let ownerAcknowledgement: DocumentAcknowledgementStatus["ownerAcknowledgement"] = null;
+    if (ownerScope === "member" && doc.owner_id) {
+      if (doc.owner_id === memberId) {
+        ownerAcknowledgement = callerAcknowledgement ? { acknowledgedAt: callerAcknowledgement.acknowledgedAt } : null;
+      } else {
+        const { data: ownerAck } = await admin
+          .from("document_acknowledgement")
+          .select("acknowledged_at")
+          .eq("document_id", documentId)
+          .eq("member_id", doc.owner_id)
+          .is("superseded_by_replace_at", null)
+          .maybeSingle();
+        ownerAcknowledgement = ownerAck
+          ? { acknowledgedAt: (ownerAck as { acknowledged_at: string }).acknowledged_at }
+          : null;
+      }
+    }
+
     let coverageSummary: DocumentAcknowledgementStatus["coverageSummary"] = null;
     if (ownerScope === "organisation" && canViewOrgDocs) {
       // CLE-230 — denominator = signed-in members in the doc's audience.
@@ -491,6 +514,7 @@ export async function _getDocumentAcknowledgementStatus(
         isCallerExpectedToAcknowledge,
         callerAcknowledgement,
         coverageSummary,
+        ownerAcknowledgement,
       },
     };
   } catch (e) {
