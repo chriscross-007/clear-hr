@@ -18,6 +18,7 @@ import {
   AUDIENCE_COLUMNS,
   audienceFromRow,
   canSeeOrgDoc,
+  memberInAudience,
   isExpectedToAcknowledge,
   loadOrgDocMember,
   loadOrgDocMembers,
@@ -150,9 +151,9 @@ export interface OrgDocumentRowForMember extends OrgDocumentRow {
   /** True when the target member has an outstanding
    *  `document_acknowledgement` row (superseded rows ignored). */
   isAcknowledgedByTarget: boolean;
-  /** CLE-230 — true when the target member can see this doc (the
-   *  doc's audience includes them, or they manage org docs). The
-   *  per-member Org Docs tab lists only viewable rows. */
+  /** True when the target member is in the doc's audience (and has
+   *  `can_view_organisation_documents`). Managing org docs does NOT count
+   *  here (2026-10-28). The per-member Org Docs tab lists only these rows. */
   viewable: boolean;
   /** CLE-230 — true when the target is in the doc's audience and so is
    *  expected to acknowledge it. Drives the "Awaiting Ack" pill. */
@@ -309,7 +310,13 @@ export async function getOrgDocumentsForMember(
         audienceCount: null,
         versionNumber: 1,
         archivedAt: null,
-        viewable: targetMember ? canSeeOrgDoc(audienceFromRow(r), targetMember) : false,
+        // Per-member Organisation tab = the docs this member is in the
+        // audience for (2026-10-28). Deliberately ignores the member's own
+        // "manage org docs" override — the tab answers "which docs is this
+        // member's audience?", not "what could they open as a manager".
+        viewable: targetMember
+          ? targetMember.canView && memberInAudience(audienceFromRow(r), targetMember)
+          : false,
         expectedByTarget: targetMember ? isExpectedToAcknowledge(audienceFromRow(r), targetMember) : false,
         memberViewedAt: lastViewed.get(r.id) ?? null,
       };

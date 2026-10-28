@@ -797,8 +797,9 @@ export async function _getMemberRequiredDocumentRows(
       r.awaitingAckByOwner =
         ownerInvited && r.requiresAcknowledgement && r.documentId !== null && !r.isAcknowledged;
     }
-    // "{Member} viewed" — admin view only (the member's own card doesn't show it).
-    if (!isSelf(caller, memberId)) {
+    // "{Member} viewed" — always filled (an admin may be looking at their
+    // own record; the member's own card simply doesn't show it).
+    {
       const docIds = rows.map((r) => r.documentId).filter((id): id is string => !!id);
       const lastViewed = await loadMemberLastViewed(admin, organisationId, memberId, docIds);
       for (const r of rows) r.memberViewedAt = r.documentId ? (lastViewed.get(r.documentId) ?? null) : null;
