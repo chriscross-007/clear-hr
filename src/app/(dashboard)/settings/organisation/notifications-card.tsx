@@ -33,7 +33,7 @@ export function NotificationsCard({ initial }: { initial: DocumentNotificationSe
     {
       key: "memberAcks",
       label: `Remind ${membersLower} to acknowledge documents`,
-      help: `${members} get an email the night after a document needs their acknowledgement, then reminders after 7 and 30 days.`,
+      help: `${members} get an email the night after a document needs their acknowledgement, then a reminder every weekday until they acknowledge it.`,
     },
     {
       key: "memberExpiry",

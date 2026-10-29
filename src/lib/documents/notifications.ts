@@ -5,8 +5,9 @@
 //
 //   • Their own part (members who have accepted their invite):
 //       - Documents to acknowledge — first email the night after the
-//         acknowledgement becomes outstanding, reminders 7 and 30 days
-//         after that first email, then silent. Uses the shared
+//         acknowledgement becomes outstanding, then a reminder every
+//         weekday until it is acknowledged (2026-10-29: so no email
+//         reliably means nothing to do). Uses the shared
 //         outstanding-ack core, so audience, HR-only and invited rules
 //         match the app. (Org switch: notify_member_doc_acks.)
 //       - Expiring soon — their own Certifications / RTW evidence,
@@ -321,12 +322,14 @@ async function notifyOrganisation(
           const first = logs.find(
             (l) => l.kind === "member_ack" && l.recipient_member_id === memberId && l.document_id === r.documentId && l.cycle_key === "first",
           );
-          let stage: "first" | "r7" | "r30" | null = null;
+          // First email, then a reminder every weekday (this job only runs
+          // on weekdays) until acknowledged. One log row per day keeps a
+          // same-day re-run from sending twice.
+          let stage: string | null = null;
           if (!first) stage = "first";
-          else {
-            const age = daysBetween(first.sent_at.slice(0, 10), today);
-            if (age >= 30) stage = hasLog("member_ack", memberId, r.documentId, "r30") ? null : "r30";
-            else if (age >= 7) stage = hasLog("member_ack", memberId, r.documentId, "r7") ? null : "r7";
+          else if (first.sent_at.slice(0, 10) !== today) {
+            const dayKey = `day:${today}`;
+            stage = hasLog("member_ack", memberId, r.documentId, dayKey) ? null : dayKey;
           }
           if (stage) {
             due.push({
