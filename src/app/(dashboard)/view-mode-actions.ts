@@ -19,29 +19,17 @@ import {
 } from "@/lib/rights-resolver";
 import { logAudit } from "@/lib/audit";
 
-// Paths an Employee-mode caller can't view. When the caller toggles
-// to "self" from one of these, we redirect them to /dashboard rather
-// than let them sit on a page whose page-level gate is about to
-// bounce them anyway.
-const ADMIN_ONLY_PATH_PREFIXES = [
-  "/employees",
-  "/audit",
-  "/settings",
-  "/documents/compliance",
-  "/documents/organisation",
-  "/admin-dashboard",
-  "/absence-types",
-  "/availability",
-  "/approvals",
-  "/shifts",
-  "/reports",
-  "/health-and-safety",
-  "/billing",
-];
+// Paths the Employee-view shell offers (its left menu: Dashboard, My
+// Documents, Holiday). When an admin switches to Employee view from any
+// other page we send them to /dashboard rather than leave them on a page
+// whose gate would show "you don't have access" (2026-10-29 — was a
+// blocklist of admin-only prefixes, which missed e.g. other members'
+// record pages).
+const SELF_MODE_PATH_PREFIXES = ["/dashboard", "/my-documents", "/holiday"];
 
 function pathAllowedInSelfMode(pathname: string | null | undefined): boolean {
-  if (!pathname) return true;
-  return !ADMIN_ONLY_PATH_PREFIXES.some(
+  if (!pathname) return false;
+  return SELF_MODE_PATH_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
   );
 }
