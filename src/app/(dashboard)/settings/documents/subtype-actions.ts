@@ -19,7 +19,7 @@ import type {
   DocumentSubtypeWritePayload,
 } from "./subtype-types";
 import { seedNextReviewOn } from "@/lib/document-status";
-import { canBeRequired, canBeVerified, canMemberUpload, canRequireAcknowledgement, canRequireExpiry, hasMemberVisibilitySwitch } from "./subtype-types";
+import { canBeRequired, canBeSigned, canBeVerified, canMemberUpload, canRequireExpiry, hasMemberVisibilitySwitch, normaliseSignOff, SIGNING_MODES, type SignOff, type SigningMode } from "./subtype-types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -67,7 +67,7 @@ const SELECT_COLUMNS =
   "id, type, name, sort_order, employee_can_upload, retention_class, " +
   "expiry_required, requires_verification, " +
   "review_period_months, trackable_per_member, " +
-  "requires_acknowledgement, visible_to_member";
+  "requires_acknowledgement, sign_off, default_signing_mode, visible_to_member";
 
 interface DbRow {
   id: string;
@@ -81,6 +81,8 @@ interface DbRow {
   review_period_months: number | null;
   trackable_per_member: boolean;
   requires_acknowledgement: boolean;
+  sign_off: SignOff;
+  default_signing_mode: SigningMode;
   visible_to_member: boolean;
 }
 
@@ -96,7 +98,9 @@ function rowToDto(row: DbRow): DocumentSubtypeDto {
     requiresVerification: row.requires_verification,
     reviewPeriodMonths: row.review_period_months,
     trackablePerMember: row.trackable_per_member,
-    requiresAcknowledgement: row.requires_acknowledgement,
+    requiresAcknowledgement: row.sign_off === "acknowledge",
+    signOff: row.sign_off ?? (row.requires_acknowledgement ? "acknowledge" : "none"),
+    defaultSigningMode: row.default_signing_mode ?? "member",
     visibleToMember: row.visible_to_member !== false,
   };
 }
@@ -118,7 +122,19 @@ function payloadToRow(p: DocumentSubtypeWritePayload): Record<string, unknown> {
     // subtypes can be hidden from the member. Enforced here so a stale
     // client can't write an invalid combination.
     trackable_per_member: canBeRequired(p.type) ? p.trackablePerMember : false,
-    requires_acknowledgement: canRequireAcknowledgement(p.type) ? p.requiresAcknowledgement : false,
+    // CLE-236 — sign_off is the source; requires_acknowledgement mirrors it
+    // so every acknowledgement reader keeps working.
+    ...(() => {
+      const signOff = normaliseSignOff(p.type, p.signOff);
+      return {
+        sign_off: signOff,
+        requires_acknowledgement: signOff === "acknowledge",
+        default_signing_mode:
+          canBeSigned(p.type) && (SIGNING_MODES as readonly string[]).includes(p.defaultSigningMode)
+            ? p.defaultSigningMode
+            : "member",
+      };
+    })(),
     visible_to_member: hasMemberVisibilitySwitch(p.type) ? p.visibleToMember : true,
   };
 }
@@ -253,7 +269,9 @@ export async function updateDocumentSubtype(
       requires_verification: b.requires_verification,
       review_period_months: b.review_period_months,
       trackable_per_member: b.trackable_per_member,
+      sign_off: b.sign_off,
       requires_acknowledgement: b.requires_acknowledgement,
+      default_signing_mode: b.default_signing_mode,
       visible_to_member: b.visible_to_member,
     };
     const afterValues = payloadToRow(payload);

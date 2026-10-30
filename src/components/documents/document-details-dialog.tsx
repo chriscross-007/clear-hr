@@ -20,6 +20,7 @@
 // step for a small upfront fetch.
 
 import { PdfViewer } from "@/components/documents/pdf-viewer";
+import { SignatureSection } from "@/components/documents/signature-section";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Archive, ArchiveRestore, Camera, CheckSquare, Download, FileUp, Layers, Loader2, Pencil, SendHorizontal, Smartphone, Upload as UploadIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -297,6 +298,8 @@ export function DocumentDetailsDialog({
   //                loaded OR the download button has been clicked.
   //   ackPending — the ack button transition.
   const [ackStatus, setAckStatus] = useState<DocumentAcknowledgementStatus | null>(null);
+  // CLE-236 — "sign" when this document is signed rather than acknowledged.
+  const [signOff, setSignOff] = useState<"none" | "acknowledge" | "sign" | null>(null);
   const [readyToAck, setReadyToAck] = useState(false);
   const [ackError, setAckError] = useState<string | null>(null);
   const [ackPending, startAckTransition] = useTransition();
@@ -793,7 +796,24 @@ export function DocumentDetailsDialog({
                     "No acknowledgement needed" instead of an empty
                     right half. Admins keep the old "only show when
                     required" behaviour to avoid clutter. */}
-                {!readOnly && ackStatus && (ackStatus.requiresAcknowledgement || hideActivity || !memberView) && (
+                {/* CLE-236 — Signature section (loads its own state). A
+                    document is acknowledged or signed, never both, so the
+                    acknowledgement section is hidden for signing documents. */}
+                {currentDocumentId && (
+                  <div className={signOff === "sign" || signOff === null ? "border-b p-4 empty:hidden" : "hidden"}>
+                    <SignatureSection
+                      key={currentDocumentId}
+                      documentId={currentDocumentId}
+                      memberView={memberView}
+                      readOnly={readOnly}
+                      targetMemberName={detail.row.type === "organisation_document" ? null : detail.targetMemberName}
+                      onSignOff={setSignOff}
+                      onChanged={refreshDetailAndHistory}
+                    />
+                  </div>
+                )}
+
+                {!readOnly && ackStatus && signOff !== "sign" && (ackStatus.requiresAcknowledgement || hideActivity || !memberView) && (
                   <div className="border-b p-4">
                     {!memberView ? (
                       <AdminAcknowledgementSection

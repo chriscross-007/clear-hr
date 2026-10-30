@@ -84,7 +84,7 @@ type PayloadFlagKey =
   | "canManageBilling" | "canViewAuditLogs"
   | "canViewSensitiveFields" | "canEditSensitiveFields"
   | "canViewOrganisationDocuments" | "canManageOrganisationDocuments"
-  | "canForceDeleteDocuments";
+  | "canForceDeleteDocuments" | "canSignForOrganisation";
 
 interface SwitchDef { key: PayloadFlagKey; label: string }
 
@@ -180,6 +180,7 @@ const GROUPS: { name: string; items: SwitchDef[] }[] = [
       { key: "canViewOrganisationDocuments", label: "View Organisation Documents" },
       { key: "canManageOrganisationDocuments", label: "Manage Organisation Documents (full CRUD + Trash restore)" },
       { key: "canForceDeleteDocuments", label: "Force Delete all Documents (bypass retention block)" },
+      { key: "canSignForOrganisation", label: "Sign documents on behalf of the organisation" },
     ],
   },
 ];
@@ -208,6 +209,7 @@ function dtoToPayload(dto: RightsProfileDto): RightsProfileWritePayload {
     canViewOrganisationDocuments: dto.canViewOrganisationDocuments,
     canManageOrganisationDocuments: dto.canManageOrganisationDocuments,
     canForceDeleteDocuments: dto.canForceDeleteDocuments,
+    canSignForOrganisation: dto.canSignForOrganisation,
     tabs: dto.tabs,
   };
 }

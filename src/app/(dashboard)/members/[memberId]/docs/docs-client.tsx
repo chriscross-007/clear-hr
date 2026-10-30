@@ -70,6 +70,7 @@ import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 // /my-documents view. Lives here (not on the Employment tab)
 // so the admin surface stacks the two docs cards on one page.
 import { RequiredDocumentsCard } from "@/app/(dashboard)/members/[memberId]/employment/required-documents-card";
+import { SignatureBadgeFor } from "@/components/documents/signature-badge";
 
 const DOCS_TABS = ["certifications", "employment", "other", "org", "archived", "trash"] as const;
 type DocsTab = (typeof DOCS_TABS)[number];
@@ -575,6 +576,7 @@ function DocList({
                         Awaiting Ack
                       </span>
                     )}
+                    {variant === "employment" && <span className="ml-2"><SignatureBadgeFor documentId={r.id} /></span>}
                     {showHrOnly && !r.visibleToMember && (
                       <span
                         className="ml-2 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-700 dark:bg-slate-800 dark:text-slate-300"

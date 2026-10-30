@@ -37,6 +37,7 @@ import {
   getOrgOutstandingAcknowledgementSummary,
   type OrgAckSummaryMember,
 } from "@/app/(dashboard)/documents/acknowledgement-actions";
+import { getMyOutstandingSignatures, getOrgOutstandingSignatureSummary } from "@/app/(dashboard)/documents/signature-actions";
 import {
   DocumentsTrafficLight,
   trafficLightTooltipText,
@@ -168,6 +169,11 @@ export function AdminDashboardClient() {
   // member the caller can reach; 2nd row on the Documents card.
   const [ackTotal, setAckTotal] = useState(0);
   const [ackMembers, setAckMembers] = useState<OrgAckSummaryMember[]>([]);
+  // CLE-236 — outstanding signatures, same scope.
+  const [signTotal, setSignTotal] = useState(0);
+  const [signMemberCount, setSignMemberCount] = useState(0);
+  // Documents waiting for the caller's own signature (e.g. company signatory).
+  const [mySignIds, setMySignIds] = useState<string[]>([]);
   // CLE-234 — org documents needing attention, counted once each.
   const [orgDocsAttention, setOrgDocsAttention] = useState<OrgDocAttentionRow[]>([]);
 
@@ -274,6 +280,20 @@ export function AdminDashboardClient() {
       setAckMembers(res.members);
     })();
 
+    // CLE-236 — "N awaiting signature" row. Soft-fail.
+    (async () => {
+      const res = await getOrgOutstandingSignatureSummary();
+      if (cancelled || !res.success) return;
+      setSignTotal(res.totalOutstanding);
+      setSignMemberCount(res.members.length);
+    })();
+
+    (async () => {
+      const res = await getMyOutstandingSignatures();
+      if (cancelled || !res.success) return;
+      setMySignIds(res.rows.map((r) => r.documentId));
+    })();
+
     // CLE-234 — "N organisation documents need attention" row. Soft-fail.
     (async () => {
       const res = await getOrgDocumentsNeedingAttention();
@@ -301,6 +321,19 @@ export function AdminDashboardClient() {
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
       <h1 className="text-2xl font-bold">Dashboard</h1>
+
+      {mySignIds.length > 0 && (
+        <Link
+          href={mySignIds.length === 1 ? `/my-documents/sign/${mySignIds[0]}` : "/my-documents/sign"}
+          className="flex items-center justify-between rounded-md border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900 transition-colors hover:bg-violet-100 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-100 dark:hover:bg-violet-950/70"
+        >
+          <span>
+            <span className="font-medium">{mySignIds.length}</span>{" "}
+            {mySignIds.length === 1 ? "document is" : "documents are"} waiting for your signature
+          </span>
+          <span className="text-xs">{mySignIds.length === 1 ? "Read & sign" : "View"} →</span>
+        </Link>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 
@@ -414,9 +447,9 @@ export function AdminDashboardClient() {
           expanded={docsExpanded}
           onToggle={() => setDocsExpanded((e) => !e)}
           borderColour={docsBorderColour}
-          forceInteractive={ackTotal > 0 || orgDocsAttention.length > 0}
+          forceInteractive={ackTotal > 0 || signTotal > 0 || orgDocsAttention.length > 0}
           footer={
-            ackTotal > 0 || orgDocsAttention.length > 0 ? (
+            ackTotal > 0 || signTotal > 0 || orgDocsAttention.length > 0 ? (
               <>
                 {ackTotal > 0 && (
                   <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
@@ -425,6 +458,16 @@ export function AdminDashboardClient() {
                     </span>
                     <span className="whitespace-nowrap text-xs text-amber-800/80 dark:text-amber-200/70">
                       {ackMembers.length} {ackMembers.length === 1 ? memberLabel : pluralize(memberLabel)}
+                    </span>
+                  </div>
+                )}
+                {signTotal > 0 && (
+                  <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+                    <span>
+                      <span className="font-medium">{signTotal}</span> awaiting signature
+                    </span>
+                    <span className="whitespace-nowrap text-xs text-amber-800/80 dark:text-amber-200/70">
+                      {signMemberCount} {signMemberCount === 1 ? memberLabel : pluralize(memberLabel)}
                     </span>
                   </div>
                 )}

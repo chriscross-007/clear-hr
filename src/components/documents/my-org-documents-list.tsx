@@ -24,6 +24,7 @@ import { listOrgDocuments } from "@/app/(dashboard)/documents/organisation/org-d
 import type { OrgDocumentRow } from "@/app/(dashboard)/documents/organisation/org-document-actions-impl";
 import { onMemberDocsChanged } from "@/lib/member-docs-events";
 import { fmtBytes } from "@/lib/format-bytes";
+import { SignatureBadgeFor } from "@/components/documents/signature-badge";
 
 /** Acknowledged column — the caller's own acknowledgement timestamp,
  *  shown as a UK date. "—" when not (yet) acknowledged. */
@@ -117,6 +118,7 @@ export function MyOrgDocumentsList({
                                 Please Ack
                               </span>
                             )}
+                            <SignatureBadgeFor documentId={r.id} />
                           </div>
                           <p className="text-xs text-muted-foreground truncate">
                             {r.fileName}

@@ -36,6 +36,7 @@ import {
 } from "@/app/(dashboard)/my-documents/actions";
 import type { OtherMemberDocumentRow } from "@/app/(dashboard)/my-documents/actions-impl";
 import { onMemberDocsChanged } from "@/lib/member-docs-events";
+import { SignatureBadgeFor } from "@/components/documents/signature-badge";
 
 // Mirrors the required card's TYPE_LABEL map so the two lists read
 // with the same vocabulary. Superseded / expired RTW evidence lands on
@@ -156,6 +157,7 @@ export function MyOtherDocumentsCard({
                             Please Ack
                           </span>
                         )}
+                        <SignatureBadgeFor documentId={r.documentId} />
                       </div>
                       <p className="text-xs text-muted-foreground truncate">
                         {r.fileName}

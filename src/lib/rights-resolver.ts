@@ -137,6 +137,7 @@ interface RightsProfileRow {
   can_view_organisation_documents: boolean;
   can_manage_organisation_documents: boolean;
   can_force_delete_documents: boolean;
+  can_sign_for_organisation: boolean;
   tab_matrix: Record<string, { view?: boolean; update?: boolean }>;
 }
 
@@ -177,20 +178,15 @@ function rowToEffective(row: RightsProfileRow): EffectiveRights {
     canViewOrganisationDocuments: row.can_view_organisation_documents,
     canManageOrganisationDocuments: row.can_manage_organisation_documents,
     canForceDeleteDocuments: row.can_force_delete_documents,
+    canSignForOrganisation: row.can_sign_for_organisation === true,
     tabs: normaliseTabMatrix(row.tab_matrix ?? {}),
   };
 }
 
-const PROFILE_COLUMNS =
-  "id, name, rank, cross_user_access, " +
-  "can_create_users, can_invite_users, can_delete_users, " +
-  "can_approve_holidays, can_override_holiday_rules, " +
-  "can_run_reports, can_run_admin_reports, " +
-  "can_manage_teams, can_edit_org_settings, can_edit_rights_profiles, " +
-  "can_manage_billing, can_view_audit_logs, " +
-  "can_view_sensitive_fields, can_edit_sensitive_fields, " +
-  "can_view_organisation_documents, can_manage_organisation_documents, " +
-  "can_force_delete_documents, tab_matrix";
+// "*" (not an explicit list) so a newly added flag column never breaks
+// sign-in when code deploys before its migration: a missing column just
+// reads as undefined → false in rowToRights (CLE-236 lesson).
+const PROFILE_COLUMNS = "*";
 
 /**
  * Read the effective rights for a given member. Uses the service-role

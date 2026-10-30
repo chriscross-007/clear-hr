@@ -80,6 +80,35 @@ export function canRequireAcknowledgement(type: DocumentType | string): boolean 
   return type !== "certificate" && type !== "evidence";
 }
 
+/** CLE-236 — documents the organisation supplies (Employment and
+ *  Organisation) can be set to Sign instead of Acknowledge. Other
+ *  (attachment) documents keep the plain acknowledgement switch. */
+export function canBeSigned(type: DocumentType | string): boolean {
+  return type === "contract" || type === "organisation_document";
+}
+
+/** CLE-236 — what a member is asked to do with a document of this
+ *  subtype. `requires_acknowledgement` mirrors `sign_off = 'acknowledge'`. */
+export const SIGN_OFF_OPTIONS = ["none", "acknowledge", "sign"] as const;
+export type SignOff = (typeof SIGN_OFF_OPTIONS)[number];
+export const SIGN_OFF_LABEL: Record<SignOff, string> = {
+  none: "Neither",
+  acknowledge: "Acknowledge",
+  sign: "Sign",
+};
+
+/** CLE-236 — who signs, per signature request. `audience` is internal
+ *  (org documents: every member in the audience) and never offered. */
+export const SIGNING_MODES = ["member", "company", "member_then_company"] as const;
+export type SigningMode = (typeof SIGNING_MODES)[number];
+
+/** Clamp a sign-off value to what the kind allows. */
+export function normaliseSignOff(type: DocumentType | string, v: SignOff): SignOff {
+  if (!canRequireAcknowledgement(type)) return "none";
+  if (v === "sign" && !canBeSigned(type)) return "none";
+  return v;
+}
+
 /** Members can upload member-scope documents they supply. Employment
  *  (`contract`) documents are always issued by the organisation, and
  *  organisation documents are never member uploads. */
@@ -132,7 +161,12 @@ export interface DocumentSubtypeDto {
   requiresVerification: boolean;
   reviewPeriodMonths: number | null;
   trackablePerMember: boolean;
+  /** Mirror of `signOff === "acknowledge"` (kept for existing readers). */
   requiresAcknowledgement: boolean;
+  /** CLE-236 — Neither / Acknowledge / Sign. */
+  signOff: SignOff;
+  /** CLE-236 — pre-selected mode in "Send for signature" (Employment). */
+  defaultSigningMode: SigningMode;
   /** CLE-231 — Employment subtypes only; false hides docs of this
    *  subtype from the member they're about (HR-only). */
   visibleToMember: boolean;
@@ -147,7 +181,10 @@ export interface DocumentSubtypeWritePayload {
   requiresVerification: boolean;
   reviewPeriodMonths: number | null;
   trackablePerMember: boolean;
-  requiresAcknowledgement: boolean;
+  /** CLE-236 — Neither / Acknowledge / Sign. */
+  signOff: SignOff;
+  /** CLE-236 — pre-selected mode in "Send for signature" (Employment). */
+  defaultSigningMode: SigningMode;
   /** CLE-231 — Employment subtypes only; false hides docs of this
    *  subtype from the member they're about (HR-only). */
   visibleToMember: boolean;

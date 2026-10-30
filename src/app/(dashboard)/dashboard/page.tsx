@@ -15,6 +15,7 @@ import { getMyDocumentsTrafficLight } from "@/app/(dashboard)/documents/complian
 // whichever /my-documents tab has an outstanding ack (My preferred,
 // falls back to Org).
 import { getMyOutstandingAcknowledgements } from "@/app/(dashboard)/documents/acknowledgement-actions";
+import { getMyOutstandingSignatures } from "@/app/(dashboard)/documents/signature-actions";
 // Pure formatter — imported from the standalone module (not the
 // "use client" component) so this server component can call it at
 // render time without hitting a client-boundary reference.
@@ -123,6 +124,12 @@ export default async function DashboardPage() {
   };
   const ackHref = outstandingAckCount > 0 ? `/my-documents?tab=${ackTab}` : null;
 
+  // CLE-236 — "N to sign" chip: straight to the signing screen for one
+  // document, or the list of documents to sign.
+  const signRes = await getMyOutstandingSignatures();
+  const toSign = signRes.success ? signRes.rows : [];
+  const signHref = toSign.length === 1 ? `/my-documents/sign/${toSign[0].documentId}` : toSign.length > 1 ? "/my-documents/sign" : null;
+
   // The Docs card wraps its main content in the traffic-light Link
   // and, when there are outstanding acks, sits alongside a sibling
   // "N acks required" chip (also a Link, but into a specific tab).
@@ -153,6 +160,20 @@ export default async function DashboardPage() {
             {docsSubtext && <p className="mt-1 text-xs text-muted-foreground">{docsSubtext}</p>}
           </CardContent>
         </>
+      )}
+      {signHref && (
+        <Link
+          href={signHref}
+          className="mx-6 mb-4 flex items-center justify-between rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900 transition-colors hover:bg-violet-100 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-100 dark:hover:bg-violet-950/70"
+        >
+          <span>
+            <span className="font-medium">{toSign.length}</span>
+            {" "}to sign
+          </span>
+          <span className="text-xs text-violet-800/80 dark:text-violet-200/70">
+            {toSign.length === 1 ? "Read & sign" : "View"} →
+          </span>
+        </Link>
       )}
       {ackHref && (
         <Link

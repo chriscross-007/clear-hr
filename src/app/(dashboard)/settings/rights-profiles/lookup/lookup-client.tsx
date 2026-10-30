@@ -91,6 +91,7 @@ function summarise(member: MemberOption, profile: RightsProfileDto | undefined):
   pushBoth("view organisation documents", profile.canViewOrganisationDocuments);
   pushBoth("manage organisation documents", profile.canManageOrganisationDocuments);
   pushBoth("force-delete documents", profile.canForceDeleteDocuments);
+  pushBoth("sign documents on behalf of the organisation", profile.canSignForOrganisation);
 
   if (positive.length > 0) {
     sentences.push(`They can also ${listJoin(positive)}.`);

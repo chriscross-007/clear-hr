@@ -10,6 +10,11 @@
 //         reliably means nothing to do). Uses the shared
 //         outstanding-ack core, so audience, HR-only and invited rules
 //         match the app. (Org switch: notify_member_doc_acks.)
+//       - Documents to sign (CLE-236) — a sent request is emailed when it
+//         reaches the signer, then a reminder every later weekday until
+//         signed; organisation documents set to Sign work like
+//         acknowledgements (first email, then every weekday). Uses
+//         getOutstandingSignaturesForMany. (Same switch as acks.)
 //       - Expiring soon — their own Certifications / RTW evidence,
 //         30 / 14 / 3 days before expiry. Skipped when a newer document
 //         of the same subtype supersedes it. (notify_member_doc_expiry.)
@@ -18,7 +23,7 @@
 //     a snapshot of the recipient's admin dashboard Documents card: every
 //     member whose documents need attention (traffic light red / amber,
 //     with the dashboard's description), organisation documents needing
-//     attention, and the outstanding-acknowledgement count. Members / org
+//     attention, and the outstanding acknowledgement and signature counts. Members / org
 //     docs not in the previous summary are tagged "New". Sent whenever
 //     there is something to show, so no email means the dashboard is clear.
 //       - Members: signed-in recipients whose profile has Documents-tab
@@ -48,6 +53,7 @@ import { trafficLightTooltipText } from "@/lib/traffic-light-format";
 import { deriveDocumentStatuses, STATUS_LABEL } from "@/lib/document-status";
 import { pluralize } from "@/lib/label-utils";
 import { _getOutstandingAcknowledgementsForMany } from "@/app/(dashboard)/documents/acknowledgement-actions-impl";
+import { getOutstandingSignaturesForMany } from "@/lib/document-signatures";
 import { loadOrgDocMembers, type OrgDocMember } from "@/lib/org-doc-audience";
 import { computeMemberDocAttention } from "@/lib/documents-attention";
 
@@ -58,7 +64,7 @@ export interface NotifyResult {
   errors: string[];
 }
 
-type LogKind = "member_ack" | "member_expiry";
+type LogKind = "member_ack" | "member_expiry" | "member_sign";
 
 interface LogRow {
   kind: LogKind;
@@ -295,6 +301,7 @@ async function notifyOrganisation(
   // Per-recipient email parts.
   const ackByMember = new Map<string, { items: MemberAckItem[]; path: string; logs: NewLog[] }>();
   const expiryByMember = new Map<string, { items: MemberExpiryItem[]; logs: NewLog[] }>();
+  const signByMember = new Map<string, { items: MemberAckItem[]; path: string; logs: NewLog[] }>();
   const summaryByMember = new Map<string, DocSummary>();
 
   // ---- Member part: documents to acknowledge -------------------------------
@@ -350,6 +357,66 @@ async function notifyOrganisation(
         const tab = firstRow.ownerScope === "organisation" ? "org" : memberDocsTab(firstRow.subtypeType);
         ackByMember.set(memberId, { items, path: `/my-documents?tab=${tab}`, logs: due });
       }
+    }
+  }
+
+  // ---- Member part: documents to sign (CLE-236) ---------------------------
+  // Sent requests were emailed when they reached the signer, so they get a
+  // reminder on each later weekday. Organisation documents set to Sign get
+  // a first email, then a reminder every weekday — same as acknowledgements.
+  // Same org switch as acknowledgements.
+  if (org.notify_member_doc_acks && signedIn.length > 0) {
+    const asOrgDocMembers: OrgDocMember[] = signedIn.map((m) => {
+      const p = m.rights_profile_id ? profileById.get(m.rights_profile_id) : undefined;
+      return {
+        id: m.id,
+        teamId: m.team_id,
+        rightsProfileId: m.rights_profile_id,
+        signedIn: true,
+        invited: true,
+        canView: p?.can_view_organisation_documents === true,
+        canManage: p?.can_manage_organisation_documents === true,
+      };
+    });
+    try {
+      const byMember = await getOutstandingSignaturesForMany(admin, orgId, asOrgDocMembers);
+      for (const [memberId, rows] of byMember) {
+        const due: NewLog[] = [];
+        const items: MemberAckItem[] = [];
+        for (const r of rows) {
+          let stage: string | null = null;
+          const dayKey = `day:${today}`;
+          if (r.ownerScope === "organisation" && r.role === "member") {
+            const first = logs.find(
+              (l) => l.kind === "member_sign" && l.recipient_member_id === memberId && l.document_id === r.documentId && l.cycle_key === "first",
+            );
+            if (!first) stage = "first";
+            else if (first.sent_at.slice(0, 10) !== today) stage = hasLog("member_sign", memberId, r.documentId, dayKey) ? null : dayKey;
+          } else if (r.requestedAt.slice(0, 10) !== today) {
+            stage = hasLog("member_sign", memberId, r.documentId, dayKey) ? null : dayKey;
+          }
+          if (stage) {
+            due.push({
+              organisation_id: orgId,
+              kind: "member_sign",
+              recipient_member_id: memberId,
+              document_id: r.documentId,
+              cycle_key: stage,
+              dedupe_key: dedupeKey(memberId, r.documentId, stage),
+            });
+          }
+          items.push({
+            fileName: r.role === "company" && r.ownerName ? `${r.fileName} (${r.ownerName})` : r.fileName,
+            subtypeName: r.role === "company" ? `${r.subtypeName} — on behalf of ${org.name}` : r.subtypeName,
+            isNew: stage === "first",
+          });
+        }
+        if (due.length === 0) continue;
+        const path = rows.length === 1 ? `/my-documents/sign/${rows[0].documentId}` : "/my-documents/sign";
+        signByMember.set(memberId, { items, path, logs: due });
+      }
+    } catch (e) {
+      errors.push(`org ${orgId} signatures: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -447,6 +514,15 @@ async function notifyOrganisation(
       errors.push(`org ${orgId} summary acks: ${ackRes.error}`);
     }
 
+    // CLE-236 — outstanding signatures per member (count only).
+    const signCountByMember = new Map<string, number>();
+    try {
+      const sigs = await getOutstandingSignaturesForMany(admin, orgId, await loadOrgDocMembers(admin, orgId));
+      for (const [id, rows] of sigs) signCountByMember.set(id, rows.length);
+    } catch (e) {
+      errors.push(`org ${orgId} summary signatures: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
     for (const r of signedIn) {
       const p = r.rights_profile_id ? profileById.get(r.rights_profile_id) : undefined;
       if (!p) continue;
@@ -475,12 +551,25 @@ async function notifyOrganisation(
         }
         acks = outstanding > 0 ? { outstanding, members: who } : null;
       }
+      let signatures: DocSummary["signatures"] = null;
+      if (reachesMembers) {
+        let outstanding = 0;
+        let who = 0;
+        for (const m of members) {
+          const n = signCountByMember.get(m.id) ?? 0;
+          if (n === 0 || !(m.id === r.id || inScope(m.id, m.team_id))) continue;
+          outstanding += n;
+          who++;
+        }
+        signatures = outstanding > 0 ? { outstanding, members: who } : null;
+      }
       const summary: DocSummary = {
         memberSingular: label,
         memberPlural,
         members: memberList,
         orgDocs: orgList,
         acks,
+        signatures,
         showNew,
       };
       if (docSummaryHasContent(summary)) summaryByMember.set(r.id, summary);
@@ -492,18 +581,21 @@ async function notifyOrganisation(
   // ---- Send: one email per person ------------------------------------------
   let sent = 0;
   const memberLogs: NewLog[] = [];
-  const recipients = new Set<string>([...ackByMember.keys(), ...expiryByMember.keys(), ...summaryByMember.keys()]);
+  const recipients = new Set<string>([...ackByMember.keys(), ...signByMember.keys(), ...expiryByMember.keys(), ...summaryByMember.keys()]);
   for (const id of recipients) {
     const m = memberById.get(id);
     if (!m?.email || !m.user_id) continue;
     const ack = ackByMember.get(id);
     const exp = expiryByMember.get(id);
+    const sign = signByMember.get(id);
     const ok = await sendNightlyDocumentsEmail({
       to: m.email,
       firstName: m.known_as?.trim() || m.first_name || "there",
       orgName: org.name,
       ackItems: ack?.items ?? [],
       ackPath: ack?.path ?? "/my-documents",
+      signItems: sign?.items ?? [],
+      signPath: sign?.path ?? "/my-documents/sign",
       expiryItems: exp?.items ?? [],
       expiryPath: "/my-documents?tab=certifications",
       summary: summaryByMember.get(id) ?? null,
@@ -512,6 +604,7 @@ async function notifyOrganisation(
     if (!ok) continue;
     sent++;
     if (ack) memberLogs.push(...ack.logs);
+    if (sign) memberLogs.push(...sign.logs);
     if (exp) memberLogs.push(...exp.logs);
   }
 

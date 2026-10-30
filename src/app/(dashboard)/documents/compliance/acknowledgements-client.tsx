@@ -297,7 +297,7 @@ export function AcknowledgementsClient({
       ) : totalOutstanding === 0 ? (
         <>
           <p className="mt-4 rounded-md border bg-emerald-50 p-4 text-sm text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100">
-            All caught up — every ack-required document is fully acknowledged.
+            All caught up — every document is fully acknowledged or signed.
           </p>
           <CoverageTable
             rows={visible}
@@ -379,7 +379,7 @@ function CoverageTable({
             <th className="px-4 py-2 font-medium">Scope</th>
             <th className="px-4 py-2 font-medium">Owner</th>
             <th className="px-4 py-2 font-medium hidden md:table-cell">Uploaded</th>
-            <th className="px-4 py-2 font-medium text-right">Acknowledged</th>
+            <th className="px-4 py-2 font-medium text-right">Done</th>
             <th className="px-4 py-2 font-medium text-right">Outstanding</th>
             <th className="px-4 py-2 font-medium hidden lg:table-cell">Last reminded</th>
             <th className="px-4 py-2 text-right" />
@@ -396,7 +396,12 @@ function CoverageTable({
                 className="cursor-pointer border-b last:border-b-0 hover:bg-muted/30"
                 onClick={() => onRowClick(r.documentId)}
               >
-                <td className="px-4 py-2 font-medium">{r.subtypeName}</td>
+                <td className="px-4 py-2 font-medium">
+                  {r.subtypeName}
+                  {r.kind === "sign" && (
+                    <span className="ml-2 rounded-full bg-violet-100 px-2 py-0.5 text-xs font-normal text-violet-800 dark:bg-violet-900/40 dark:text-violet-200">Sign</span>
+                  )}
+                </td>
                 <td className="px-4 py-2 max-w-xs truncate">{r.fileName}</td>
                 <td className="px-4 py-2 text-muted-foreground">
                   {r.ownerScope === "member" ? "Member" : "Organisation"}
@@ -408,7 +413,7 @@ function CoverageTable({
                   {fmtDate(r.uploadedAt)}
                 </td>
                 <td className="px-4 py-2 text-right tabular-nums">
-                  {r.totalAcknowledged} of {r.totalExpected}
+                  {r.totalAcknowledged} of {r.totalExpected} {r.kind === "sign" ? "signed" : "acknowledged"}
                 </td>
                 <td className="px-4 py-2 text-right">
                   {r.outstanding > 0 ? (

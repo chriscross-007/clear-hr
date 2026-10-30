@@ -28,7 +28,8 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createHash } from "node:crypto";
-import { sendAckReminderEmail } from "@/lib/email";
+import { sendAckReminderEmail, sendSignatureRequestEmail } from "@/lib/email";
+import { isSignablePdf, loadSignatureCoverage } from "@/lib/document-signatures";
 import { subtypeHiddenFromMember } from "@/lib/documents-member-visibility";
 import { isDocumentArchived } from "@/lib/document-archive";
 import { getEffectiveRightsForUser } from "@/lib/rights-resolver";
@@ -165,6 +166,9 @@ export interface DocumentCoverageRow {
 }
 
 export interface DocumentCoverage {
+  /** CLE-236 — "sign" when the document is signed rather than acknowledged
+   *  (acknowledgedAt then means "signed at"). */
+  kind: "acknowledge" | "sign";
   documentId: string;
   fileName: string;
   subtypeName: string;
@@ -420,17 +424,18 @@ export async function getDocumentCoverage(
       owner_id: string | null;
       file_name: string;
       subtype_id: string;
+      content_type: string | null;
       document_subtype:
-        | { name?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }
-        | { name?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }[]
+        | { name?: string; requires_acknowledgement?: boolean; sign_off?: string; visible_to_member?: boolean }
+        | { name?: string; requires_acknowledgement?: boolean; sign_off?: string; visible_to_member?: boolean }[]
         | null;
     };
     const docQuery = await admin
       .from("document")
       .select(
-        "id, organisation_id, owner_scope, owner_id, file_name, subtype_id, " +
+        "id, organisation_id, owner_scope, owner_id, file_name, subtype_id, content_type, " +
         AUDIENCE_COLUMNS + ", " +
-        "document_subtype!subtype_id(name, requires_acknowledgement, visible_to_member)",
+        "document_subtype!subtype_id(name, requires_acknowledgement, sign_off, visible_to_member)",
       )
       .eq("id", documentId)
       .single();
@@ -440,14 +445,24 @@ export async function getDocumentCoverage(
     }
     const subtype = doc.document_subtype;
     const subtypeRow = Array.isArray(subtype) ? subtype[0] : subtype;
-    if (!subtypeRow?.requires_acknowledgement) {
+    // CLE-236 — signed documents use the same coverage, with signatures.
+    const kind: DocumentCoverage["kind"] = subtypeRow?.sign_off === "sign" ? "sign" : "acknowledge";
+    if (kind === "acknowledge" && !subtypeRow?.requires_acknowledgement) {
       return { success: false, error: "This document does not require acknowledgement." };
     }
     const ownerScope = doc.owner_scope;
+    const sigCov = kind === "sign" ? await loadSignatureCoverage(admin, caller.organisationId, [documentId]) : null;
 
     // Denominator: expected-to-ack member set.
     let expectedIds: string[] = [];
-    if (ownerScope === "member") {
+    if (sigCov) {
+      expectedIds =
+        ownerScope === "member"
+          ? sigCov.memberRequested.has(documentId) && doc.owner_id ? [doc.owner_id] : []
+          : sigCov.companyOpen.has(documentId) || !isSignablePdf(doc.content_type, doc.file_name)
+            ? []
+            : expectedAcknowledgerIds(audienceFromRow(doc), await loadOrgDocMembers(admin, caller.organisationId));
+    } else if (ownerScope === "member") {
       // Same rule as the outstanding-ack core (dashboard + emails): the
       // owner is expected only when invited and the doc isn't HR-only.
       expectedIds =
@@ -464,15 +479,19 @@ export async function getDocumentCoverage(
       );
     }
 
-    // Numerator: the ack rows.
-    const { data: acks } = await admin
-      .from("document_acknowledgement")
-      .select("member_id, acknowledged_at")
-      .eq("document_id", documentId)
-      .is("superseded_by_replace_at", null);
+    // Numerator: the ack rows (or signatures).
     const ackedMap = new Map<string, string>();
-    for (const r of ((acks ?? []) as { member_id: string; acknowledged_at: string }[])) {
-      ackedMap.set(r.member_id, r.acknowledged_at);
+    if (sigCov) {
+      for (const [id, at] of sigCov.signed.get(documentId) ?? new Map<string, string>()) ackedMap.set(id, at);
+    } else {
+      const { data: acks } = await admin
+        .from("document_acknowledgement")
+        .select("member_id, acknowledged_at")
+        .eq("document_id", documentId)
+        .is("superseded_by_replace_at", null);
+      for (const r of ((acks ?? []) as { member_id: string; acknowledged_at: string }[])) {
+        ackedMap.set(r.member_id, r.acknowledged_at);
+      }
     }
 
     // Names + team labels for the drill-down. One query for the
@@ -519,9 +538,10 @@ export async function getDocumentCoverage(
     return {
       success: true,
       coverage: {
+        kind,
         documentId,
         fileName: doc.file_name as string,
-        subtypeName: subtypeRow.name ?? "—",
+        subtypeName: subtypeRow?.name ?? "—",
         ownerScope,
         totalExpected,
         totalAcknowledged,
@@ -556,6 +576,8 @@ export async function getDocumentCoverage(
  * the twin comment on `getDocumentCoverage`.
  */
 export interface AcknowledgementCoverageRow {
+  /** CLE-236 — "sign": counts are signatures, not acknowledgements. */
+  kind: "acknowledge" | "sign";
   documentId: string;
   fileName: string;
   subtypeId: string;
@@ -593,17 +615,18 @@ export async function getOrgAcknowledgementCoverage(): Promise<
       uploaded_at: string;
       reminders_last_sent_at: string | null;
       disposal_date: string | null;
+      content_type: string | null;
       document_subtype:
-        | { name?: string; type?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }
-        | Array<{ name?: string; type?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }>
+        | { name?: string; type?: string; requires_acknowledgement?: boolean; sign_off?: string; visible_to_member?: boolean }
+        | Array<{ name?: string; type?: string; requires_acknowledgement?: boolean; sign_off?: string; visible_to_member?: boolean }>
         | null;
     };
     const docsQuery = await admin
       .from("document")
       .select(
-        "id, file_name, subtype_id, owner_scope, owner_id, uploaded_at, reminders_last_sent_at, disposal_date, " +
+        "id, file_name, subtype_id, owner_scope, owner_id, uploaded_at, reminders_last_sent_at, disposal_date, content_type, " +
         AUDIENCE_COLUMNS + ", " +
-        "document_subtype!subtype_id(name, type, requires_acknowledgement, visible_to_member)",
+        "document_subtype!subtype_id(name, type, requires_acknowledgement, sign_off, visible_to_member)",
       )
       .eq("organisation_id", caller.organisationId)
       .is("archived_at", null) // CLE-233
@@ -618,9 +641,13 @@ export async function getOrgAcknowledgementCoverage(): Promise<
     const queued = new Set<string>(((queuedRows ?? []) as { document_id: string }[]).map((r) => r.document_id));
     const today = new Date().toISOString().slice(0, 10);
 
+    const isSignDoc = (d: DocRow) => {
+      const st = Array.isArray(d.document_subtype) ? d.document_subtype[0] : d.document_subtype;
+      return st?.sign_off === "sign";
+    };
     const relevant = docs.filter((d) => {
       const st = Array.isArray(d.document_subtype) ? d.document_subtype[0] : d.document_subtype;
-      if (!st?.requires_acknowledgement) return false;
+      if (!st?.requires_acknowledgement && st?.sign_off !== "sign") return false;
       if (queued.has(d.id)) return false;
       if (d.disposal_date !== null && d.disposal_date <= today) return false;
       return true;
@@ -639,8 +666,22 @@ export async function getOrgAcknowledgementCoverage(): Promise<
     // 2026-10-26 — expected set per doc, same rule as the outstanding-ack
     // core behind the admin dashboard and emails: org docs → audience;
     // member docs → the owner, only when invited and not HR-only.
+    // CLE-236 — signed documents: member docs only while a request asks
+    // the owner to sign; org docs → audience unless the company signs first.
+    const sigCov = await loadSignatureCoverage(admin, caller.organisationId, relevant.filter(isSignDoc).map((d) => d.id));
     const expectedByDoc = new Map<string, string[]>();
     for (const d of relevant) {
+      if (isSignDoc(d)) {
+        expectedByDoc.set(
+          d.id,
+          d.owner_scope === "member"
+            ? sigCov.memberRequested.has(d.id) && d.owner_id ? [d.owner_id] : []
+            : sigCov.companyOpen.has(d.id) || !isSignablePdf(d.content_type, d.file_name)
+              ? []
+              : expectedAcknowledgerIds(audienceFromRow(d), orgMembers),
+        );
+        continue;
+      }
       expectedByDoc.set(
         d.id,
         d.owner_scope === "member"
@@ -664,6 +705,9 @@ export async function getOrgAcknowledgementCoverage(): Promise<
       const set = ackedByDoc.get(r.document_id) ?? new Set<string>();
       set.add(r.member_id);
       ackedByDoc.set(r.document_id, set);
+    }
+    for (const d of relevant) {
+      if (isSignDoc(d)) ackedByDoc.set(d.id, new Set((sigCov.signed.get(d.id) ?? new Map<string, string>()).keys()));
     }
 
     // Owner-name hydration for member-scope docs.
@@ -696,6 +740,7 @@ export async function getOrgAcknowledgementCoverage(): Promise<
       const totalExpected = expected.length;
       const totalAcknowledged = expected.filter((id) => acked.has(id)).length;
       return {
+        kind: isSignDoc(d) ? "sign" : "acknowledge",
         documentId: d.id,
         fileName: d.file_name,
         subtypeId: d.subtype_id,
@@ -768,17 +813,18 @@ export async function remindOutstanding(
       owner_scope: "member" | "organisation";
       owner_id: string | null;
       reminders_last_sent_at: string | null;
+      content_type: string | null;
       document_subtype:
-        | { name?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }
-        | Array<{ name?: string; requires_acknowledgement?: boolean; visible_to_member?: boolean }>
+        | { name?: string; requires_acknowledgement?: boolean; sign_off?: string; visible_to_member?: boolean }
+        | Array<{ name?: string; requires_acknowledgement?: boolean; sign_off?: string; visible_to_member?: boolean }>
         | null;
     };
     const docQuery = await admin
       .from("document")
       .select(
-        "id, organisation_id, file_name, file_size, owner_scope, owner_id, reminders_last_sent_at, " +
+        "id, organisation_id, file_name, file_size, owner_scope, owner_id, reminders_last_sent_at, content_type, " +
         AUDIENCE_COLUMNS + ", " +
-        "document_subtype!subtype_id(name, requires_acknowledgement, visible_to_member)",
+        "document_subtype!subtype_id(name, requires_acknowledgement, sign_off, visible_to_member)",
       )
       .eq("id", documentId)
       .single();
@@ -788,7 +834,8 @@ export async function remindOutstanding(
     }
     const subtype = doc.document_subtype;
     const subtypeRow = Array.isArray(subtype) ? subtype[0] : subtype;
-    if (!subtypeRow?.requires_acknowledgement) {
+    const signing = subtypeRow?.sign_off === "sign";
+    if (!subtypeRow?.requires_acknowledgement && !signing) {
       return { success: false, error: "This document does not require acknowledgement." };
     }
     // CLE-233 — archived documents ask nobody to acknowledge.
@@ -814,7 +861,15 @@ export async function remindOutstanding(
     // getDocumentCoverage but we only need ids + email; no need to
     // hydrate teams here.
     let expectedIds: string[] = [];
-    if (doc.owner_scope === "member") {
+    const sigCov = signing ? await loadSignatureCoverage(admin, caller.organisationId, [documentId]) : null;
+    if (sigCov) {
+      expectedIds =
+        doc.owner_scope === "member"
+          ? sigCov.memberRequested.has(documentId) && doc.owner_id ? [doc.owner_id] : []
+          : sigCov.companyOpen.has(documentId) || !isSignablePdf(doc.content_type, doc.file_name)
+            ? []
+            : expectedAcknowledgerIds(audienceFromRow(doc), await loadOrgDocMembers(admin, caller.organisationId));
+    } else if (doc.owner_scope === "member") {
       // Same rule as the dashboard: owner only when invited, never HR-only.
       expectedIds =
         doc.owner_id &&
@@ -845,7 +900,9 @@ export async function remindOutstanding(
       .select("member_id")
       .eq("document_id", documentId)
       .is("superseded_by_replace_at", null);
-    const ackedSet = new Set(((acks ?? []) as { member_id: string }[]).map((r) => r.member_id));
+    const ackedSet = sigCov
+      ? new Set((sigCov.signed.get(documentId) ?? new Map<string, string>()).keys())
+      : new Set(((acks ?? []) as { member_id: string }[]).map((r) => r.member_id));
     const outstandingIds = expectedIds.filter((id) => !ackedSet.has(id));
 
     // Load emails + org name for the outstanding set.
@@ -869,14 +926,30 @@ export async function remindOutstanding(
         const orgRel = Array.isArray(r.organisations) ? r.organisations[0] : r.organisations;
         // One failed send doesn't block the rest; the throttle is
         // stamped either way. CLE-235 — shared template in email.ts.
-        await sendAckReminderEmail({
-          to: r.email,
-          firstName: r.first_name ?? "there",
-          orgName: orgRel?.name ?? "your organisation",
-          subtypeName: subtypeRow.name ?? "document",
-          fileName: doc.file_name,
-          baseUrl,
-        });
+        if (signing) {
+          await sendSignatureRequestEmail({
+            to: r.email,
+            firstName: r.first_name ?? "there",
+            orgName: orgRel?.name ?? "your organisation",
+            subtypeName: subtypeRow?.name ?? "document",
+            fileName: doc.file_name,
+            role: "member",
+            message: null,
+            senderName: null,
+            path: `/my-documents/sign/${documentId}`,
+            baseUrl,
+            reminder: true,
+          });
+        } else {
+          await sendAckReminderEmail({
+            to: r.email,
+            firstName: r.first_name ?? "there",
+            orgName: orgRel?.name ?? "your organisation",
+            subtypeName: subtypeRow?.name ?? "document",
+            fileName: doc.file_name,
+            baseUrl,
+          });
+        }
         sentCount += 1;
       }
     }
@@ -898,7 +971,7 @@ export async function remindOutstanding(
       targetLabel: doc.file_name,
       metadata: {
         sent_count: sentCount,
-        subtype_name: subtypeRow.name ?? null,
+        subtype_name: subtypeRow?.name ?? null,
         // CLE-219 — file_name + file_size on every doc audit.
         file_name: doc.file_name,
         file_size: doc.file_size,

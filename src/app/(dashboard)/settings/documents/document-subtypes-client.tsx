@@ -7,7 +7,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useMemberLabel } from "@/contexts/member-label-context";
-import { Plus, Trash2, Loader2, ShieldCheck, Clock, CheckSquare } from "lucide-react";
+import { Plus, Trash2, Loader2, ShieldCheck, Clock, CheckSquare, PenLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,6 +50,9 @@ import {
   canBeVerified,
   canMemberUpload,
   canRequireAcknowledgement,
+  canBeSigned,
+  type SignOff,
+  type SigningMode,
   canRequireExpiry,
   hasMemberVisibilitySwitch,
   REVIEW_INTERVAL_OPTIONS,
@@ -106,7 +109,8 @@ function emptyPayload(type: DocumentType): DocumentSubtypeWritePayload {
     requiresVerification: false,
     reviewPeriodMonths: null,
     trackablePerMember: false,
-    requiresAcknowledgement: false,
+    signOff: "none",
+    defaultSigningMode: "member",
     visibleToMember: true,
   };
 }
@@ -121,7 +125,8 @@ function dtoToPayload(dto: DocumentSubtypeDto): DocumentSubtypeWritePayload {
     requiresVerification: dto.requiresVerification,
     reviewPeriodMonths: dto.reviewPeriodMonths,
     trackablePerMember: dto.trackablePerMember,
-    requiresAcknowledgement: dto.requiresAcknowledgement,
+    signOff: dto.signOff,
+    defaultSigningMode: dto.defaultSigningMode,
     visibleToMember: dto.visibleToMember,
   };
 }
@@ -234,9 +239,14 @@ export function DocumentSubtypesClient({
                                 Expiry
                               </span>
                             )}
-                            {s.requiresAcknowledgement && (
+                            {s.signOff === "acknowledge" && (
                               <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
                                 <CheckSquare className="h-3 w-3" /> Ack
+                              </span>
+                            )}
+                            {s.signOff === "sign" && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-xs text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+                                <PenLine className="h-3 w-3" /> Sign
                               </span>
                             )}
                           </div>
@@ -514,15 +524,60 @@ function SubtypeEditorDialog({
             )}
             {/* Certificates and RTW evidence are supplied by the
                 member — nothing for them to acknowledge. */}
-            {canRequireAcknowledgement(payload.type) && (
+            {/* Certificates and RTW evidence are supplied by the
+                member — nothing for them to acknowledge or sign. */}
+            {canRequireAcknowledgement(payload.type) && !canBeSigned(payload.type) && (
               <FlagRow
                 label="Requires acknowledgement"
-                description={isOrgScope
-                  ? `Every ${memberLabel} with view rights must click to confirm they've read this.`
-                  : "The document's owner must click to confirm they've read this."}
-                value={payload.requiresAcknowledgement}
-                onChange={(v) => update("requiresAcknowledgement", v)}
+                description="The document's owner must click to confirm they've read this."
+                value={payload.signOff === "acknowledge"}
+                onChange={(v) => update("signOff", v ? "acknowledge" : "none")}
               />
+            )}
+            {/* CLE-236 — documents the organisation supplies can be
+                acknowledged, signed, or neither (never both). */}
+            {canBeSigned(payload.type) && (
+              <div className="space-y-2 rounded-md border p-3">
+                <Label>{isOrgScope ? `What ${pluralize(memberLabel)} must do` : `What the ${memberLabel} must do`}</Label>
+                <Select
+                  value={payload.signOff}
+                  onValueChange={(v) => update("signOff", v as SignOff)}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Neither</SelectItem>
+                    <SelectItem value="acknowledge">Acknowledge (click to confirm they&apos;ve read it)</SelectItem>
+                    <SelectItem value="sign">Sign (typed or drawn electronic signature)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {payload.signOff === "sign"
+                    ? isOrgScope
+                      ? `Every ${memberLabel} the document is visible to is asked to sign it.`
+                      : "PDF documents of this kind can be sent for signature from the document's details."
+                    : payload.signOff === "acknowledge"
+                      ? isOrgScope
+                        ? `Every ${memberLabel} the document is visible to must click to confirm they've read it.`
+                        : `The ${memberLabel} must click to confirm they've read it.`
+                      : "Nothing is asked of anyone."}
+                </p>
+                {!isOrgScope && payload.signOff === "sign" && (
+                  <div className="space-y-1 pt-1">
+                    <Label className="text-xs">Who signs (default when sending)</Label>
+                    <Select
+                      value={payload.defaultSigningMode}
+                      onValueChange={(v) => update("defaultSigningMode", v as SigningMode)}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="member">{capitalize(memberLabel)} only</SelectItem>
+                        <SelectItem value="company">Company signatory only</SelectItem>
+                        <SelectItem value="member_then_company">{capitalize(memberLabel)}, then company signatory</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 

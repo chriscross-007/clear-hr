@@ -45,6 +45,7 @@ import {
 import type { OrgDocumentRow } from "@/app/(dashboard)/documents/organisation/org-document-actions-impl";
 import { STATUS_LABEL, STATUS_TONE } from "@/lib/document-status";
 import { cn } from "@/lib/utils";
+import { SignatureBadgeFor } from "@/components/documents/signature-badge";
 
 const TYPE_LABEL: Record<string, string> = {
   organisation_document: "Organisation document",
@@ -171,6 +172,7 @@ export function OrganisationDocsClient({
                         <p className="font-medium">
                           {r.subtypeName ?? <span className="text-muted-foreground">—</span>}
                         </p>
+                        <SignatureBadgeFor documentId={r.id} />
                         <p className="text-xs text-muted-foreground truncate">
                           {r.fileName}
                           <span className="ml-1 text-muted-foreground/70">({fmtSize(r.fileSize)})</span>

@@ -399,6 +399,8 @@ export interface DocSummary {
   orgDocs: DocSummaryLine[];
   /** Outstanding acknowledgements across the members in scope (count only). */
   acks: { outstanding: number; members: number } | null;
+  /** CLE-236 — outstanding signatures across the members in scope (count only). */
+  signatures?: { outstanding: number; members: number } | null;
   /** Show "New" tags — false on the very first summary. */
   showNew: boolean;
 }
@@ -411,7 +413,7 @@ function plural(n: number, one: string, many: string): string {
 
 /** True when the summary has anything to report. */
 export function docSummaryHasContent(s: DocSummary | null | undefined): s is DocSummary {
-  return !!s && (s.members.length > 0 || s.orgDocs.length > 0 || (s.acks?.outstanding ?? 0) > 0);
+  return !!s && (s.members.length > 0 || s.orgDocs.length > 0 || (s.acks?.outstanding ?? 0) > 0 || (s.signatures?.outstanding ?? 0) > 0);
 }
 
 function summaryLines(lines: DocSummaryLine[], showNew: boolean, baseUrl: string): string {
@@ -444,6 +446,10 @@ export async function sendNightlyDocumentsEmail(data: {
   ackItems: MemberAckItem[];
   /** Path for the acknowledge button, e.g. `/my-documents?tab=org`. */
   ackPath: string;
+  /** CLE-236 — documents waiting for this person's signature. */
+  signItems?: MemberAckItem[];
+  /** Path for the sign button. */
+  signPath?: string;
   expiryItems: MemberExpiryItem[];
   /** Path for the expiry button, e.g. `/my-documents?tab=certifications`. */
   expiryPath: string;
@@ -451,8 +457,9 @@ export async function sendNightlyDocumentsEmail(data: {
   baseUrl: string;
 }): Promise<boolean> {
   const { ackItems, expiryItems } = data;
+  const signItems = data.signItems ?? [];
   const summary = docSummaryHasContent(data.summary) ? data.summary : null;
-  const hasOwn = ackItems.length > 0 || expiryItems.length > 0;
+  const hasOwn = ackItems.length > 0 || expiryItems.length > 0 || signItems.length > 0;
   if (!hasOwn && !summary) return false;
   const org = escapeHtml(data.orgName);
 
@@ -470,7 +477,14 @@ export async function sendNightlyDocumentsEmail(data: {
     }
     if (summary.orgDocs.length > 0) bits.push(plural(summary.orgDocs.length, "organisation document", "organisation documents"));
     if (summary.acks && summary.acks.outstanding > 0) bits.push(`${summary.acks.outstanding} awaiting acknowledgement`);
+    if (summary.signatures && summary.signatures.outstanding > 0) bits.push(`${summary.signatures.outstanding} awaiting signature`);
     subject = `Documents: ${bits.join(" · ")}`;
+  } else if ([ackItems.length, expiryItems.length, signItems.length].filter((n) => n > 0).length > 1) {
+    subject = "Your documents need attention";
+  } else if (signItems.length > 0) {
+    const allReminders = signItems.every((i) => !i.isNew);
+    const what = `${plural(signItems.length, "document", "documents")} to sign`;
+    subject = allReminders ? `Reminder: ${what}` : what;
   } else if (ackItems.length > 0 && expiryItems.length > 0) {
     subject = "Your documents need attention";
   } else if (ackItems.length > 0) {
@@ -484,6 +498,17 @@ export async function sendNightlyDocumentsEmail(data: {
   }
 
   const parts: string[] = [`<p>Hi ${escapeHtml(data.firstName)},</p>`];
+
+  if (signItems.length > 0) {
+    parts.push(`
+      <h3 style="margin:24px 0 8px;color:#18181b;font-size:15px">To sign</h3>
+      <p style="margin:0 0 12px">${org} needs you to read and sign ${signItems.length === 1 ? "this document" : "these documents"}:</p>
+      <ul style="margin:0 0 12px;padding-left:20px;font-size:14px">
+        ${signItems.map((i) => docLine(i.fileName, i.subtypeName, i.isNew ? "New" : null)).join("")}
+      </ul>
+      ${cta("Read & sign", appLink(data.baseUrl, data.signPath ?? "/my-documents"))}
+    `);
+  }
 
   if (ackItems.length > 0) {
     parts.push(`
@@ -543,6 +568,13 @@ export async function sendNightlyDocumentsEmail(data: {
         )}</p>
       `);
     }
+    if (summary.signatures && summary.signatures.outstanding > 0) {
+      parts.push(`
+        <p style="margin:12px 0 0;font-size:14px"><a href="${appLink(data.baseUrl, "/documents/compliance?tab=acknowledgements")}" style="color:#18181b"><strong>${summary.signatures.outstanding}</strong> awaiting signature</a> · ${escapeHtml(
+          plural(summary.signatures.members, summary.memberSingular, summary.memberPlural),
+        )}</p>
+      `);
+    }
     parts.push(cta("Open dashboard", appLink(data.baseUrl, "/admin-dashboard")));
   }
 
@@ -551,6 +583,103 @@ export async function sendNightlyDocumentsEmail(data: {
     subject,
     wrap(`<h2 style="margin:0 0 16px;color:#18181b">Documents</h2>${parts.join("")}`, org),
     "sendNightlyDocumentsEmail",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CLE-236 — Document signatures
+// ---------------------------------------------------------------------------
+
+/** Sent when a signature request reaches a signer (and by "Remind outstanding"). */
+export async function sendSignatureRequestEmail(data: {
+  to: string;
+  firstName: string;
+  orgName: string;
+  subtypeName: string;
+  fileName: string;
+  /** "member" signs as themselves; "company" signs on behalf of the organisation. */
+  role: "member" | "company";
+  message: string | null;
+  senderName: string | null;
+  path: string;
+  baseUrl: string;
+  reminder?: boolean;
+}): Promise<boolean> {
+  const org = escapeHtml(data.orgName);
+  const onBehalf = data.role === "company" ? ` on behalf of ${org}` : "";
+  return sendDocEmail(
+    data.to,
+    `${data.reminder ? "Reminder: please sign" : "Please sign"} ${data.subtypeName}`,
+    wrap(
+      `
+        <h2 style="margin:0 0 16px;color:#18181b">Document to sign</h2>
+        <p>Hi ${escapeHtml(data.firstName)},</p>
+        <p>${data.senderName ? `${escapeHtml(data.senderName)} at ${org}` : org} has asked you to read and sign <strong>${escapeHtml(data.fileName)}</strong> (${escapeHtml(data.subtypeName)})${onBehalf}.</p>
+        ${data.message ? `<blockquote style="margin:12px 0;padding:8px 12px;border-left:3px solid #e4e4e7;color:#3f3f46">${escapeHtml(data.message)}</blockquote>` : ""}
+        ${cta("Read & sign", appLink(data.baseUrl, data.path))}
+        <p style="color:#6b7280;font-size:12px">You'll need to sign in to ClearHR. You can sign by typing your name or drawing your signature.</p>
+      `,
+      org,
+    ),
+    "sendSignatureRequestEmail",
+  );
+}
+
+/** Sent to the member when their document is fully signed. Link, not attachment. */
+export async function sendSignatureCompletedEmail(data: {
+  to: string;
+  firstName: string;
+  orgName: string;
+  subtypeName: string;
+  fileName: string;
+  path: string;
+  baseUrl: string;
+}): Promise<boolean> {
+  const org = escapeHtml(data.orgName);
+  return sendDocEmail(
+    data.to,
+    `Signed: ${data.subtypeName}`,
+    wrap(
+      `
+        <h2 style="margin:0 0 16px;color:#18181b">Your signed document is ready</h2>
+        <p>Hi ${escapeHtml(data.firstName)},</p>
+        <p><strong>${escapeHtml(data.fileName)}</strong> (${escapeHtml(data.subtypeName)}) has been signed by everyone. The signed copy, with its signature page, is on My Documents.</p>
+        ${cta("View my documents", appLink(data.baseUrl, data.path))}
+      `,
+      org,
+    ),
+    "sendSignatureCompletedEmail",
+  );
+}
+
+/** Sent to whoever sent the request when a signer declines. */
+export async function sendSignatureDeclinedEmail(data: {
+  to: string;
+  firstName: string;
+  orgName: string;
+  signerName: string;
+  subtypeName: string;
+  fileName: string;
+  reason: string;
+  path: string;
+  baseUrl: string;
+}): Promise<boolean> {
+  const org = escapeHtml(data.orgName);
+  return sendDocEmail(
+    data.to,
+    `Signature declined: ${data.subtypeName}`,
+    wrap(
+      `
+        <h2 style="margin:0 0 16px;color:#18181b">Signature declined</h2>
+        <p>Hi ${escapeHtml(data.firstName)},</p>
+        <p>${escapeHtml(data.signerName)} declined to sign <strong>${escapeHtml(data.fileName)}</strong> (${escapeHtml(data.subtypeName)}).</p>
+        <blockquote style="margin:12px 0;padding:8px 12px;border-left:3px solid #e4e4e7;color:#3f3f46">${escapeHtml(data.reason)}</blockquote>
+        <p>The document is unchanged and can be sent for signature again.</p>
+        ${cta("Open document", appLink(data.baseUrl, data.path))}
+      `,
+      org,
+    ),
+    "sendSignatureDeclinedEmail",
   );
 }
 

@@ -62,6 +62,7 @@ const ROWS: Row[] = [
   { key: "canViewOrganisationDocuments", label: "View organisation documents", category: "Documents", readValue: (p) => p.canViewOrganisationDocuments },
   { key: "canManageOrganisationDocuments", label: "Manage Organisation Documents", category: "Documents", readValue: (p) => p.canManageOrganisationDocuments },
   { key: "canForceDeleteDocuments", label: "Force Delete all Documents", category: "Documents", readValue: (p) => p.canForceDeleteDocuments },
+  { key: "canSignForOrganisation", label: "Sign on behalf of the organisation", category: "Documents", readValue: (p) => p.canSignForOrganisation },
 
   ...TAB_KEYS.flatMap((t): Row[] => [
     { key: `tab_${t}_view`, label: `${TAB_LABEL[t]} — view`, category: "Tabs", readValue: (p) => p.tabs[t]?.view === true },

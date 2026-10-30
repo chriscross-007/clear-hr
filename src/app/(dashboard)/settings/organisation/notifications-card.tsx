@@ -32,8 +32,8 @@ export function NotificationsCard({ initial }: { initial: DocumentNotificationSe
   const rows: Array<{ key: keyof DocumentNotificationSettings; label: string; help: string }> = [
     {
       key: "memberAcks",
-      label: `Remind ${membersLower} to acknowledge documents`,
-      help: `${members} get an email the night after a document needs their acknowledgement, then a reminder every weekday until they acknowledge it.`,
+      label: `Remind ${membersLower} to acknowledge and sign documents`,
+      help: `${members} get an email when a document needs their acknowledgement or signature, then a reminder every weekday until it's done.`,
     },
     {
       key: "memberExpiry",
@@ -43,7 +43,7 @@ export function NotificationsCard({ initial }: { initial: DocumentNotificationSe
     {
       key: "adminDigest",
       label: "Daily documents summary for admins",
-      help: `Each weekday morning, admins get the same list their dashboard shows: every ${memberLabel.toLowerCase()} whose documents need attention (new ones marked), organisation documents, and the number awaiting acknowledgement. Only the ${membersLower} they can manage are included. Nothing is sent when the dashboard is clear.`,
+      help: `Each weekday morning, admins get the same list their dashboard shows: every ${memberLabel.toLowerCase()} whose documents need attention (new ones marked), organisation documents, and the numbers awaiting acknowledgement and signature. Only the ${membersLower} they can manage are included. Nothing is sent when the dashboard is clear.`,
     },
   ];
 

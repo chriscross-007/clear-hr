@@ -48,6 +48,7 @@ export interface RightsProfileDto {
   canViewOrganisationDocuments: boolean;
   canManageOrganisationDocuments: boolean;
   canForceDeleteDocuments: boolean;
+  canSignForOrganisation: boolean;
 
   tabs: Record<TabKey, TabAccess>;
 
@@ -84,6 +85,7 @@ export interface RightsProfileWritePayload {
   canViewOrganisationDocuments: boolean;
   canManageOrganisationDocuments: boolean;
   canForceDeleteDocuments: boolean;
+  canSignForOrganisation: boolean;
 
   tabs: Record<TabKey, TabAccess>;
 }
@@ -155,6 +157,7 @@ interface DbRow {
   can_view_organisation_documents: boolean;
   can_manage_organisation_documents: boolean;
   can_force_delete_documents: boolean;
+  can_sign_for_organisation: boolean;
   tab_matrix: Record<string, { view?: boolean; update?: boolean }>;
 }
 
@@ -192,6 +195,7 @@ function rowToDto(row: DbRow, memberCount: number): RightsProfileDto {
     canViewOrganisationDocuments: row.can_view_organisation_documents,
     canManageOrganisationDocuments: row.can_manage_organisation_documents,
     canForceDeleteDocuments: row.can_force_delete_documents,
+    canSignForOrganisation: row.can_sign_for_organisation === true,
     tabs: normaliseTabs(row.tab_matrix ?? {}),
     memberCount,
   };
@@ -206,7 +210,7 @@ const SELECT_COLUMNS =
   "can_manage_billing, can_view_audit_logs, " +
   "can_view_sensitive_fields, can_edit_sensitive_fields, " +
   "can_view_organisation_documents, can_manage_organisation_documents, " +
-  "can_force_delete_documents, tab_matrix";
+  "can_force_delete_documents, can_sign_for_organisation, tab_matrix";
 
 /**
  * Convert a TabAccess bag ({view, update}) into the three-level label
@@ -276,6 +280,7 @@ function payloadToRow(p: RightsProfileWritePayload): Record<string, unknown> {
     can_view_organisation_documents: p.canViewOrganisationDocuments,
     can_manage_organisation_documents: p.canManageOrganisationDocuments,
     can_force_delete_documents: p.canForceDeleteDocuments,
+    can_sign_for_organisation: p.canSignForOrganisation,
     tab_matrix: p.tabs,
   };
 }
@@ -437,6 +442,7 @@ export async function updateRightsProfile(
       can_view_organisation_documents: b.can_view_organisation_documents,
       can_manage_organisation_documents: b.can_manage_organisation_documents,
       can_force_delete_documents: b.can_force_delete_documents,
+      can_sign_for_organisation: b.can_sign_for_organisation,
       tab_matrix: b.tab_matrix,
     };
     const afterValues = payloadToRow(payload);
@@ -603,6 +609,7 @@ export async function copyRightsProfile(
     canViewOrganisationDocuments: source.can_view_organisation_documents,
     canManageOrganisationDocuments: source.can_manage_organisation_documents,
     canForceDeleteDocuments: source.can_force_delete_documents,
+    canSignForOrganisation: source.can_sign_for_organisation === true,
     tabs: normaliseTabs(source.tab_matrix),
   };
 
@@ -760,6 +767,7 @@ export async function getBlankProfilePayload(rank: Rank): Promise<RightsProfileW
     canViewOrganisationDocuments: false,
     canManageOrganisationDocuments: false,
     canForceDeleteDocuments: false,
+    canSignForOrganisation: false,
     tabs: emptyTabMatrix(),
   };
 }

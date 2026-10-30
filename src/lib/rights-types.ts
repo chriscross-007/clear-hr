@@ -61,6 +61,7 @@ export interface EffectiveRights {
   canViewOrganisationDocuments: boolean;
   canManageOrganisationDocuments: boolean;
   canForceDeleteDocuments: boolean;
+  canSignForOrganisation: boolean;
 
   tabs: Record<TabKey, TabAccess>;
 }
