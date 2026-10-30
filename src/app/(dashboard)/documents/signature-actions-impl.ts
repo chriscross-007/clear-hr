@@ -1285,15 +1285,33 @@ export async function _getOrgDocumentSigners(
 // Row badges ("Please sign" / "Awaiting signature" / "Signed")
 // ---------------------------------------------------------------------------
 
-export type SignatureBadge = "to_sign" | "awaiting" | "signed";
+export interface SignatureBadgeSigner {
+  role: SignatureRole;
+  name: string;
+  status: SignatureStatus;
+  signedAt: string | null;
+}
 
 /**
  * One badge per document for list rows, relative to the caller:
- *   to_sign  — the caller can sign it now
- *   awaiting — out for signature (someone else to sign)
- *   signed   — a signed copy, or an org document the caller has signed
- * Documents the caller can't see are left out.
+ *   to_sign  — the caller can sign it now (`callerRole` says as whom)
+ *   awaiting — out for signature (`signers` = the open request's signers)
+ *   signed   — a signed copy (`signers` = who signed), or an org document
+ *              the caller has signed
+ *   not_sent — a member document set to Sign that hasn't been sent yet
+ *              (only for callers who can send it; `defaultMode` = the
+ *              subtype's default "who signs")
+ * The client turns `signers` into "member / company / both" labels and a
+ * tooltip. Documents the caller can't see are left out.
  */
+export interface SignatureBadge {
+  kind: "to_sign" | "awaiting" | "signed" | "not_sent";
+  ownerScope: "member" | "organisation";
+  signers: SignatureBadgeSigner[];
+  callerRole: SignatureRole | null;
+  defaultMode: SendableMode | null;
+}
+
 export async function _getSignatureBadges(
   caller: DocumentsCaller,
   documentIds: string[],
@@ -1314,41 +1332,98 @@ export async function _getSignatureBadges(
     const visIds = visible.map((d) => d.id);
     if (visIds.length === 0) return { success: true, badges };
 
-    const { data: sigData } = await caller.admin
-      .from("document_signature")
-      .select("document_id, signer_member_id, role, status, document_signature_request!request_id(status, mode)")
-      .eq("organisation_id", caller.organisationId)
-      .in("document_id", visIds);
+    // Signature rows on these documents (any request), plus the requests
+    // that produced signed copies.
+    const signedReqIds = visible.map((d) => d.signed_request_id).filter((x): x is string => !!x);
+    const [{ data: sigData }, { data: copyData }] = await Promise.all([
+      caller.admin
+        .from("document_signature")
+        .select("document_id, request_id, signer_member_id, signer_name, role, status, signed_at, document_signature_request!request_id(status, mode)")
+        .eq("organisation_id", caller.organisationId)
+        .in("document_id", visIds),
+      signedReqIds.length > 0
+        ? caller.admin
+            .from("document_signature")
+            .select("document_id, request_id, signer_member_id, signer_name, role, status, signed_at")
+            .eq("organisation_id", caller.organisationId)
+            .in("request_id", signedReqIds)
+            .eq("status", "signed")
+        : Promise.resolve({ data: [] as unknown[] }),
+    ]);
     type Row = {
       document_id: string;
+      request_id: string;
       signer_member_id: string;
+      signer_name: string | null;
+      role: SignatureRole;
       status: SignatureStatus;
-      document_signature_request: { status: string; mode: string } | { status: string; mode: string }[] | null;
+      signed_at: string | null;
+      document_signature_request?: { status: string; mode: string } | { status: string; mode: string }[] | null;
     };
-    const open = new Set<string>();
-    const mine = new Map<string, SignatureStatus>();
-    for (const r of (sigData ?? []) as unknown as Row[]) {
+    const rows = (sigData ?? []) as unknown as Row[];
+    const copyRows = (copyData ?? []) as unknown as Row[];
+    const names = await loadMembers(caller, [...rows, ...copyRows].map((r) => r.signer_member_id));
+    const toSigner = (r: Row): SignatureBadgeSigner => ({
+      role: r.role,
+      name: r.signer_name ?? fullName(names.get(r.signer_member_id)),
+      status: r.status,
+      signedAt: r.signed_at,
+    });
+    const bySignOrder = (a: SignatureBadgeSigner, b: SignatureBadgeSigner) => (a.role === b.role ? 0 : a.role === "member" ? -1 : 1);
+
+    const openSigners = new Map<string, SignatureBadgeSigner[]>();
+    const mine = new Map<string, { status: SignatureStatus; role: SignatureRole }>();
+    for (const r of rows) {
       const req = Array.isArray(r.document_signature_request) ? r.document_signature_request[0] : r.document_signature_request;
       if (req?.status !== "pending") continue;
-      if (req.mode !== "audience") open.add(r.document_id);
+      if (req.mode !== "audience") {
+        const list = openSigners.get(r.document_id) ?? [];
+        list.push(toSigner(r));
+        openSigners.set(r.document_id, list);
+      }
       if (r.signer_member_id === caller.memberId) {
         const prev = mine.get(r.document_id);
-        if (prev !== "pending") mine.set(r.document_id, r.status);
+        if (prev?.status !== "pending") mine.set(r.document_id, { status: r.status, role: r.role });
       }
     }
+    const copySigners = new Map<string, SignatureBadgeSigner[]>();
+    for (const r of copyRows) {
+      const list = copySigners.get(r.request_id) ?? [];
+      list.push(toSigner(r));
+      copySigners.set(r.request_id, list);
+    }
+
     for (const d of visible) {
       if (d.archived_at) continue;
       const st = subtypeOf(d);
-      if (mine.get(d.id) === "pending") badges[d.id] = "to_sign";
-      else if (open.has(d.id)) badges[d.id] = "awaiting";
-      else if (d.signed_request_id) {
+      const base = { ownerScope: d.owner_scope, callerRole: null, defaultMode: null } as const;
+      const open = (openSigners.get(d.id) ?? []).sort(bySignOrder);
+      const myRow = mine.get(d.id);
+      const orgSign = d.owner_scope === "organisation" && st?.sign_off === "sign" && isSignablePdf(d.content_type, d.file_name);
+      if (myRow?.status === "pending") {
+        badges[d.id] = { ...base, kind: "to_sign", signers: open, callerRole: myRow.role };
+      } else if (open.length > 0) {
+        badges[d.id] = { ...base, kind: "awaiting", signers: open };
+      } else if (d.signed_request_id) {
+        const signers = (copySigners.get(d.signed_request_id) ?? []).sort(bySignOrder);
         // An org document signed by the company still asks the audience.
-        if (d.owner_scope === "organisation" && st?.sign_off === "sign" && mine.get(d.id) !== "signed" &&
-            isExpectedToAcknowledge(audienceFromRow(d), me) && isSignablePdf(d.content_type, d.file_name)) badges[d.id] = "to_sign";
-        else badges[d.id] = "signed";
-      } else if (d.owner_scope === "organisation" && st?.sign_off === "sign" && isSignablePdf(d.content_type, d.file_name)) {
-        if (mine.get(d.id) === "signed") badges[d.id] = "signed";
-        else if (isExpectedToAcknowledge(audienceFromRow(d), me)) badges[d.id] = "to_sign";
+        if (orgSign && myRow?.status !== "signed" && isExpectedToAcknowledge(audienceFromRow(d), me)) {
+          badges[d.id] = { ...base, kind: "to_sign", signers, callerRole: "member" };
+        } else {
+          badges[d.id] = { ...base, kind: "signed", signers };
+        }
+      } else if (orgSign) {
+        if (myRow?.status === "signed") badges[d.id] = { ...base, kind: "signed", signers: [] };
+        else if (isExpectedToAcknowledge(audienceFromRow(d), me)) badges[d.id] = { ...base, kind: "to_sign", signers: [], callerRole: "member" };
+      } else if (
+        d.owner_scope === "member" &&
+        st?.sign_off === "sign" &&
+        isSignablePdf(d.content_type, d.file_name) &&
+        canManageDoc(caller, d, owners.get(d.owner_id ?? ""))
+      ) {
+        const hidden = subtypeHiddenFromMember(d.document_subtype);
+        const mode = (st?.default_signing_mode as SendableMode | undefined) ?? "member";
+        badges[d.id] = { ...base, kind: "not_sent", signers: [], defaultMode: hidden ? "company" : mode };
       }
     }
     return { success: true, badges };

@@ -7,7 +7,8 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useMemberLabel } from "@/contexts/member-label-context";
-import { Plus, Trash2, Loader2, ShieldCheck, Clock, CheckSquare, PenLine } from "lucide-react";
+import { Plus, Trash2, Loader2, ShieldCheck, Clock, CheckSquare, User, House } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -244,11 +245,7 @@ export function DocumentSubtypesClient({
                                 <CheckSquare className="h-3 w-3" /> Ack
                               </span>
                             )}
-                            {s.signOff === "sign" && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-xs text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
-                                <PenLine className="h-3 w-3" /> Sign
-                              </span>
-                            )}
+                            {s.signOff === "sign" && <SignPill subtype={s} memberLabel={memberLabel} />}
                           </div>
                         </td>
                         <td className="px-3 py-2 text-right">
@@ -645,5 +642,44 @@ function FlagRow({
         <Switch checked={value} onCheckedChange={onChange} />
       </div>
     </div>
+  );
+}
+
+// CLE-236 — Sign pills show who signs: a person icon + "Sign" for the
+// member, a house icon + "Sign" for the organisation (company signatory);
+// both pills when the member signs first and then the company.
+// Organisation document subtypes are signed by every member the document
+// is visible to.
+function SignPill({ subtype, memberLabel }: { subtype: DocumentSubtypeDto; memberLabel: string }) {
+  const Member = capitalize(memberLabel);
+  const isOrg = scopeForType(subtype.type) === "organisation";
+  const mode = isOrg ? "member" : subtype.defaultSigningMode;
+  const usual = " (the usual choice when sending; HR can change it per document)";
+  const memberTip = isOrg
+    ? `Every ${memberLabel} the document is visible to is asked to sign it. HR can also have the organisation sign it first.`
+    : mode === "member_then_company"
+      ? `${Member} signs first, then the organisation${usual}.`
+      : `${Member} signs${usual}.`;
+  const orgTip =
+    mode === "member_then_company"
+      ? `After the ${memberLabel}, a company signatory signs for the organisation${usual}.`
+      : `A company signatory signs for the organisation${usual}.`;
+  const pill = (icon: React.ReactNode, tip: string, key: string) => (
+    <Tooltip key={key}>
+      <TooltipTrigger asChild>
+        <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-xs text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+          {icon} Sign
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-xs">{tip}</TooltipContent>
+    </Tooltip>
+  );
+  return (
+    <>
+      {(mode === "member" || mode === "member_then_company") &&
+        pill(<User className="h-3 w-3" aria-label={Member} />, memberTip, "m")}
+      {(mode === "company" || mode === "member_then_company") &&
+        pill(<House className="h-3 w-3" aria-label="Organisation" />, orgTip, "c")}
+    </>
   );
 }
