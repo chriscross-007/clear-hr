@@ -522,6 +522,23 @@ export async function _getSigningView(caller: DocumentsCaller, documentId: strin
     if (error || !urlData) return { success: false, error: "Couldn't open the document." };
     const me = (await loadMembers(caller, [caller.memberId])).get(caller.memberId);
     const open = res.state.openRequest;
+    // Opening the signing screen is a view of the document — record it so
+    // the admin "{Member} viewed" column (loadMemberLastViewed) picks it up.
+    await logAudit({
+      organisationId: caller.organisationId,
+      actorId: caller.memberId,
+      actorName: fullName(me),
+      action: "document.viewed",
+      targetType: targetType(doc),
+      targetId: doc.id,
+      targetLabel: doc.file_name,
+      metadata: {
+        ...(doc.owner_scope === "member" && res.state.ownerName ? { member: res.state.ownerName } : {}),
+        subtype_name: subtypeOf(doc)?.name ?? null,
+        file_name: doc.file_name,
+        file_size: doc.file_size,
+      },
+    });
     return {
       success: true,
       view: {

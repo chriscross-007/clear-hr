@@ -7,7 +7,7 @@
 // file; Turbopack's production build breaks on it).
 
 import { buildDocumentsCallerFromCookies } from "@/lib/documents-caller";
-import { loadOrgDocMembers } from "@/lib/org-doc-audience";
+import { loadOrgDocMember, loadOrgDocMembers } from "@/lib/org-doc-audience";
 import { getOutstandingSignaturesForMany } from "@/lib/document-signatures";
 import {
   _cancelSignatureRequest,
@@ -135,4 +135,27 @@ export async function getSignatureBadges(documentIds: string[]) {
   const caller = await buildDocumentsCallerFromCookies();
   if (!caller) return NOT_AUTH;
   return _getSignatureBadges(caller, documentIds);
+}
+
+/** Admin view of a member's dashboard: documents waiting for THIS
+ *  member's signature. Same access rule as the acknowledgement chip
+ *  (self, or Documents-tab view with team / all reach). */
+export async function getOutstandingSignaturesForMember(memberId: string) {
+  try {
+    const caller = await buildDocumentsCallerFromCookies();
+    if (!caller) return NOT_AUTH;
+    const target = await loadOrgDocMember(caller.admin, caller.organisationId, memberId);
+    if (!target) return { success: false as const, error: "Member not found" };
+    if (target.id !== caller.memberId) {
+      const view = caller.rights.tabs.documents?.view === true;
+      const reach =
+        caller.rights.crossUserAccess === "all" ||
+        (caller.rights.crossUserAccess === "team" && target.teamId !== null && target.teamId === caller.teamId);
+      if (!view || !reach) return { success: false as const, error: "Member not found" };
+    }
+    const byMember = await getOutstandingSignaturesForMany(caller.admin, caller.organisationId, [target]);
+    return { success: true as const, rows: byMember.get(target.id) ?? [] };
+  } catch (e) {
+    return { success: false as const, error: e instanceof Error ? e.message : "An error occurred" };
+  }
 }

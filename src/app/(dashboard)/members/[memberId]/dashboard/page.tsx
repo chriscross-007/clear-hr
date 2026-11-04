@@ -10,6 +10,7 @@ import { Calendar, Clock, Sun, BarChart2, FileText } from "lucide-react";
 import { getMemberDocumentsTrafficLight } from "@/app/(dashboard)/documents/compliance-actions";
 import { trafficLightTooltipText } from "@/lib/traffic-light-format";
 import { getOutstandingAcknowledgementsForMember } from "@/app/(dashboard)/documents/acknowledgement-actions";
+import { getOutstandingSignaturesForMember } from "@/app/(dashboard)/documents/signature-actions";
 
 export default async function EmployeeDashboardPage({
   params,
@@ -115,6 +116,13 @@ export default async function EmployeeDashboardPage({
     ? `/members/${memberId}/docs?tab=${ackTab}`
     : null;
 
+  // CLE-236 — documents waiting for THIS member's signature (same chip
+  // as on their own dashboard), linking to the tab that holds them.
+  const signRes = await getOutstandingSignaturesForMember(memberId);
+  const toSign = signRes.success ? signRes.rows : [];
+  const signTab = toSign.some((r) => r.ownerScope === "member") ? "employment" : "org";
+  const signHref = toSign.length > 0 ? `/members/${memberId}/docs?tab=${signTab}` : null;
+
   // Two sibling Links (traffic-light header + ack chip) — never nest
   // <Link> inside <Link>.
   const docsHeader = (
@@ -137,6 +145,20 @@ export default async function EmployeeDashboardPage({
         </Link>
       ) : (
         docsHeader
+      )}
+      {signHref && (
+        <Link
+          href={signHref}
+          className="mx-6 mb-4 flex items-center justify-between rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900 transition-colors hover:bg-violet-100 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-100 dark:hover:bg-violet-950/70"
+        >
+          <span>
+            <span className="font-medium">{toSign.length}</span>
+            {" "}to sign
+          </span>
+          <span className="text-xs text-violet-800/80 dark:text-violet-200/70">
+            {signTab === "employment" ? "Employment" : "Organisation"} →
+          </span>
+        </Link>
       )}
       {ackHref && (
         <Link
