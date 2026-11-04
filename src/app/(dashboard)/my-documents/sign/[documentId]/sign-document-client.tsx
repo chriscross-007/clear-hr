@@ -205,6 +205,18 @@ export function SignDocumentClient({
                 Decline
               </Button>
             )}
+            {/* Sign later: leave without signing or declining. Back to
+                wherever the member came from, else My Documents. */}
+            <Button
+              variant="outline"
+              disabled={pending}
+              onClick={() => {
+                if (window.history.length > 1) router.back();
+                else router.push("/my-documents");
+              }}
+            >
+              Back
+            </Button>
           </div>
         </CardContent>
       </Card>
