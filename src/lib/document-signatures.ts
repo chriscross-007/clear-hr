@@ -83,6 +83,8 @@ export interface OutstandingSignature {
   requestedAt: string;
   /** Member documents signed by the company: whose document it is. */
   ownerName: string | null;
+  /** Member documents: whose document it is (null for org documents). */
+  ownerId: string | null;
 }
 
 type SubtypeEmbed = { name?: string; type?: string; sign_off?: string; visible_to_member?: boolean | null };
@@ -158,6 +160,7 @@ export async function getOutstandingSignaturesForMany(
       role: r.role,
       requestedAt: r.sent_at ?? r.created_at,
       ownerName: r.role === "company" && d.owner_id ? (ownerNames.get(d.owner_id) ?? null) : null,
+      ownerId: d.owner_scope === "member" ? d.owner_id : null,
     });
   }
 
@@ -226,6 +229,7 @@ export async function getOutstandingSignaturesForMany(
         role: "member",
         requestedAt: d.uploaded_at,
         ownerName: null,
+        ownerId: null,
       });
     }
   }

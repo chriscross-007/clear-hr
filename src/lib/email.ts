@@ -399,7 +399,8 @@ export interface DocSummary {
   orgDocs: DocSummaryLine[];
   /** Outstanding acknowledgements across the members in scope (count only). */
   acks: { outstanding: number; members: number } | null;
-  /** CLE-236 — outstanding signatures across the members in scope (count only). */
+  /** CLE-236 — outstanding signatures owed by others in scope (count only;
+   *  the recipient's own are in their "To sign" part). */
   signatures?: { outstanding: number; members: number } | null;
   /** Show "New" tags — false on the very first summary. */
   showNew: boolean;
@@ -477,7 +478,7 @@ export async function sendNightlyDocumentsEmail(data: {
     }
     if (summary.orgDocs.length > 0) bits.push(plural(summary.orgDocs.length, "organisation document", "organisation documents"));
     if (summary.acks && summary.acks.outstanding > 0) bits.push(`${summary.acks.outstanding} awaiting acknowledgement`);
-    if (summary.signatures && summary.signatures.outstanding > 0) bits.push(`${summary.signatures.outstanding} awaiting signature`);
+    if (summary.signatures && summary.signatures.outstanding > 0) bits.push(`${summary.signatures.outstanding} awaiting others' signatures`);
     subject = `Documents: ${bits.join(" · ")}`;
   } else if ([ackItems.length, expiryItems.length, signItems.length].filter((n) => n > 0).length > 1) {
     subject = "Your documents need attention";
@@ -570,7 +571,7 @@ export async function sendNightlyDocumentsEmail(data: {
     }
     if (summary.signatures && summary.signatures.outstanding > 0) {
       parts.push(`
-        <p style="margin:12px 0 0;font-size:14px"><a href="${appLink(data.baseUrl, "/documents/compliance?tab=acknowledgements")}" style="color:#18181b"><strong>${summary.signatures.outstanding}</strong> awaiting signature</a> · ${escapeHtml(
+        <p style="margin:12px 0 0;font-size:14px"><a href="${appLink(data.baseUrl, "/documents/compliance?tab=acknowledgements")}" style="color:#18181b"><strong>${summary.signatures.outstanding}</strong> awaiting others' signatures</a> · ${escapeHtml(
           plural(summary.signatures.members, summary.memberSingular, summary.memberPlural),
         )}</p>
       `);
@@ -599,22 +600,40 @@ export async function sendSignatureRequestEmail(data: {
   fileName: string;
   /** "member" signs as themselves; "company" signs on behalf of the organisation. */
   role: "member" | "company";
+  /** The sender's note — only shown to the first signer it was written for. */
   message: string | null;
   senderName: string | null;
+  /** The recipient sent the request themselves. */
+  senderIsRecipient?: boolean;
+  /** Company signatures on a member's document: whose document it is. */
+  ownerName?: string | null;
+  /** Member then company: the member who has just signed. */
+  previousSignerName?: string | null;
   path: string;
   baseUrl: string;
   reminder?: boolean;
 }): Promise<boolean> {
   const org = escapeHtml(data.orgName);
+  const doc = `<strong>${escapeHtml(data.fileName)}</strong> (${escapeHtml(data.subtypeName)})${
+    data.ownerName ? ` for ${escapeHtml(data.ownerName)}` : ""
+  }`;
   const onBehalf = data.role === "company" ? ` on behalf of ${org}` : "";
+  let intro: string;
+  if (data.previousSignerName) {
+    intro = `${escapeHtml(data.previousSignerName)} has signed ${doc}. It now needs your signature${onBehalf}.`;
+  } else if (data.senderIsRecipient) {
+    intro = `You sent ${doc} for signature. It needs your signature${onBehalf}.`;
+  } else {
+    intro = `${data.senderName ? `${escapeHtml(data.senderName)} at ${org}` : org} has asked you to read and sign ${doc}${onBehalf}.`;
+  }
   return sendDocEmail(
     data.to,
-    `${data.reminder ? "Reminder: please sign" : "Please sign"} ${data.subtypeName}`,
+    `${data.reminder ? "Reminder: please sign" : "Please sign"} ${data.subtypeName}${data.ownerName ? ` for ${data.ownerName}` : ""}`,
     wrap(
       `
         <h2 style="margin:0 0 16px;color:#18181b">Document to sign</h2>
         <p>Hi ${escapeHtml(data.firstName)},</p>
-        <p>${data.senderName ? `${escapeHtml(data.senderName)} at ${org}` : org} has asked you to read and sign <strong>${escapeHtml(data.fileName)}</strong> (${escapeHtml(data.subtypeName)})${onBehalf}.</p>
+        <p>${intro}</p>
         ${data.message ? `<blockquote style="margin:12px 0;padding:8px 12px;border-left:3px solid #e4e4e7;color:#3f3f46">${escapeHtml(data.message)}</blockquote>` : ""}
         ${cta("Read & sign", appLink(data.baseUrl, data.path))}
         <p style="color:#6b7280;font-size:12px">You'll need to sign in to ClearHR. You can sign by typing your name or drawing your signature.</p>

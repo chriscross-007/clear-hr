@@ -557,7 +557,9 @@ async function notifyOrganisation(
         let who = 0;
         for (const m of members) {
           const n = signCountByMember.get(m.id) ?? 0;
-          if (n === 0 || !(m.id === r.id || inScope(m.id, m.team_id))) continue;
+          // The recipient's own signatures are listed in their "To sign"
+          // part, so the summary counts everyone else's (2026-11-04).
+          if (n === 0 || m.id === r.id || !inScope(m.id, m.team_id)) continue;
           outstanding += n;
           who++;
         }

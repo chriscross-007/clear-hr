@@ -171,7 +171,8 @@ export function AdminDashboardClient() {
   const [ackMembers, setAckMembers] = useState<OrgAckSummaryMember[]>([]);
   // CLE-236 — outstanding signatures, same scope.
   const [signTotal, setSignTotal] = useState(0);
-  const [signMemberCount, setSignMemberCount] = useState(0);
+  // Split by who must sign: you / members / other company signatories.
+  const [signLines, setSignLines] = useState<{ key: "mine" | "members" | "company"; outstanding: number; members: number }[]>([]);
   // Documents waiting for the caller's own signature (e.g. company signatory).
   const [mySignIds, setMySignIds] = useState<string[]>([]);
   // CLE-234 — org documents needing attention, counted once each.
@@ -285,7 +286,13 @@ export function AdminDashboardClient() {
       const res = await getOrgOutstandingSignatureSummary();
       if (cancelled || !res.success) return;
       setSignTotal(res.totalOutstanding);
-      setSignMemberCount(res.members.length);
+      setSignLines(
+        [
+          { key: "mine" as const, ...res.mine },
+          { key: "members" as const, ...res.members },
+          { key: "company" as const, ...res.company },
+        ].filter((l) => l.outstanding > 0),
+      );
     })();
 
     (async () => {
@@ -461,16 +468,26 @@ export function AdminDashboardClient() {
                     </span>
                   </div>
                 )}
-                {signTotal > 0 && (
-                  <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+                {signLines.map((l) => (
+                  <div
+                    key={l.key}
+                    className="mt-2 flex flex-wrap items-baseline justify-between gap-x-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100"
+                  >
                     <span>
-                      <span className="font-medium">{signTotal}</span> awaiting signature
+                      <span className="font-medium">{l.outstanding}</span>{" "}
+                      {l.key === "mine"
+                        ? "awaiting your signature"
+                        : l.key === "members"
+                          ? `awaiting ${memberLabel.toLowerCase()} signature`
+                          : "awaiting company signature"}
                     </span>
-                    <span className="whitespace-nowrap text-xs text-amber-800/80 dark:text-amber-200/70">
-                      {signMemberCount} {signMemberCount === 1 ? memberLabel : pluralize(memberLabel)}
-                    </span>
+                    {l.members > 0 && (
+                      <span className="whitespace-nowrap text-xs text-amber-800/80 dark:text-amber-200/70">
+                        {l.members} {l.members === 1 ? memberLabel : pluralize(memberLabel)}
+                      </span>
+                    )}
                   </div>
-                )}
+                ))}
                 {orgDocsAttention.length > 0 && (
                   <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
                     <span className="font-medium">{orgDocsAttention.length}</span>{" "}

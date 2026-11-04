@@ -90,11 +90,27 @@ export async function getOrgDocumentSigners(documentId: string) {
   return _getOrgDocumentSigners(caller, documentId);
 }
 
-/** Admin dashboard Documents card: "N awaiting signature" — same scope
- *  as the acknowledgement summary (self + Documents-tab view with team /
- *  all reach). */
+/** One "awaiting signature" line on the admin dashboard Documents card. */
+export interface SignatureSummaryLine {
+  /** Signatures outstanding. */
+  outstanding: number;
+  /** Distinct members the documents belong to (or who must sign them). */
+  members: number;
+}
+
+/** Admin dashboard Documents card — outstanding signatures split by who
+ *  must sign (2026-11-04): the caller ("awaiting your signature"),
+ *  members ("awaiting {member} signature") and other company signatories
+ *  ("awaiting company signature"). Same scope as the acknowledgement
+ *  summary (self + Documents-tab view with team / all reach). */
 export async function getOrgOutstandingSignatureSummary(): Promise<
-  | { success: true; totalOutstanding: number; members: { memberId: string; name: string; outstanding: number; tab: "employment" | "org" }[] }
+  | {
+      success: true;
+      totalOutstanding: number;
+      mine: SignatureSummaryLine;
+      members: SignatureSummaryLine;
+      company: SignatureSummaryLine;
+    }
   | { success: false; error: string }
 > {
   try {
@@ -112,20 +128,29 @@ export async function getOrgOutstandingSignatureSummary(): Promise<
       return false;
     });
     const byMember = await getOutstandingSignaturesForMany(admin, organisationId, inScope);
-    if (byMember.size === 0) return { success: true, totalOutstanding: 0, members: [] };
-    const ids = Array.from(byMember.keys());
-    const { data: names } = await admin.from("members").select("id, first_name, last_name").eq("organisation_id", organisationId).in("id", ids);
-    const nameOf = new Map(
-      ((names ?? []) as { id: string; first_name: string | null; last_name: string | null }[]).map((r) => [r.id, `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim() || "Unknown"]),
-    );
-    const members = ids
-      .map((id) => {
-        const rows = byMember.get(id)!;
-        const tab: "employment" | "org" = rows.some((r) => r.ownerScope === "member" && r.role === "member") ? "employment" : "org";
-        return { memberId: id, name: nameOf.get(id) ?? "Unknown", outstanding: rows.length, tab };
-      })
-      .sort((a, b) => b.outstanding - a.outstanding || a.name.localeCompare(b.name));
-    return { success: true, totalOutstanding: members.reduce((n, m) => n + m.outstanding, 0), members };
+    const acc = {
+      mine: { n: 0, who: new Set<string>() },
+      members: { n: 0, who: new Set<string>() },
+      company: { n: 0, who: new Set<string>() },
+    };
+    for (const [signerId, rows] of byMember) {
+      for (const r of rows) {
+        const bucket = signerId === caller.memberId ? acc.mine : r.role === "company" ? acc.company : acc.members;
+        bucket.n++;
+        // The member the document concerns: its owner, or (org documents)
+        // the member asked to sign it.
+        const who = r.ownerId ?? (r.role === "member" ? signerId : null);
+        if (who) bucket.who.add(who);
+      }
+    }
+    const line = (b: { n: number; who: Set<string> }): SignatureSummaryLine => ({ outstanding: b.n, members: b.who.size });
+    return {
+      success: true,
+      totalOutstanding: acc.mine.n + acc.members.n + acc.company.n,
+      mine: line(acc.mine),
+      members: line(acc.members),
+      company: line(acc.company),
+    };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "An error occurred" };
   }

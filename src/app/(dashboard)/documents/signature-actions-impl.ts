@@ -548,7 +548,9 @@ export async function _getSigningView(caller: DocumentsCaller, documentId: strin
         orgName: await orgName(caller),
         role,
         url: urlData.signedUrl,
-        message: open?.message ?? null,
+        // The sender's note is for the first signer (the member when the
+        // member signs first); don't show it to the company signatory after.
+        message: open && !(role === "company" && open.mode === "member_then_company") ? open.message : null,
         senderName: open?.createdByName ?? null,
         ownerName: role === "company" && doc.owner_scope === "member" ? res.state.ownerName : null,
         callerName: fullName(me),
@@ -685,6 +687,8 @@ export async function _sendForSignature(
         role: needsMember ? "member" : "company",
         message,
         senderName: fullName(sender),
+        senderIsRecipient: first.id === caller.memberId,
+        ownerName: !needsMember && owner ? fullName(owner) : null,
         path: signPath(doc.id),
         baseUrl: baseUrl(),
       });
@@ -942,8 +946,12 @@ export async function _signDocument(caller: DocumentsCaller, documentId: string,
           subtypeName: st?.name ?? "Document",
           fileName: doc.file_name,
           role: next.role,
-          message: request.message,
+          // The sender's note was written for the member, who has now signed.
+          message: null,
           senderName: request.created_by ? fullName(nm.get(request.created_by)) : null,
+          senderIsRecipient: request.created_by === next.signer_member_id,
+          ownerName: doc.owner_scope === "member" && owner ? fullName(owner) : null,
+          previousSignerName: myName,
           path: signPath(doc.id),
           baseUrl: baseUrl(),
         });
