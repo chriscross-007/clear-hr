@@ -87,7 +87,7 @@ export default async function DashboardPage() {
     docsIconClass = "text-amber-500";
   } else {
     docsBigText = "No certifications required";
-    docsSubtext = "Nothing to provide right now";
+    docsSubtext = "";
     docsTextClass = "text-muted-foreground";
     docsIconClass = "text-muted-foreground";
   }

@@ -84,7 +84,7 @@ export default async function EmployeeDashboardPage({
     docsIconClass = "text-amber-500";
   } else {
     docsBigText = "No certifications required";
-    docsSubtext = "Nothing to provide right now";
+    docsSubtext = "";
     docsTextClass = "text-muted-foreground";
     docsIconClass = "text-muted-foreground";
   }
@@ -133,7 +133,7 @@ export default async function EmployeeDashboardPage({
       </CardHeader>
       <CardContent>
         <p className={`text-2xl font-bold ${docsTextClass}`}>{docsBigText}</p>
-        <p className="mt-1 text-xs text-muted-foreground">{docsSubtext}</p>
+        {docsSubtext && <p className="mt-1 text-xs text-muted-foreground">{docsSubtext}</p>}
       </CardContent>
     </>
   );
