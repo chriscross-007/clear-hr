@@ -276,6 +276,8 @@ const FIELD_LABELS: Record<string, string> = {
   template_version: "Template version",
   merge_fields: "Merge fields",
   values_entered: "Values entered",
+  // CLE-238 — where a template upload came from (e.g. "Word add-in").
+  source: "Source",
   subtype: "Document kind",
   owner_scope: "Scope",
   document_version_hash: "Document version hash",

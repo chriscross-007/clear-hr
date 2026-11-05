@@ -5,7 +5,7 @@
 // Spec: Spec Vault → specs/Documents/09 Document Templates.md
 
 import { useCallback, useEffect, useState } from "react";
-import { Archive, ArchiveRestore, Download, FileText, Loader2, Plus, Eye, AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
+import { Archive, ArchiveRestore, Download, FileText, Loader2, Plus, Eye, AlertTriangle, ChevronDown, ChevronRight, Puzzle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -46,6 +46,8 @@ export function DocumentTemplatesClient() {
   const [showArchived, setShowArchived] = useState(false);
   const [editing, setEditing] = useState<{ mode: "create" } | { mode: "edit"; row: DocumentTemplateRow } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // CLE-238 — "Get the Word panel" instructions.
+  const [showWordPanel, setShowWordPanel] = useState(false);
 
   const load = useCallback(async () => {
     const [t, s] = await Promise.all([listDocumentTemplates(), listTemplateSubtypes()]);
@@ -103,10 +105,16 @@ export function DocumentTemplatesClient() {
             Word (.docx) files with merge fields like <code className="text-xs">{"{{member.first_name}}"}</code>. ClearHR fills them in and files a PDF.
           </p>
         </div>
-        <Button size="sm" variant="outline" onClick={() => setEditing({ mode: "create" })} disabled={subtypes.length === 0}>
-          <Plus className="mr-1.5 h-4 w-4" />
-          Add template
-        </Button>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Button size="sm" variant="ghost" onClick={() => setShowWordPanel(true)}>
+            <Puzzle className="mr-1.5 h-4 w-4" />
+            Get the Word panel
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setEditing({ mode: "create" })} disabled={subtypes.length === 0}>
+            <Plus className="mr-1.5 h-4 w-4" />
+            Add template
+          </Button>
+        </div>
       </div>
 
       {!rendererReady && (
@@ -186,6 +194,8 @@ export function DocumentTemplatesClient() {
           {showArchived ? "Show current templates" : `Show archived (${archivedCount})`}
         </button>
       )}
+
+      {showWordPanel && <WordPanelDialog onClose={() => setShowWordPanel(false)} />}
 
       {editing && (
         <TemplateEditorDialog
@@ -546,5 +556,61 @@ function TemplateEditorDialog({
         </Dialog>
       )}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CLE-238 — how to add the ClearHR panel to Word.
+
+function WordPanelDialog({ onClose }: { onClose: () => void }) {
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>ClearHR panel for Word</DialogTitle>
+          <DialogDescription>
+            A panel inside Microsoft Word that lists your merge fields, inserts them where the cursor is, checks the document and sends it
+            straight here as a template. Works in Word for Windows, Mac and the web.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="max-h-[60vh] space-y-4 overflow-y-auto px-1 text-sm">
+          <Button asChild size="sm">
+            <a href="/word-addin/manifest.xml" download>
+              <Download className="mr-1.5 h-4 w-4" />
+              Download the panel file (manifest)
+            </a>
+          </Button>
+          <div className="space-y-1">
+            <p className="font-medium">Just for you</p>
+            <ol className="list-decimal space-y-0.5 pl-5 text-muted-foreground">
+              <li>In Word, open any document.</li>
+              <li>
+                Word for Windows or Mac: <strong>Insert → Add-ins → My Add-ins → Upload My Add-in</strong> (in some versions: Home → Add-ins →
+                More Add-ins → My Add-ins → Upload). Word on the web: <strong>Home → Add-ins → More Add-ins → Upload My Add-in</strong>.
+              </li>
+              <li>Choose the file you downloaded.</li>
+              <li>
+                Click <strong>ClearHR fields</strong> on the Home tab and sign in with your ClearHR email and password.
+              </li>
+            </ol>
+          </div>
+          <div className="space-y-1">
+            <p className="font-medium">For everyone in your organisation</p>
+            <p className="text-muted-foreground">
+              Your Microsoft 365 administrator can add the same file once in <strong>Microsoft 365 admin centre → Settings → Integrated apps →
+              Upload custom apps</strong> and choose who gets it. It then appears in Word automatically.
+            </p>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            The panel only shows field names — never anyone&apos;s details — and only to people who can set up templates.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

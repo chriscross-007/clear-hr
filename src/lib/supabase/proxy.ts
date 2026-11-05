@@ -54,6 +54,10 @@ export async function updateSession(request: NextRequest) {
     "/api/webhooks",
     "/api/trigger-inference",
     "/api/mobile",
+    "/api/word-addin",
+    // CLE-238 — the ClearHR panel in Word and its sign-in dialog hold no
+    // data and run their own sign-in (separate session, MFA included).
+    "/word-addin",
     "/mfa-setup",
     "/mfa-verify",
   ];
