@@ -321,6 +321,17 @@ export async function deleteDocumentSubtype(
       error: `${count} document${count === 1 ? "" : "s"} still classified under this subtype — reclassify them first.`,
     };
   }
+  // CLE-237 — templates (live or archived) that produce this kind.
+  const { count: tplCount } = await admin
+    .from("document_template")
+    .select("id", { count: "exact", head: true })
+    .eq("subtype_id", id);
+  if ((tplCount ?? 0) > 0) {
+    return {
+      success: false,
+      error: `${tplCount} document template${tplCount === 1 ? "" : "s"} produce${tplCount === 1 ? "s" : ""} this subtype — change their kind first.`,
+    };
+  }
 
   const { error } = await admin
     .from("document_subtype")

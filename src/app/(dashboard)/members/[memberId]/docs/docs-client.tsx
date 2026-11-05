@@ -14,6 +14,7 @@ import {
   Calendar,
   EyeOff,
   FileText,
+  FileStack,
   Loader2,
   Plus,
   Trash2,
@@ -71,6 +72,9 @@ import { dispatchMemberDocsChanged } from "@/lib/member-docs-events";
 // so the admin surface stacks the two docs cards on one page.
 import { RequiredDocumentsCard } from "@/app/(dashboard)/members/[memberId]/employment/required-documents-card";
 import { SignatureBadgeFor } from "@/components/documents/signature-badge";
+import { CreateFromTemplateDialog } from "@/components/documents/create-from-template-dialog";
+import { listTemplatesForMember } from "@/app/(dashboard)/documents/template-actions";
+import type { TemplateForMember } from "@/app/(dashboard)/documents/template-types";
 
 const DOCS_TABS = ["certifications", "employment", "other", "org", "archived", "trash"] as const;
 type DocsTab = (typeof DOCS_TABS)[number];
@@ -184,6 +188,9 @@ export function DocsClient({
   // CLE-231 — which tab's "Add Document" opened the dialog; narrows
   // the subtype picker to that tab's kinds.
   const [uploadBucket, setUploadBucket] = useState<"employment" | "other" | null>(null);
+  // CLE-237 — live templates per tab + which tab's "From template" is open.
+  const [templatesByBucket, setTemplatesByBucket] = useState<{ employment: TemplateForMember[]; other: TemplateForMember[] }>({ employment: [], other: [] });
+  const [templateBucket, setTemplateBucket] = useState<"employment" | "other" | null>(null);
   const [detailsDocId, setDetailsDocId] = useState<string | null>(null);
   // When the details dialog was opened from the Trash list it renders
   // in read-only mode (all pencils + composer hidden, "In Trash" pill
@@ -224,6 +231,18 @@ export function DocsClient({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!canUpdate) return;
+    let cancelled = false;
+    Promise.all([listTemplatesForMember(memberId, "employment"), listTemplatesForMember(memberId, "other")]).then(([e, o]) => {
+      if (cancelled) return;
+      setTemplatesByBucket({ employment: e.success ? e.templates : [], other: o.success ? o.templates : [] });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [memberId, canUpdate]);
 
   // CLE-228 — RequiredDocumentsCard dispatches
   // `clearhr:member-docs-changed` on verify / renew / add / remove.
@@ -316,6 +335,7 @@ export function DocsClient({
             loading={loading}
             canUpdate={canUpdate}
             onAdd={() => setUploadBucket("employment")}
+            onFromTemplate={templatesByBucket.employment.length > 0 ? () => setTemplateBucket("employment") : undefined}
           >
             <DocList
               rows={rows.filter((r) => r.type === "contract")}
@@ -338,6 +358,7 @@ export function DocsClient({
             loading={loading}
             canUpdate={canUpdate}
             onAdd={() => setUploadBucket("other")}
+            onFromTemplate={templatesByBucket.other.length > 0 ? () => setTemplateBucket("other") : undefined}
           >
             <DocList
               rows={rows.filter((r) => r.type !== "contract" && !requiredDocIds.has(r.id))}
@@ -448,6 +469,25 @@ export function DocsClient({
         />
       )}
 
+      {templateBucket && (
+        <CreateFromTemplateDialog
+          memberId={memberId}
+          memberName={memberName}
+          templates={templatesByBucket[templateBucket]}
+          onClose={() => setTemplateBucket(null)}
+          onCreated={async (newDocId) => {
+            // Same hand-off as an upload: open the new document's
+            // Details (Send for signature lives there for Sign kinds).
+            setTemplateBucket(null);
+            setDetailsReadOnly(false);
+            setDetailsDocId(newDocId);
+            dispatchMemberDocsChanged(memberId);
+            await load();
+            router.refresh();
+          }}
+        />
+      )}
+
       {deleting && (
         <DeleteDialog
           row={deleting}
@@ -477,6 +517,7 @@ function DocListCard({
   loading,
   canUpdate,
   onAdd,
+  onFromTemplate,
   children,
 }: {
   tone: DocTabKey;
@@ -485,22 +526,34 @@ function DocListCard({
   loading: boolean;
   canUpdate: boolean;
   onAdd?: () => void;
+  /** CLE-237 — shown when live templates exist for this tab. */
+  onFromTemplate?: () => void;
   children: React.ReactNode;
 }) {
   const toneCls = docTabCard(tone);
   return (
     <Card className={toneCls.card}>
       <CardHeader className={toneCls.header}>
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <CardTitle className="text-base">{title}</CardTitle>
             <CardDescription>{description}</CardDescription>
           </div>
-          {canUpdate && onAdd && (
-            <Button type="button" size="sm" onClick={onAdd}>
-              <Plus className="mr-1.5 h-4 w-4" />
-              Add Document
-            </Button>
+          {canUpdate && (onAdd || onFromTemplate) && (
+            <div className="flex shrink-0 items-center gap-2">
+              {onFromTemplate && (
+                <Button type="button" size="sm" variant="outline" onClick={onFromTemplate}>
+                  <FileStack className="mr-1.5 h-4 w-4" />
+                  From template
+                </Button>
+              )}
+              {onAdd && (
+                <Button type="button" size="sm" onClick={onAdd}>
+                  <Plus className="mr-1.5 h-4 w-4" />
+                  Add Document
+                </Button>
+              )}
+            </div>
           )}
         </div>
       </CardHeader>
