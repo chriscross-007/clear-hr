@@ -36,6 +36,7 @@ import {
   type SignatureStatus,
 } from "@/lib/document-signatures";
 import { MEMBER_DOCUMENTS_BUCKET } from "@/lib/document-limits";
+import { appBaseUrl } from "@/lib/app-url";
 import {
   sendSignatureCompletedEmail,
   sendSignatureDeclinedEmail,
@@ -310,7 +311,7 @@ function revalidateAll(doc: SigDoc) {
 }
 
 function baseUrl(): string {
-  return process.env.NEXT_PUBLIC_APP_URL ?? "https://app.clear-hr.com";
+  return appBaseUrl();
 }
 
 // Audit metadata stores readable values (the audit page prints values as-is).

@@ -37,7 +37,7 @@ import {
   getOrgOutstandingAcknowledgementSummary,
   type OrgAckSummaryMember,
 } from "@/app/(dashboard)/documents/acknowledgement-actions";
-import { getMyOutstandingSignatures, getOrgOutstandingSignatureSummary } from "@/app/(dashboard)/documents/signature-actions";
+import { getMyOutstandingSignatures, getOrgOutstandingSignatureSummary, type SignatureSummaryItem } from "@/app/(dashboard)/documents/signature-actions";
 import {
   DocumentsTrafficLight,
   trafficLightTooltipText,
@@ -172,6 +172,7 @@ export function AdminDashboardClient() {
   // CLE-236 — outstanding signatures, same scope.
   const [signTotal, setSignTotal] = useState(0);
   // Split by who must sign: you / members / other company signatories.
+  const [signItems, setSignItems] = useState<SignatureSummaryItem[]>([]);
   const [signLines, setSignLines] = useState<{ key: "mine" | "members" | "company"; outstanding: number; members: number }[]>([]);
   // Documents waiting for the caller's own signature (e.g. company signatory).
   const [mySignIds, setMySignIds] = useState<string[]>([]);
@@ -286,6 +287,7 @@ export function AdminDashboardClient() {
       const res = await getOrgOutstandingSignatureSummary();
       if (cancelled || !res.success) return;
       setSignTotal(res.totalOutstanding);
+      setSignItems(res.items);
       setSignLines(
         [
           { key: "mine" as const, ...res.mine },
@@ -661,7 +663,7 @@ export function AdminDashboardClient() {
            Rows are pre-sorted server-side: red first (worst-first),
            then amber, tie-break by name. Click a row → Employment
            tab, anchored to the Required Documents card. */}
-      {docsExpanded && (docsAttention.length > 0 || ackMembers.length > 0 || orgDocsAttention.length > 0) && (
+      {docsExpanded && (docsAttention.length > 0 || ackMembers.length > 0 || orgDocsAttention.length > 0 || signItems.length > 0) && (
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
@@ -722,6 +724,60 @@ export function AdminDashboardClient() {
                 ))}
               </div>
             )}
+            {/* CLE-236 — documents waiting for a signature, grouped by
+                who must sign. Your own → the signing page; others →
+                the member's Employment tab or the Org documents page. */}
+            {(["mine", "members", "company"] as const).map((bucket) => {
+              const list = signItems.filter((i) => i.bucket === bucket);
+              if (list.length === 0) return null;
+              const title =
+                bucket === "mine"
+                  ? "Awaiting your signature"
+                  : bucket === "members"
+                    ? `Awaiting ${memberLabel.toLowerCase()} signature`
+                    : "Awaiting company signature";
+              return (
+                <div key={bucket} className="space-y-2">
+                  <p className="text-xs font-medium uppercase text-muted-foreground">{title}</p>
+                  {list.map((i) => (
+                    <button
+                      key={`${i.documentId}-${i.signerId}`}
+                      type="button"
+                      onClick={() =>
+                        router.push(
+                          bucket === "mine"
+                            ? `/my-documents/sign/${i.documentId}`
+                            : i.ownerScope === "member" && i.ownerId
+                              ? `/members/${i.ownerId}/docs?tab=employment`
+                              : i.ownerScope === "organisation" && i.signerRole === "member"
+                                ? `/members/${i.signerId}/docs?tab=org`
+                                : "/documents/organisation",
+                        )
+                      }
+                      className="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted/50 transition-colors text-left"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">
+                          {i.ownerName ?? (i.ownerScope === "organisation" && i.signerRole === "member" ? i.signerName : i.subtypeName)}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {i.subtypeName} · {i.fileName}
+                        </p>
+                      </div>
+                      {bucket === "mine" ? (
+                        <span className="shrink-0 text-xs text-muted-foreground">Read &amp; sign →</span>
+                      ) : bucket === "members" ? (
+                        <span className="inline-block shrink-0 rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800 dark:bg-violet-900/30 dark:text-violet-300">
+                          Awaiting signature
+                        </span>
+                      ) : (
+                        <span className="shrink-0 text-xs text-muted-foreground">{i.signerName} (for the organisation)</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
             {/* CLE-231 follow-up — members who still owe an
                 acknowledgement. Click → that member's Documents tab
                 holding their first outstanding ack. */}

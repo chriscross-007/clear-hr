@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { runDocumentsSweep } from "@/lib/documents/sweep";
 import { runDocumentNotifications } from "@/lib/documents/notifications";
+import { appBaseUrl } from "@/lib/app-url";
 
 // CLE-209 — Nightly documents sweep. Wired into vercel.json to run
 // at 02:00 UTC daily. Header-secret-guarded (same shape as
@@ -29,9 +30,8 @@ export async function GET(request: NextRequest) {
   const result = await runDocumentsSweep(admin);
 
   // CLE-235 — nightly document emails, after the status sweep.
-  const host = request.headers.get("host") ?? "localhost:3000";
-  const baseUrl =
-    process.env.NEXT_PUBLIC_APP_URL ?? `${host.includes("localhost") ? "http" : "https"}://${host}`;
+  // Email links always point at the live app (see src/lib/app-url.ts).
+  const baseUrl = appBaseUrl();
   const notifications = await runDocumentNotifications(admin, { baseUrl });
 
   const errors = [...result.errors, ...notifications.errors];

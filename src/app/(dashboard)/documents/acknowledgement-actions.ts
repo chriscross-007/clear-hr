@@ -29,6 +29,7 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createHash } from "node:crypto";
 import { sendAckReminderEmail, sendSignatureRequestEmail } from "@/lib/email";
+import { appBaseUrl } from "@/lib/app-url";
 import { isSignablePdf, loadSignatureCoverage } from "@/lib/document-signatures";
 import { subtypeHiddenFromMember } from "@/lib/documents-member-visibility";
 import { isDocumentArchived } from "@/lib/document-archive";
@@ -919,7 +920,7 @@ export async function remindOutstanding(
         organisations: { name?: string } | { name?: string }[] | null;
       }>;
 
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.clear-hr.com";
+      const baseUrl = appBaseUrl();
 
       for (const r of rows) {
         if (!r.email) continue;

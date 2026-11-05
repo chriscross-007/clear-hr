@@ -90,6 +90,21 @@ export async function getOrgDocumentSigners(documentId: string) {
   return _getOrgDocumentSigners(caller, documentId);
 }
 
+/** One outstanding signature, for the admin dashboard drill-down. */
+export interface SignatureSummaryItem {
+  bucket: "mine" | "members" | "company";
+  documentId: string;
+  fileName: string;
+  subtypeName: string;
+  ownerScope: "member" | "organisation";
+  /** Whose document (member docs) — null for org docs. */
+  ownerId: string | null;
+  ownerName: string | null;
+  signerId: string;
+  signerName: string;
+  signerRole: "member" | "company";
+}
+
 /** One "awaiting signature" line on the admin dashboard Documents card. */
 export interface SignatureSummaryLine {
   /** Signatures outstanding. */
@@ -110,6 +125,7 @@ export async function getOrgOutstandingSignatureSummary(): Promise<
       mine: SignatureSummaryLine;
       members: SignatureSummaryLine;
       company: SignatureSummaryLine;
+      items: SignatureSummaryItem[];
     }
   | { success: false; error: string }
 > {
@@ -133,9 +149,21 @@ export async function getOrgOutstandingSignatureSummary(): Promise<
       members: { n: 0, who: new Set<string>() },
       company: { n: 0, who: new Set<string>() },
     };
+    const raw: Omit<SignatureSummaryItem, "ownerName" | "signerName">[] = [];
     for (const [signerId, rows] of byMember) {
       for (const r of rows) {
-        const bucket = signerId === caller.memberId ? acc.mine : r.role === "company" ? acc.company : acc.members;
+        const key: SignatureSummaryItem["bucket"] = signerId === caller.memberId ? "mine" : r.role === "company" ? "company" : "members";
+        raw.push({
+          bucket: key,
+          documentId: r.documentId,
+          fileName: r.fileName,
+          subtypeName: r.subtypeName,
+          ownerScope: r.ownerScope,
+          ownerId: r.ownerId,
+          signerId,
+          signerRole: r.role,
+        });
+        const bucket = acc[key];
         bucket.n++;
         // The member the document concerns: its owner, or (org documents)
         // the member asked to sign it.
@@ -144,7 +172,20 @@ export async function getOrgOutstandingSignatureSummary(): Promise<
       }
     }
     const line = (b: { n: number; who: Set<string> }): SignatureSummaryLine => ({ outstanding: b.n, members: b.who.size });
+    const nameIds = Array.from(new Set(raw.flatMap((r) => [r.signerId, r.ownerId ?? ""]).filter(Boolean)));
+    const nameOf = new Map<string, string>();
+    if (nameIds.length > 0) {
+      const { data } = await admin.from("members").select("id, first_name, last_name").eq("organisation_id", organisationId).in("id", nameIds);
+      for (const m of (data ?? []) as { id: string; first_name: string | null; last_name: string | null }[]) {
+        nameOf.set(m.id, `${m.first_name ?? ""} ${m.last_name ?? ""}`.trim() || "Unknown");
+      }
+    }
+    const order = { mine: 0, members: 1, company: 2 } as const;
+    const items: SignatureSummaryItem[] = raw
+      .map((r) => ({ ...r, ownerName: r.ownerId ? (nameOf.get(r.ownerId) ?? null) : null, signerName: nameOf.get(r.signerId) ?? "Unknown" }))
+      .sort((a, b) => order[a.bucket] - order[b.bucket] || (a.ownerName ?? a.signerName).localeCompare(b.ownerName ?? b.signerName));
     return {
+      items,
       success: true,
       totalOutstanding: acc.mine.n + acc.members.n + acc.company.n,
       mine: line(acc.mine),
