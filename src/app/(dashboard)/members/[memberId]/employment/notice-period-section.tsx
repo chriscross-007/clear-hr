@@ -72,7 +72,7 @@ export function NoticePeriodSection({ memberId, canEdit }: Props) {
   if (loading) {
     return (
       <div className="space-y-2">
-        <Label>Notice Period Profile</Label>
+        <Label>Holiday Notice Profile</Label>
         <p className="text-sm text-muted-foreground">Loading…</p>
       </div>
     );
@@ -81,7 +81,7 @@ export function NoticePeriodSection({ memberId, canEdit }: Props) {
   if (profiles.length === 0) {
     return (
       <div className="space-y-2">
-        <Label>Notice Period Profile</Label>
+        <Label>Holiday Notice Profile</Label>
         <p className="text-sm text-muted-foreground">
           No notice period profiles configured. Set them up in Settings → Profiles → Holiday Notice.
         </p>
@@ -96,7 +96,7 @@ export function NoticePeriodSection({ memberId, canEdit }: Props) {
   return (
     <div className="space-y-2">
       <div>
-        <Label>Notice Period Profile</Label>
+        <Label>Holiday Notice Profile</Label>
         <p className="text-xs text-muted-foreground mt-0.5">
           Which notice rules apply when this member submits a request.
         </p>
