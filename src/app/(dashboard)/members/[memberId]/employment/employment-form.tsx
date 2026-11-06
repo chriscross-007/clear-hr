@@ -212,11 +212,13 @@ export function EmploymentForm({
 
       // CLE-185 — single team per member. Update separately so audit captures
       // the team change cleanly even when other fields are unchanged.
-      const res = await updateMemberTeam(member.member_id, teamId, true);
-      if (!res.success) {
-        setError(res.error ?? "Failed to update team");
-        setLoading(false);
-        return;
+      if (teamId !== member.team_id) {
+        const res = await updateMemberTeam(member.member_id, teamId, true);
+        if (!res.success) {
+          setError(res.error ?? "Failed to update team");
+          setLoading(false);
+          return;
+        }
       }
 
       // Required custom fields

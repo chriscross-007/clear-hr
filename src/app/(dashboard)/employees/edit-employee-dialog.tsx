@@ -132,11 +132,13 @@ export function EditEmployeeDialog({
     }
 
     // CLE-185 — single team per member.
-    const teamResult = await updateMemberTeam(member.member_id, teamId, true);
-    if (!teamResult.success) {
-      setError(teamResult.error ?? "Failed to update team");
-      setLoading(false);
-      return;
+    if (teamId !== member.team_id) {
+      const teamResult = await updateMemberTeam(member.member_id, teamId, true);
+      if (!teamResult.success) {
+        setError(teamResult.error ?? "Failed to update team");
+        setLoading(false);
+        return;
+      }
     }
 
     // Validate required custom fields

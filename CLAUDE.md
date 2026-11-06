@@ -270,6 +270,7 @@ Common decision → flag mappings:
 - "Can this user edit User Rights?" → `rights.canEditRightsProfiles`
 - "Can this user manage billing?" → `rights.canManageBilling`
 - "Which tabs can this user view/update on member records?" → `rights.tabs[tabKey].view` / `rights.tabs[tabKey].update`
+- "Can this user move a member to another team?" → `rights.canManageTeams` OR (`rights.tabs.employment.update` with team/all reach) — `updateMemberTeam` in `employees/team-actions.ts`; callers only invoke it when the team actually changed (2026-11-06)
 
 `crossUserAccess` scopes cross-user visibility to `self | team | all`. Rank is stored on `rights_profiles.rank` but has **no user-visible meaning** in the flat-list model (CLE-197) — it's vestigial metadata retained for the seed defaults and the RLS helpers until CLE-201 rewrites them.
 

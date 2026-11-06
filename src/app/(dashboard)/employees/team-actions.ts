@@ -29,6 +29,8 @@ type CallerMembership = {
   first_name: string;
   last_name: string;
   rights: EffectiveRights;
+  /** Caller's own team (for team-scope reach checks). */
+  team_id: string | null;
 };
 
 async function getCallerMembership(): Promise<CallerMembership> {
@@ -57,6 +59,7 @@ async function getCallerMembership(): Promise<CallerMembership> {
     first_name: membership.first_name as string,
     last_name: membership.last_name as string,
     rights: resolved.rights,
+    team_id: resolved.ctx.teamId ?? null,
   };
 }
 
@@ -400,11 +403,29 @@ export async function updateMemberTeam(
   try {
     const membership = await getCallerMembership();
 
-    if (!membership.rights.canManageTeams) {
-      return { success: false, error: "Insufficient permissions" };
-    }
-
     const admin = createAdminClient();
+
+    // Who may move a member between teams: anyone who manages teams, or
+    // anyone who can update that member's Employment tab (2026-11-06 —
+    // the team picker lives on the Employment page, so its gate must
+    // match the page's). Team-scope callers only reach their own team.
+    if (!membership.rights.canManageTeams) {
+      const canUpdateEmployment = membership.rights.tabs.employment?.update === true;
+      let reach = false;
+      if (canUpdateEmployment) {
+        if (membership.rights.crossUserAccess === "all") reach = true;
+        else if (membership.rights.crossUserAccess === "team" && membership.team_id) {
+          const { data: t } = await admin
+            .from("members")
+            .select("team_id")
+            .eq("id", memberId)
+            .eq("organisation_id", membership.organisation_id)
+            .single();
+          reach = t?.team_id === membership.team_id;
+        }
+      }
+      if (!reach) return { success: false, error: "You don't have permission to change this person's team" };
+    }
 
     // Capture before-state for audit (only when we'll actually write one).
     let beforeTeamId: string | null = null;
