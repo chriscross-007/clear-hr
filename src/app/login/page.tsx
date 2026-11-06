@@ -23,7 +23,12 @@ function LoginForm() {
   const welcome = searchParams.get("welcome");
   const welcomeName = searchParams.get("name");
   const nextPath = searchParams.get("next");
-  const [email, setEmail] = useState("");
+  // 2026-11-06 — email links carry `as=<recipient>`. If someone else is
+  // already signed in on this browser, don't jump straight to `next`
+  // (it would show *their* records) — say so and offer to switch.
+  const asEmail = (searchParams.get("as") ?? "").trim().toLowerCase();
+  const [signedInAs, setSignedInAs] = useState<string | null>(null);
+  const [email, setEmail] = useState(asEmail);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
@@ -35,9 +40,13 @@ function LoginForm() {
   useEffect(() => {
     if (!nextPath) return;
     supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) {
-        router.replace(nextPath);
+      if (!user) return;
+      const current = (user.email ?? "").toLowerCase();
+      if (asEmail && current && current !== asEmail) {
+        setSignedInAs(current);
+        return;
       }
+      router.replace(nextPath);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -100,6 +109,28 @@ function LoginForm() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {signedInAs && nextPath && (
+            <div className="mb-4 space-y-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+              <p>
+                This link was sent to <strong>{asEmail}</strong>, but this browser is signed in as{" "}
+                <strong>{signedInAs}</strong>.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button asChild size="sm">
+                  <a
+                    href={`/logout?next=${encodeURIComponent(
+                      `/login?as=${encodeURIComponent(asEmail)}&next=${encodeURIComponent(nextPath)}`,
+                    )}`}
+                  >
+                    Sign out and continue as {asEmail}
+                  </a>
+                </Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => router.replace(nextPath)}>
+                  Stay as {signedInAs}
+                </Button>
+              </div>
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">

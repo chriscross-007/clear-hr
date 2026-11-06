@@ -60,6 +60,31 @@ function appLink(baseUrl: string, path: string): string {
   return `${baseUrl}/login?next=${encodeURIComponent(path)}`;
 }
 
+/** 2026-11-06 — adds `as=<recipient>` to every app link in an email so
+ *  the login page can tell when a different person is already signed in
+ *  on the browser that opens it (it then offers to switch instead of
+ *  showing that person's records). */
+function tagLinksForRecipient(html: string, to: unknown): string {
+  if (typeof to !== "string" || !to) return html;
+  return html.split("/login?next=").join(`/login?as=${encodeURIComponent(to.trim().toLowerCase())}&next=`);
+}
+
+/** Resend client whose `emails.send` tags app links for the recipient. */
+function mailer(apiKey: string | undefined) {
+  const resend = new Resend(apiKey);
+  type SendArgs = Parameters<typeof resend.emails.send>[0];
+  return {
+    emails: {
+      send: (args: SendArgs) => {
+        const a = args as SendArgs & { html?: unknown; to?: unknown };
+        return resend.emails.send(
+          (typeof a.html === "string" ? { ...a, html: tagLinksForRecipient(a.html, a.to) } : a) as SendArgs,
+        );
+      },
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Lookup helpers (cross-user — admin client)
 // ---------------------------------------------------------------------------
@@ -143,7 +168,7 @@ export async function sendRequestPendingEmail(data: BookingEmailData): Promise<v
     const nounLower = isAnnualLeave ? "holiday" : "absence";
     const article = isAnnualLeave ? "a" : "an";
 
-    const resend = new Resend(process.env.RESEND_API_KEY);
+    const resend = mailer(process.env.RESEND_API_KEY);
     await resend.emails.send({
       from: FROM,
       to: approver.email,
@@ -184,7 +209,7 @@ export async function sendBookingConfirmedEmail(data: BookingEmailData): Promise
       ? `Hi ${employee.firstName}, an administrator has booked ${article} ${nounLower} for you.`
       : `Hi ${employee.firstName}, your ${nounLower} has been booked.`;
 
-    const resend = new Resend(process.env.RESEND_API_KEY);
+    const resend = mailer(process.env.RESEND_API_KEY);
     await resend.emails.send({
       from: FROM,
       to: employee.email,
@@ -220,7 +245,7 @@ export async function sendRequestApprovedEmail(data: BookingEmailData): Promise<
     const noun = isAnnualLeave ? "Holiday" : "Absence";
     const nounLower = isAnnualLeave ? "holiday" : "absence";
 
-    const resend = new Resend(process.env.RESEND_API_KEY);
+    const resend = mailer(process.env.RESEND_API_KEY);
     await resend.emails.send({
       from: FROM,
       to: employee.email,
@@ -257,7 +282,7 @@ export async function sendRequestRejectedEmail(data: BookingEmailData): Promise<
     const noun = isAnnualLeave ? "Holiday" : "Absence";
     const nounLower = isAnnualLeave ? "holiday" : "absence";
 
-    const resend = new Resend(process.env.RESEND_API_KEY);
+    const resend = mailer(process.env.RESEND_API_KEY);
     await resend.emails.send({
       from: FROM,
       to: employee.email,
@@ -289,7 +314,7 @@ export async function sendBookingCancelledEmail(data: BookingEmailData): Promise
     const employee = await getMemberEmail(data.memberId);
     if (!employee) return;
 
-    const resend = new Resend(process.env.RESEND_API_KEY);
+    const resend = mailer(process.env.RESEND_API_KEY);
     await resend.emails.send({
       from: FROM,
       to: employee.email,
@@ -336,7 +361,7 @@ async function sendDocEmail(to: string, subject: string, html: string, tag: stri
     return false;
   }
   try {
-    const resend = new Resend(apiKey);
+    const resend = mailer(apiKey);
     const { error } = await resend.emails.send({ from: FROM, to, subject, html });
     if (error) {
       console.error(`[email] ${tag} failed for ${to}:`, error);
@@ -742,7 +767,7 @@ export async function sendHolidayReminderEmail(
   baseUrl: string
 ): Promise<void> {
   try {
-    const resend = new Resend(process.env.RESEND_API_KEY);
+    const resend = mailer(process.env.RESEND_API_KEY);
     await resend.emails.send({
       from: FROM,
       to,
