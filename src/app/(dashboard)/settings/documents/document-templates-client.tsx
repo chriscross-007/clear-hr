@@ -100,7 +100,6 @@ export function DocumentTemplatesClient() {
     <section className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Templates</h2>
           <p className="text-sm text-muted-foreground">
             Word (.docx) files with merge fields like <code className="text-xs">{"{{member.first_name}}"}</code>. ClearHR fills them in and files a PDF.
           </p>
@@ -582,17 +581,26 @@ function WordPanelDialog({ onClose }: { onClose: () => void }) {
           </Button>
           <div className="space-y-1">
             <p className="font-medium">Just for you</p>
-            <ol className="list-decimal space-y-0.5 pl-5 text-muted-foreground">
-              <li>In Word, open any document.</li>
+            <ul className="list-disc space-y-1.5 pl-5 text-muted-foreground">
               <li>
-                Word for Windows or Mac: <strong>Insert → Add-ins → My Add-ins → Upload My Add-in</strong> (in some versions: Home → Add-ins →
-                More Add-ins → My Add-ins → Upload). Word on the web: <strong>Home → Add-ins → More Add-ins → Upload My Add-in</strong>.
+                <strong>Word for Windows:</strong> put the downloaded file in a folder and share it (right-click → Properties → Sharing),
+                then copy its network path, e.g. <code className="text-xs">{"\\\\YOUR-PC\\ClearHR"}</code>. In Word: <strong>File → Options → Trust
+                Center → Trust Center Settings → Trusted Add-in Catalogs</strong>, paste the path, <strong>Add catalog</strong>, tick{" "}
+                <strong>Show in Menu</strong>, OK, and restart Word. Then <strong>Home → Add-ins → More Add-ins → Shared Folder</strong> →
+                ClearHR → Add.
               </li>
-              <li>Choose the file you downloaded.</li>
               <li>
-                Click <strong>ClearHR fields</strong> on the Home tab and sign in with your ClearHR email and password.
+                <strong>Word for Mac:</strong> copy the file into the folder{" "}
+                <code className="text-xs">~/Library/Containers/com.microsoft.Word/Data/Documents/wef</code> (create <code className="text-xs">wef</code> if
+                it isn&apos;t there) and restart Word.
               </li>
-            </ol>
+              <li>
+                <strong>Word on the web:</strong> <strong>Home → Add-ins → More Add-ins → My Add-ins → Upload My Add-in</strong> and choose the file.
+              </li>
+              <li>
+                Then click <strong>ClearHR fields</strong> on the Home tab and sign in with your ClearHR email and password.
+              </li>
+            </ul>
           </div>
           <div className="space-y-1">
             <p className="font-medium">For everyone in your organisation</p>
