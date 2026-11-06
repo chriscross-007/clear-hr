@@ -18,6 +18,10 @@ export const STICKY_BAND_EXTEND_RIGHT =
 /** Same, for bands with a 1px bottom border. The spread grows every
  *  side, so both shadows are lifted by the spread: the border-coloured
  *  one ends at the band's bottom edge and the background one 1px above
- *  it, leaving a 1px line that continues the band's border-b. */
+ *  it, leaving a 1px line that continues the band's border-b.
+ *  Clipped flush on the left (2026-11-06): <StickyPageHeader> already
+ *  spans full-bleed with its own padding, and a 12px overhang painted
+ *  over the member sidebar's right border (visible in the Accessible
+ *  themes on Documents / Holiday Periods / Timesheet). */
 export const STICKY_HEADER_EXTEND_RIGHT =
-  "shadow-[0_calc(-100vmax_-_1px)_0_100vmax_var(--background),0_-100vmax_0_100vmax_var(--border)] [clip-path:inset(0_-100vmax_0_-12px)]";
+  "shadow-[0_calc(-100vmax_-_1px)_0_100vmax_var(--background),0_-100vmax_0_100vmax_var(--border)] [clip-path:inset(0_-100vmax_0_0)]";

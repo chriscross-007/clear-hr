@@ -102,7 +102,7 @@ export function TimesheetClient({
   const totalConflicts = workPeriods.filter((p) => p.hasConflicts).length;
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       {/* Sticky band: title + week navigation + actions */}
       <StickyPageHeader>
         <p className="text-sm text-muted-foreground">Timesheet</p>
