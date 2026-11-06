@@ -27,6 +27,13 @@ import {
   type TemplateCustomFieldDef,
   type TemplateField,
 } from "@/lib/document-template-fields";
+import {
+  EMPLOYMENT_NOTICE_COLUMNS,
+  mapEmploymentNoticeRow,
+  statutoryEmployerNoticeWeeks,
+  type EmploymentNoticeProfile,
+  type EmploymentNoticeRow,
+} from "@/lib/employment-notice";
 import { renderDocxToPdf, rendererConfigured, RENDERER_NOT_CONFIGURED_ERROR } from "@/lib/document-renderer";
 import {
   TEMPLATE_SUBTYPE_TYPES,
@@ -227,12 +234,31 @@ async function resolveForMember(caller: DocumentsCaller, version: VersionDb, mem
       ? caller.admin.from("teams").select("name").eq("id", member.team_id).single()
       : Promise.resolve({ data: null as { name: string } | null }),
   ]);
+  // CLE-239 — Employment Notice profile (only when the template uses it;
+  // tolerant of the table not existing yet).
+  let notice: { profile: EmploymentNoticeProfile | null; statutoryWeeks: number | null } | null = null;
+  if (fields.some((f) => f.kind === "notice")) {
+    const { data: link } = await caller.admin.from("members").select("employment_notice_profile_id").eq("id", member.id).maybeSingle();
+    const pid = (link as { employment_notice_profile_id?: string | null } | null)?.employment_notice_profile_id ?? null;
+    let profile: EmploymentNoticeProfile | null = null;
+    if (pid) {
+      const { data: row } = await caller.admin
+        .from("employment_notice_profiles")
+        .select(EMPLOYMENT_NOTICE_COLUMNS)
+        .eq("id", pid)
+        .eq("organisation_id", caller.organisationId)
+        .maybeSingle();
+      if (row) profile = mapEmploymentNoticeRow(row as EmploymentNoticeRow);
+    }
+    notice = { profile, statutoryWeeks: statutoryEmployerNoticeWeeks(member.start_date) };
+  }
   const values = resolveTemplateValues(fields, {
     member,
     teamName: (team as { name: string } | null)?.name ?? null,
     organisationName: (org?.name as string) ?? "",
     currencySymbol: (org?.currency_symbol as string) ?? "£",
     customDefs: defs,
+    notice,
   });
   const blockedSensitive = caller.rights.canViewSensitiveFields
     ? []
@@ -823,7 +849,7 @@ export async function _generateDocumentFromTemplate(
 // CLE-238 — Word add-in: field catalogue + tag check
 // ---------------------------------------------------------------------------
 
-export type CatalogueGroup = "member" | "organisation" | "custom" | "dates";
+export type CatalogueGroup = "member" | "organisation" | "notice" | "custom" | "dates";
 
 export interface CatalogueField {
   tag: string;
@@ -847,7 +873,8 @@ export async function _getTemplateFieldCatalogue(
     const fields: CatalogueField[] = [
       ...BUILT_IN_FIELDS.map((f) => {
         const c = classifyTag(f.tag, defs);
-        const group: CatalogueGroup = c.kind === "today" ? "dates" : c.kind === "organisation" ? "organisation" : "member";
+        const group: CatalogueGroup =
+          c.kind === "today" ? "dates" : c.kind === "organisation" ? "organisation" : c.kind === "notice" ? "notice" : "member";
         return { tag: f.tag, label: f.label, group, sensitive: c.sensitive };
       }),
       ...defs.map((d) => ({ tag: `custom.${d.field_key}`, label: d.label, group: "custom" as const, sensitive: d.is_sensitive === true })),

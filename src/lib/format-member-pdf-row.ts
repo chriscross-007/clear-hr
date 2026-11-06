@@ -40,6 +40,8 @@ export function formatMemberForPdf(
     profile: m.profile_name ?? "—",
     team: m.team_id ? (teamMap[m.team_id] ?? "—") : "—",
     payroll_number: m.payroll_number ?? "—",
+    // CLE-239 — Employment Notice profile.
+    employment_notice: m.employment_notice_name ?? "—",
     status: m.accepted_at ? "Active" : m.invited_at ? "Invited" : "Not invited",
     last_log_in: m.last_log_in
       ? new Date(m.last_log_in).toLocaleString("en-GB", {

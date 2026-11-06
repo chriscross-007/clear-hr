@@ -67,3 +67,4 @@ The canonical project guide is [`../CLAUDE.md`](../CLAUDE.md) at the repo root. 
 - Don't trust client-supplied `organisation_id`. Always derive from the caller's `members` row.
 - Don't use `getUser()` for proxy session refresh — it's `getClaims()`.
 - Don't try to fix build/runtime weirdness by editing auth code. First run `rm -rf .next node_modules/.cache && npm run dev`.
+- Employment Notice (CLE-239) is contractual notice, separate from Holiday Notice (`notice_period_profiles`). Use `src/lib/employment-notice.ts` for formatting and the statutory-minimum rule; write via `(dashboard)/employment-notice-actions.ts` only.

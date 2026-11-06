@@ -13,6 +13,7 @@
 import Docxtemplater from "docxtemplater";
 import PizZip from "pizzip";
 import { SENSITIVE_MEMBER_FIELDS } from "@/lib/sensitive-fields";
+import { formatNotice, probationNotice, type EmploymentNoticeProfile } from "@/lib/employment-notice";
 
 export const TEMPLATE_DELIMITERS = { start: "{{", end: "}}" } as const;
 
@@ -29,11 +30,18 @@ export const BUILT_IN_FIELDS: { tag: string; label: string }[] = [
   { tag: "member.team", label: "Team" },
   { tag: "member.start_date", label: "Start date" },
   { tag: "organisation.name", label: "Organisation name" },
+  // CLE-239 — from the member's Employment Notice profile.
+  { tag: "notice.profile", label: "Employment notice profile" },
+  { tag: "notice.member", label: "Notice they must give" },
+  { tag: "notice.employer", label: "Notice the organisation must give" },
+  { tag: "notice.member_probation", label: "Notice they must give (probation)" },
+  { tag: "notice.employer_probation", label: "Notice the organisation must give (probation)" },
+  { tag: "notice.employer_statutory", label: "Legal minimum notice from the organisation" },
   { tag: "today", label: "Today's date" },
 ];
 const BUILT_IN_LABEL = new Map(BUILT_IN_FIELDS.map((f) => [f.tag, f.label]));
 
-export type TemplateFieldKind = "member" | "organisation" | "today" | "custom" | "ask" | "unknown";
+export type TemplateFieldKind = "member" | "organisation" | "notice" | "today" | "custom" | "ask" | "unknown";
 
 /** One merge field found in a template (stored on the template version). */
 export interface TemplateField {
@@ -64,7 +72,8 @@ export function humaniseKey(key: string): string {
 export function classifyTag(tag: string, defs: TemplateCustomFieldDef[]): TemplateField {
   const builtIn = BUILT_IN_LABEL.get(tag);
   if (builtIn) {
-    const kind: TemplateFieldKind = tag === "today" ? "today" : tag.startsWith("member.") ? "member" : "organisation";
+    const kind: TemplateFieldKind =
+      tag === "today" ? "today" : tag.startsWith("member.") ? "member" : tag.startsWith("notice.") ? "notice" : "organisation";
     const col = tag.startsWith("member.") ? tag.slice(7) : "";
     return { tag, kind, label: builtIn, sensitive: SENSITIVE_MEMBER_FIELDS.has(col) };
   }
@@ -197,6 +206,9 @@ export interface TemplateMergeSource {
   organisationName: string;
   currencySymbol: string;
   customDefs: TemplateCustomFieldDef[];
+  /** CLE-239 — the member's Employment Notice profile + statutory
+   *  minimum (weeks) at generation time. Omitted/null → empty values. */
+  notice?: { profile: EmploymentNoticeProfile | null; statutoryWeeks: number | null } | null;
 }
 
 /** Value each non-`ask` field resolves to (empty string = no value). */
@@ -215,6 +227,24 @@ export function resolveTemplateValues(fields: TemplateField[], src: TemplateMerg
       case "member.start_date": v = formatTemplateDate(m.start_date); break;
       case "organisation.name": v = src.organisationName; break;
       case "today": v = formatTemplateDate(todayIsoUk()); break;
+      case "notice.profile": v = src.notice?.profile?.name ?? ""; break;
+      case "notice.member": v = src.notice?.profile ? formatNotice(src.notice.profile.memberAmount, src.notice.profile.memberUnit) : ""; break;
+      case "notice.employer": v = src.notice?.profile ? formatNotice(src.notice.profile.employerAmount, src.notice.profile.employerUnit) : ""; break;
+      case "notice.member_probation": {
+        const p = src.notice?.profile;
+        v = p ? probationNotice(p.probationMemberAmount, p.probationMemberUnit, p.memberAmount, p.memberUnit) : "";
+        break;
+      }
+      case "notice.employer_probation": {
+        const p = src.notice?.profile;
+        v = p ? probationNotice(p.probationEmployerAmount, p.probationEmployerUnit, p.employerAmount, p.employerUnit) : "";
+        break;
+      }
+      case "notice.employer_statutory": {
+        const w = src.notice?.statutoryWeeks;
+        v = w === null || w === undefined ? "" : formatNotice(w, "week");
+        break;
+      }
       default:
         if (f.kind === "custom") {
           const key = f.tag.slice(7);

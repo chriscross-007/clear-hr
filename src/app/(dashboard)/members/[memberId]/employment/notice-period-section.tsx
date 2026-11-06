@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { Label } from "@/components/ui/label";
+import { useMemberLabel } from "@/contexts/member-label-context";
 import { Loader2, Check } from "lucide-react";
 import {
   Select,
@@ -28,6 +29,7 @@ interface Props {
 }
 
 export function NoticePeriodSection({ memberId, canEdit }: Props) {
+  const { memberLabel } = useMemberLabel();
   const [profiles, setProfiles] = useState<NoticePeriodProfile[]>([]);
   const [current, setCurrent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -98,7 +100,7 @@ export function NoticePeriodSection({ memberId, canEdit }: Props) {
       <div>
         <Label>Holiday Notice Profile</Label>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Which notice rules apply when this member submits a request.
+          How much notice is needed when this {memberLabel.toLowerCase()} books holiday.
         </p>
       </div>
       {error && (

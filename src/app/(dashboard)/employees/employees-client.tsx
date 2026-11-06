@@ -220,6 +220,7 @@ export function EmployeesClient({
 
   const holidayProfileNames = [...new Set(members.map((m) => m.holiday_profile_name).filter(Boolean))] as string[];
   const workPatternNames = [...new Set(members.map((m) => m.work_pattern_name).filter(Boolean))] as string[];
+  const employmentNoticeNames = [...new Set(members.map((m) => m.employment_notice_name).filter(Boolean))] as string[];
   const approvalProfileNames = [...new Set(members.map((m) => m.approval_profile_name).filter(Boolean))] as string[];
   // CLE-201c — profile names for the legacy "Rights" column filter,
   // sourced from the enriched members list rather than the legacy
@@ -233,6 +234,7 @@ export function EmployeesClient({
     currencySymbol,
     customFieldDefs,
     holidayProfileNames,
+    employmentNoticeNames,
     workPatternNames,
     profileNames,
     approvalProfileNames,
@@ -315,6 +317,7 @@ export function EmployeesClient({
         payroll_number: m.payroll_number ?? "—",
         holiday_profile: m.holiday_profile_name ?? "—",
         work_pattern: m.work_pattern_name ?? "—",
+        employment_notice: m.employment_notice_name ?? "—",
         status: m.accepted_at ? "Active" : m.invited_at ? "Invited" : "Not invited",
         last_log_in: m.last_log_in
           ? new Date(m.last_log_in).toLocaleString("en-GB", {

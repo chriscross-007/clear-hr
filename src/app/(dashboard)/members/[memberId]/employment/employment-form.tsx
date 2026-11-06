@@ -9,7 +9,7 @@ import {
   normaliseMultiselectValue,
 } from "@/components/custom-field-multiselect";
 import type { FieldDef } from "@/app/(dashboard)/employees/custom-field-actions";
-import { capitalize } from "@/lib/label-utils";
+import { capitalize, pluralize } from "@/lib/label-utils";
 import {
   updateEmployee,
   sendInvite,
@@ -22,6 +22,7 @@ import { WorkProfileSection, type WorkProfileAssignmentRow } from "./work-profil
 import { ApprovalProfileSection } from "./approval-profile-section";
 import { NoticePeriodSection } from "./notice-period-section";
 import { HolidayProfileSection } from "./holiday-profile-section";
+import { EmploymentNoticeSection } from "./employment-notice-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -474,23 +475,42 @@ export function EmploymentForm({
                 canEdit={canEdit}
               />
 
-              {/* CLE-186 — per-employee Approval Profile picker */}
-              <ApprovalProfileSection
-                memberId={member.member_id}
-                canEdit={canEdit}
-              />
+              {/* 2026-11-06 — absence settings grouped so the Holiday
+                  ones read together and the other absence approval
+                  profiles sit apart. */}
+              {/* CLE-239 — contract terms (employment notice). */}
+              <section className="space-y-4 rounded-md border p-4">
+                <div>
+                  <h3 className="text-sm font-semibold">Contract</h3>
+                  <p className="text-xs text-muted-foreground">Terms of this {memberLabel.toLowerCase()}&apos;s contract.</p>
+                </div>
+                <EmploymentNoticeSection memberId={member.member_id} canEdit={canEdit} />
+              </section>
 
-              {/* CLE-194 — per-employee Notice Period Profile picker */}
-              <NoticePeriodSection
-                memberId={member.member_id}
-                canEdit={canEdit}
-              />
+              <section className="space-y-4 rounded-md border p-4">
+                <div>
+                  <h3 className="text-sm font-semibold">Holiday</h3>
+                  <p className="text-xs text-muted-foreground">
+                    How this {memberLabel.toLowerCase()}&apos;s holiday allowance is worked out, how much notice they must give, and who approves it.
+                  </p>
+                </div>
+                {/* CLE-194 Phase 2 — per-member Holiday Profile picker */}
+                <HolidayProfileSection memberId={member.member_id} canEdit={canEdit} />
+                {/* CLE-194 — per-member Holiday Notice profile picker */}
+                <NoticePeriodSection memberId={member.member_id} canEdit={canEdit} />
+                {/* CLE-186 — approval profiles for holiday-type absences */}
+                <ApprovalProfileSection memberId={member.member_id} canEdit={canEdit} group="holiday" />
+              </section>
 
-              {/* CLE-194 Phase 2 — per-employee Holiday Profile picker */}
-              <HolidayProfileSection
-                memberId={member.member_id}
-                canEdit={canEdit}
-              />
+              <section className="space-y-4 rounded-md border p-4">
+                <div>
+                  <h3 className="text-sm font-semibold">Other absences</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Who approves sickness, compassionate leave and other absences that don&apos;t come out of the holiday allowance. New {pluralize(memberLabel.toLowerCase())} get the default profiles automatically.
+                  </p>
+                </div>
+                <ApprovalProfileSection memberId={member.member_id} canEdit={canEdit} group="other" />
+              </section>
 
               {/* CLE-201a — Legacy Admin/Employee Profile picker
                   retired. User Rights assignment now lives in the

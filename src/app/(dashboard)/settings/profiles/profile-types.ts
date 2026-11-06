@@ -12,6 +12,7 @@
 // not one of the functional-profile tabs.
 export type ProfileTypeKey =
   | "workingPattern"
+  | "employmentNotice"
   | "noticePeriod"
   | "approver"
   | "holiday";
@@ -30,6 +31,12 @@ export const PROFILE_TYPES: Record<ProfileTypeKey, ProfileTypeMeta> = {
     key: "workingPattern",
     href: "/settings/profiles/working-pattern",
     label: "Working Patterns",
+  },
+  // CLE-239 — contractual notice (member gives / organisation gives).
+  employmentNotice: {
+    key: "employmentNotice",
+    href: "/settings/profiles/employment-notice",
+    label: "Employment Notice",
   },
   noticePeriod: {
     key: "noticePeriod",
@@ -51,6 +58,7 @@ export const PROFILE_TYPES: Record<ProfileTypeKey, ProfileTypeMeta> = {
 /** Ordered list for the tab nav. Order = display order. */
 export const PROFILE_TYPE_ORDER: ProfileTypeKey[] = [
   "workingPattern",
+  "employmentNotice",
   "noticePeriod",
   "approver",
   "holiday",

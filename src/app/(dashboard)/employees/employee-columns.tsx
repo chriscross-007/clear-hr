@@ -69,6 +69,8 @@ export type Member = {
   updated_at: string | null;
   holiday_profile_name: string | null;
   work_pattern_name: string | null;
+  /** CLE-239 — Employment Notice profile name (contractual notice). */
+  employment_notice_name?: string | null;
   /** CLE-186 — Holiday (Annual Leave) approval profile name for this member.
    *  NULL = member has no per-employee pointer for Annual Leave, i.e.
    *  falls back to the legacy "any admin can approve" feed. */
@@ -189,12 +191,12 @@ export const DATE_PRESET_LABELS: Record<string, string> = {
 // access-level column.
 export const ALL_EMPLOYEE_COLS = [
   "avatar", "payroll_number", "first_name", "last_name", "email", "user_rights",
-  "team", "holiday_profile", "approval_profile", "work_pattern", "status", "docs_health", "last_log_in",
+  "team", "holiday_profile", "approval_profile", "work_pattern", "employment_notice", "status", "docs_health", "last_log_in",
 ];
 
 export const DEFAULT_EMPLOYEE_COLS = [
   "avatar", "payroll_number", "first_name", "last_name", "email", "user_rights",
-  "team", "holiday_profile", "approval_profile", "work_pattern", "status", "docs_health",
+  "team", "holiday_profile", "approval_profile", "work_pattern", "employment_notice", "status", "docs_health",
 ];
 
 export const EMPLOYEE_COL_LABELS: Record<string, string> = {
@@ -208,6 +210,7 @@ export const EMPLOYEE_COL_LABELS: Record<string, string> = {
   holiday_profile: "Holiday Profile",
   approval_profile: "Approver Profile",
   work_pattern: "Work Pattern",
+  employment_notice: "Employment Notice",
   status: "Status",
   docs_health: "Docs",
   last_log_in: "Last Log-in",
@@ -479,6 +482,8 @@ export function buildEmployeeColumns(opts: {
   currencySymbol: string;
   customFieldDefs: FieldDef[];
   holidayProfileNames?: string[];
+  /** CLE-239 — Employment Notice profile names for the column filter. */
+  employmentNoticeNames?: string[];
   workPatternNames?: string[];
   /** CLE-201c — Distinct profile names present on the current rows,
    *  used by the legacy "Rights" column's filter dropdown. Sourced
@@ -502,7 +507,7 @@ export function buildEmployeeColumns(opts: {
    *  the router; the column just invokes with the member id. */
   onDocsHealthClick?: (memberId: string) => void;
 }): ColumnDef<Member>[] {
-  const { teams, memberLabel, currencySymbol, customFieldDefs, holidayProfileNames = [], workPatternNames = [], profileNames = [], approvalProfileNames = [], canViewSensitiveFields = true, trafficLights = {}, onDocsHealthClick } = opts;
+  const { teams, memberLabel, currencySymbol, customFieldDefs, holidayProfileNames = [], employmentNoticeNames = [], workPatternNames = [], profileNames = [], approvalProfileNames = [], canViewSensitiveFields = true, trafficLights = {}, onDocsHealthClick } = opts;
   const teamMap = Object.fromEntries(teams.map((t) => [t.id, t.name]));
 
   return [
@@ -672,6 +677,29 @@ export function buildEmployeeColumns(opts: {
           >
             <option value="">All</option>
             {workPatternNames.sort().map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        ),
+      },
+    },
+    {
+      // CLE-239 — Employment Notice profile (contractual notice).
+      id: "employment_notice",
+      accessorFn: (row) => row.employment_notice_name ?? "—",
+      sortingFn: (rowA, rowB) =>
+        (rowA.original.employment_notice_name ?? "").localeCompare(rowB.original.employment_notice_name ?? "", undefined, { sensitivity: "base" }),
+      header: ({ column }) => <SortHeader column={column as Column<Member, unknown>} label="Employment Notice" />,
+      cell: ({ row }) => row.original.employment_notice_name ?? "—",
+      meta: {
+        filterElement: (column) => (
+          <select
+            className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+            value={(column.getFilterValue() as string) ?? ""}
+            onChange={(e) => column.setFilterValue(e.target.value || undefined)}
+          >
+            <option value="">All</option>
+            {[...employmentNoticeNames].sort().map((name) => (
               <option key={name} value={name}>{name}</option>
             ))}
           </select>

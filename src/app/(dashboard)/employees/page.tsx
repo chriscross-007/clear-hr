@@ -101,6 +101,19 @@ export default async function EmployeesPage({
     rightsProfileByMemberId.set(m.id, m.rights_profile_id);
   }
 
+  // CLE-239 — Employment Notice profile name per member. Tolerates the
+  // table not existing yet (migration not applied) — the column shows "—".
+  const [{ data: enProfiles }, { data: enMembers }] = await Promise.all([
+    supabase.from("employment_notice_profiles").select("id, name").eq("organisation_id", membership!.organisation_id),
+    supabase.from("members").select("id, employment_notice_profile_id").eq("organisation_id", membership!.organisation_id),
+  ]);
+  const enNameById = new Map(((enProfiles ?? []) as { id: string; name: string }[]).map((p) => [p.id, p.name]));
+  const employmentNoticeByMember = new Map<string, string>();
+  for (const m of (enMembers ?? []) as { id: string; employment_notice_profile_id: string | null }[]) {
+    const n = m.employment_notice_profile_id ? enNameById.get(m.employment_notice_profile_id) : undefined;
+    if (n) employmentNoticeByMember.set(m.id, n);
+  }
+
   // Build current Holiday Period name map: member_id → period name
   const holidayProfileMap = new Map<string, string>();
   for (const period of currentHolidayPeriods ?? []) {
@@ -162,6 +175,7 @@ export default async function EmployeesPage({
       ...m,
       holiday_profile_name: holidayProfileMap.get(memberIdStr) ?? null,
       work_pattern_name: workPatternMap.get(memberIdStr) ?? null,
+      employment_notice_name: employmentNoticeByMember.get(memberIdStr) ?? null,
       approval_profile_name: approvalProfileName,
       user_rights_profile_name: rightsProfileId ? (rightsProfileNameById.get(rightsProfileId) ?? null) : null,
     };

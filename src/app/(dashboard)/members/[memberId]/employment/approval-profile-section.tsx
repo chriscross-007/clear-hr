@@ -11,6 +11,8 @@
 
 import { useEffect, useState } from "react";
 import { Label } from "@/components/ui/label";
+import { useMemberLabel } from "@/contexts/member-label-context";
+import { pluralize } from "@/lib/label-utils";
 import { Loader2 } from "lucide-react";
 import {
   Select,
@@ -30,11 +32,16 @@ import {
 interface Props {
   memberId: string;
   canEdit: boolean;
+  /** 2026-11-06 — which absence types to show: holiday-type ones (that
+   *  deduct from the holiday allowance) for the Holiday group, the rest
+   *  for the Other absences group. Omitted = all. */
+  group?: "holiday" | "other";
 }
 
-export function ApprovalProfileSection({ memberId, canEdit }: Props) {
+export function ApprovalProfileSection({ memberId, canEdit, group }: Props) {
+  const { memberLabel } = useMemberLabel();
   const [profiles, setProfiles] = useState<ApprovalProfile[]>([]);
-  const [absenceTypes, setAbsenceTypes] = useState<{ id: string; name: string }[]>([]);
+  const [absenceTypes, setAbsenceTypes] = useState<{ id: string; name: string; deductsFromEntitlement: boolean }[]>([]);
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [savingTypeId, setSavingTypeId] = useState<string | null>(null);
@@ -72,6 +79,7 @@ export function ApprovalProfileSection({ memberId, canEdit }: Props) {
 
   const renderableTypes = absenceTypes
     .filter((t) => (profilesByType.get(t.id)?.length ?? 0) > 0)
+    .filter((t) => (group === "holiday" ? t.deductsFromEntitlement : group === "other" ? !t.deductsFromEntitlement : true))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   async function handleChange(absenceTypeId: string, value: string) {
@@ -86,10 +94,12 @@ export function ApprovalProfileSection({ memberId, canEdit }: Props) {
     setAssignments((prev) => ({ ...prev, [absenceTypeId]: value }));
   }
 
+  const heading = group === "holiday" ? "Holiday Approval Profile" : group === "other" ? "Approval Profiles" : "Approval Profile";
+
   if (loading) {
     return (
       <div className="space-y-2">
-        <Label>Approval Profile</Label>
+        <Label>{heading}</Label>
         <p className="text-sm text-muted-foreground">Loading…</p>
       </div>
     );
@@ -98,9 +108,9 @@ export function ApprovalProfileSection({ memberId, canEdit }: Props) {
   if (renderableTypes.length === 0) {
     return (
       <div className="space-y-2">
-        <Label>Approval Profile</Label>
+        <Label>{heading}</Label>
         <p className="text-sm text-muted-foreground">
-          No approval profiles configured. Set them up in Organisation Settings → Approvals.
+          No approval profiles set up{group === "other" ? " for these absence types" : ""}. Set them up in Settings → Profiles → Holiday Approval.
         </p>
       </div>
     );
@@ -109,11 +119,12 @@ export function ApprovalProfileSection({ memberId, canEdit }: Props) {
   return (
     <div className="space-y-3">
       <div>
-        <Label>Approval Profile</Label>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          Which approver ladder applies when this employee submits a request.
-          New employees inherit the default profile automatically.
-        </p>
+        {group !== "other" && <Label>{heading}</Label>}
+        {!group && (
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Who approves each type of request from this {memberLabel.toLowerCase()}. New {pluralize(memberLabel.toLowerCase())} get the default profile automatically.
+          </p>
+        )}
       </div>
       {error && (
         <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">{error}</div>

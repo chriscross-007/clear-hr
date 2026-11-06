@@ -219,6 +219,7 @@ export function DocumentTemplatesClient() {
 const KIND_STYLE: Record<TemplateField["kind"], string> = {
   member: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
   organisation: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
+  notice: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
   today: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
   custom: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
   ask: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",

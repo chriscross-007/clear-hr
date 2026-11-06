@@ -224,17 +224,24 @@ export async function getApprovalProfilesForOrg(): Promise<{
 export async function getOrgAbsenceTypesForApprovals(): Promise<{
   success: boolean;
   error?: string;
-  absenceTypes: { id: string; name: string }[];
+  absenceTypes: { id: string; name: string; deductsFromEntitlement: boolean }[];
 }> {
   try {
     const { supabase, member } = await getCallerMember();
     const { data, error } = await supabase
       .from("absence_types")
-      .select("id, name")
+      .select("id, name, deducts_from_entitlement")
       .eq("organisation_id", member.organisation_id)
       .order("name", { ascending: true });
     if (error) return { success: false, error: error.message, absenceTypes: [] };
-    return { success: true, absenceTypes: (data ?? []).map((r) => ({ id: r.id as string, name: r.name as string })) };
+    return {
+      success: true,
+      absenceTypes: (data ?? []).map((r) => ({
+        id: r.id as string,
+        name: r.name as string,
+        deductsFromEntitlement: (r as { deducts_from_entitlement?: boolean }).deducts_from_entitlement !== false,
+      })),
+    };
   } catch (e) {
     return {
       success: false,

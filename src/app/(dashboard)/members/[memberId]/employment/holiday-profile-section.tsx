@@ -94,7 +94,7 @@ export function HolidayProfileSection({ memberId, canEdit }: Props) {
       <div>
         <Label>Holiday Profile</Label>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Drives the 7 values snapshotted onto each new Holiday Period for this member.
+          Sets the allowance and carry-forward rules for each new holiday period. Existing periods keep the values they started with.
         </p>
       </div>
       {error && (

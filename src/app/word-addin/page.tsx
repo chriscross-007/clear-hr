@@ -246,12 +246,13 @@ export default function WordAddinPanel() {
   const groupTitle: Record<CatalogueGroup, string> = {
     member: `${Label_} fields`,
     organisation: "Organisation",
+    notice: "Employment notice",
     custom: "Custom fields",
     dates: "Dates",
   };
   const q = query.trim().toLowerCase();
   const visible = fields.filter((f) => !q || f.label.toLowerCase().includes(q) || f.tag.toLowerCase().includes(q));
-  const groups = (["member", "custom", "organisation", "dates"] as CatalogueGroup[])
+  const groups = (["member", "notice", "custom", "organisation", "dates"] as CatalogueGroup[])
     .map((g) => ({ g, list: visible.filter((f) => f.group === g) }))
     .filter((x) => x.list.length > 0);
   const askName = toAskName(question);
